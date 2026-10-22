@@ -5,10 +5,10 @@ interpreter targeting Python 3.x on the JVM.**
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com/H09-0/jython3-prototype)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.0--alpha-orange)](https://github.com/H09-0/jython3-prototype/releases)
+[![Version](https://img.shields.io/badge/Version-v0.8.0--alpha-orange)](https://github.com/H09-0/jython3-prototype/releases)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
 [![ANTLR](https://img.shields.io/badge/Parser-ANTLR%204.13.1-purple)](https://www.antlr.org/)
-[![Tests](https://img.shields.io/badge/Tests-64%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-74%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
 ---
 
@@ -61,7 +61,7 @@ The table below summarises the current state of language and runtime support.
 | `PyFloat` runtime type for floating-point results | ✅ Supported |
 | Tracebacks: `NameError`, `ZeroDivisionError`, `TypeError`, `AttributeError`, `IndexError` | ✅ Supported |
 | Real bytecode layer (`CompiledCode`: `int[]` + `Object[]` constants pool) | ✅ Supported |
-| Exception handling (`try` / `except` / `raise`) | 🔜 Phase 8 |
+| Exception handling (`try` / `except` / `raise`) | ✅ Supported |
 | Standard library expansion (`re`, `collections`, `io`) | 🔜 Planned |
 | Maven Central packaging and GitHub Actions CI | 🔜 Planned |
 
@@ -171,6 +171,9 @@ import foo   ──▶  modules/foo.py         ──▶  file-based fallback
 | `BINARY_SUBSCR` | — | Pop index and container; push `container[index]` |
 | `GET_ITER` | — | Convert PyList on stack to PyIterator |
 | `FOR_ITER` | exit pc | Advance iterator; jump when exhausted |
+| `PUSH_EXCEPT_HANDLER` | except pc | Register an exception handler for a `try` block |
+| `POP_EXCEPT_HANDLER` | — | Deregister handler on normal exit from `try` |
+| `RAISE` | constPool idx | Raise an exception (type name from pool) |
 | `HALT` | — | Terminate execution |
 
 ---
@@ -224,7 +227,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 64 tests pass with zero failures and zero skipped. Test reports are written to:
+All 74 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -255,7 +258,7 @@ jython3-prototype/
     │       └── BuiltinModules.java              # Java-backed stdlib: math, sys, os
     └── test/
         └── java/org/example/jython3/
-            └── Jython3InterpreterTest.java      # 64 JUnit 5 regression tests
+            └── Jython3InterpreterTest.java      # 74 JUnit 5 regression tests
 ```
 
 ---
@@ -271,7 +274,7 @@ jython3-prototype/
 | 5 | `v0.5.0-alpha` | `def`, `return`, call stack, `Frame` record, 37 tests | ✅ Released |
 | 6 | `v0.6.0-alpha` | `CompiledCode`, constants pool, lists, `for` loops, 49 tests | ✅ Released |
 | 7 | `v0.7.0-alpha` | `math`/`sys`/`os` stdlib, `PyFloat`, `PyModule`, `LOAD_ATTR`, 64 tests | ✅ Released |
-| 8 | `v0.8.0-alpha` | Exception handling (`try`/`except`/`raise`) | 🔜 In Progress |
+| 8 | `v0.8.0-alpha` | Exception handling (`try`/`except`/`raise`), cross-frame propagation, 74 tests | ✅ Released |
 | 9 | `v1.0.0` | Stable API, Maven Central, GitHub Actions CI, full Javadoc | 🎯 Target |
 
 ---

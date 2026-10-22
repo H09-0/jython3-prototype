@@ -1,7 +1,7 @@
 /**
  * Jython3.g4 – ANTLR4 grammar for a Python‑3 subset.
  *
- * Supported constructs (Phase 7):
+ * Supported constructs (Phase 8):
  *   • Integer and string literals
  *   • List literals:  [1, 2, 3]
  *   • Variable assignment (e.g.  x = 10)
@@ -14,6 +14,7 @@
  *   • import (from a local modules/ directory or built‑in modules)
  *   • Attribute access:   module.attr
  *   • Method/function call:  module.func(args)
+ *   • Exception handling:  try / except / raise
  *   • Function definitions:  def name(params): body
  *   • Function calls:        name(args)
  *   • Return statements:     return expr
@@ -33,6 +34,7 @@ simple_stmt
     | assign_stmt
     | import_stmt
     | return_stmt
+    | raise_stmt
     | call_stmt
     ;
 
@@ -51,6 +53,12 @@ import_stmt
     : IMPORT ID
     ;
 
+/** raise ExcType(msg) or raise ExcType */
+raise_stmt
+    : RAISE ID LPAREN arg_list? RPAREN
+    | RAISE ID
+    ;
+
 /** return expr */
 return_stmt
     : RETURN expr
@@ -65,6 +73,7 @@ compound_stmt
     : if_stmt
     | while_stmt
     | for_stmt
+    | try_stmt
     | func_def
     ;
 
@@ -81,6 +90,12 @@ while_stmt
 /** for id in expr : simple_stmt */
 for_stmt
     : FOR ID IN expr COLON simple_stmt
+    ;
+
+/** try: body except [ExcType]: handler */
+try_stmt
+    : TRY COLON simple_stmt EXCEPT ID COLON simple_stmt
+    | TRY COLON simple_stmt EXCEPT COLON simple_stmt
     ;
 
 /** def name(params): body */
@@ -135,6 +150,9 @@ ELSE   : 'else';
 WHILE  : 'while';
 FOR    : 'for';
 IN     : 'in';
+TRY    : 'try';
+EXCEPT : 'except';
+RAISE  : 'raise';
 IMPORT : 'import';
 DEF    : 'def';
 RETURN : 'return';

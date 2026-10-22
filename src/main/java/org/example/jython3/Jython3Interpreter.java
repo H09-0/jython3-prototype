@@ -48,6 +48,9 @@ public class Jython3Interpreter {
         IMPORT_MODULE, MAKE_FUNCTION, CALL_FUNCTION, RETURN_VALUE, POP_TOP,
         BUILD_LIST, BINARY_SUBSCR, GET_ITER, FOR_ITER,
         LOAD_ATTR,  // pop object, push object.attr (attr name from constPool)
+        PUSH_EXCEPT_HANDLER,  // raw arg: except target pc
+        POP_EXCEPT_HANDLER,   // no arg – normal exit from try block
+        RAISE,                // arg: exception type name in constPool
         HALT
     }
 
@@ -61,14 +64,19 @@ public class Jython3Interpreter {
     private Deque<PyObject> stack;
     private Map<String, PyObject> currentLocals;
     private final Deque<Frame> callStack = new ArrayDeque<>();
+    /** Per-frame exception handler stack — saved/restored on function call boundaries. */
+    private Deque<ExceptHandler> exceptStack = new ArrayDeque<>();
+    private record ExceptHandler(int exceptPc) {}
     private record Frame(CompiledCode code, int returnPc,
-                         Map<String, PyObject> locals, Deque<PyObject> stack) {}
+                         Map<String, PyObject> locals, Deque<PyObject> stack,
+                         Deque<ExceptHandler> exceptHandlers) {}
 
     // ─── Public API ───────────────────────────────────────────────────────
 
     public void exec(String source) {
         stack = new ArrayDeque<>();
         currentLocals = globals;
+        exceptStack = new ArrayDeque<>();
         try {
             run(compile(source.strip()));
         } catch (InterpreterException e) {
@@ -189,15 +197,50 @@ public class Jython3Interpreter {
             int n = 0; if (c.arg_list() != null) for (var e : c.arg_list().expr()) { visit(e); n++; }
             b.emitRaw(OpCode.CALL_FUNCTION, n); return null;
         }
+        /**
+         * raise ExcType(msg)  →  LOAD_CONST(msg), RAISE(ExcType)
+         * raise ExcType       →  LOAD_CONST(""),  RAISE(ExcType)
+         */
+        @Override public Void visitRaise_stmt(Jython3Parser.Raise_stmtContext c) {
+            if (c.arg_list() != null && !c.arg_list().expr().isEmpty())
+                visit(c.arg_list().expr().get(0));
+            else
+                b.emit(OpCode.LOAD_CONST, "");
+            b.emit(OpCode.RAISE, c.ID().getText());
+            return null;
+        }
+        /**
+         * try: body except [ExcType]: handler
+         *
+         * Bytecode layout:
+         *   PUSH_EXCEPT_HANDLER  <except_target>
+         *   <try body>
+         *   POP_EXCEPT_HANDLER
+         *   JUMP  <after_except>
+         *   except_target: POP_TOP  (discard exception / store if typed)
+         *   <except body>
+         *   after_except:
+         */
+        @Override public Void visitTry_stmt(Jython3Parser.Try_stmtContext c) {
+            int pushIdx = b.size(); b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
+            visit(c.simple_stmt(0));          // try body
+            b.emit(OpCode.POP_EXCEPT_HANDLER); // normal exit
+            int jumpIdx = b.size(); b.emitRaw(OpCode.JUMP, 0);
+            b.patch(pushIdx, b.size());        // except target
+            b.emit(OpCode.POP_TOP);            // discard exception from stack
+            visit(c.simple_stmt(1));           // except body
+            b.patch(jumpIdx, b.size());        // after except
+            return null;
+        }
     }
 
     // ─── Stack‑machine execution ──────────────────────────────────────────
 
     private void run(CompiledCode code) throws InterpreterException {
         int[] bc = code.bytecode(); Object[] pool = code.constPool(); int pc = 0;
-        while (pc < bc.length) {
+        outer: while (pc < bc.length) {
             int instr = bc[pc]; OpCode op = OpCode.values()[instr >>> 16]; int ai = instr & 0xFFFF;
-            switch (op) {
+            try { switch (op) {
                 case LOAD_CONST -> {
                     if (ai == NO_ARG) { stack.push(new PyNull()); break; }
                     Object v = pool[ai];
@@ -224,11 +267,11 @@ public class Jython3Interpreter {
                     for (int i = argc-1; i >= 0; i--) args[i] = stack.pop();
                     PyObject callable = stack.pop();
                     if (callable instanceof PyFunction fn) {
-                        callStack.push(new Frame(code, pc+1, currentLocals, stack));
+                        callStack.push(new Frame(code, pc+1, currentLocals, stack, exceptStack));
                         var fl = new HashMap<String, PyObject>();
                         for (int i = 0; i < fn.params().size() && i < argc; i++) fl.put(fn.params().get(i), args[i]);
-                        currentLocals = fl; stack = new ArrayDeque<>();
-                        code = fn.code(); bc = code.bytecode(); pool = code.constPool(); pc = 0; continue;
+                        currentLocals = fl; stack = new ArrayDeque<>(); exceptStack = new ArrayDeque<>();
+                        code = fn.code(); bc = code.bytecode(); pool = code.constPool(); pc = 0; continue outer;
                     } else if (callable instanceof PyBuiltinFunction bf) {
                         stack.push(bf.fn().apply(args));
                     } else throw new InterpreterException("TypeError: '" + callable + "' is not callable");
@@ -237,7 +280,9 @@ public class Jython3Interpreter {
                     PyObject rv = stack.pop();
                     if (callStack.isEmpty()) { stack.push(rv); return; }
                     Frame cf = callStack.pop(); code = cf.code(); bc = code.bytecode(); pool = code.constPool();
-                    pc = cf.returnPc(); currentLocals = cf.locals(); stack = cf.stack(); stack.push(rv); continue;
+                    pc = cf.returnPc(); currentLocals = cf.locals(); stack = cf.stack();
+                    exceptStack = cf.exceptHandlers();  // restore caller's handler stack
+                    stack.push(rv); continue outer;
                 }
                 case POP_TOP -> stack.pop();
                 case BUILD_LIST -> { int n = ai; var items = new ArrayList<PyObject>(n); for (int i = 0; i < n; i++) items.addFirst(stack.pop()); stack.push(new PyList(items)); }
@@ -257,7 +302,39 @@ public class Jython3Interpreter {
                         stack.push(val);
                     } else throw new InterpreterException("AttributeError: '" + obj + "' has no attribute '" + attr + "'");
                 }
+                case PUSH_EXCEPT_HANDLER -> exceptStack.push(new ExceptHandler(ai));
+                case POP_EXCEPT_HANDLER  -> { if (!exceptStack.isEmpty()) exceptStack.pop(); }
+                case RAISE -> {
+                    // Pop message; build exception message string; throw as InterpreterException
+                    PyObject msgObj = stack.pop();
+                    String excType = (String) pool[ai];
+                    String msg = (msgObj instanceof PyStr s) ? s.value() : msgObj.toString();
+                    throw new InterpreterException(excType + ": " + msg);
+                }
                 case HALT -> { return; }
+            } // end switch
+            } catch (InterpreterException ie) {
+                // Check this frame's handler stack first
+                if (!exceptStack.isEmpty()) {
+                    ExceptHandler h = exceptStack.pop();
+                    stack.push(new PyStr(ie.getMessage()));
+                    pc = h.exceptPc();
+                    continue outer;
+                }
+                // No handler in this frame — unwind the call stack frame by frame
+                while (!callStack.isEmpty()) {
+                    Frame cf = callStack.pop();
+                    code = cf.code(); bc = code.bytecode(); pool = code.constPool();
+                    pc = cf.returnPc(); currentLocals = cf.locals();
+                    stack = cf.stack(); exceptStack = cf.exceptHandlers();
+                    if (!exceptStack.isEmpty()) {
+                        ExceptHandler h = exceptStack.pop();
+                        stack.push(new PyStr(ie.getMessage()));
+                        pc = h.exceptPc();
+                        continue outer;  // resume in caller frame at its except handler
+                    }
+                }
+                throw ie;  // no handler anywhere — propagate to exec()
             }
             pc++;
         }
@@ -265,7 +342,7 @@ public class Jython3Interpreter {
 
     @FunctionalInterface private interface IntBinOp { int apply(int a, int b); }
     private void binaryInt(IntBinOp op) { var r = stack.pop(); var l = stack.pop(); if (l instanceof PyInt li && r instanceof PyInt ri) stack.push(new PyInt(op.apply(li.value(), ri.value()))); else throw new InterpreterException("TypeError: unsupported operand types for arithmetic"); }
-    private static boolean isTruthy(PyObject v) { return switch (v) { case PyInt i -> i.value()!=0; case PyStr s -> !s.value().isEmpty(); case PyNull n -> false; case PyFunction f -> true; case PyList l -> !l.items().isEmpty(); case PyIterator it -> true; case PyFloat f -> f.value()!=0.0; case PyModule m -> true; case PyBuiltinFunction bf -> true; }; }
+    private static boolean isTruthy(PyObject v) { return switch (v) { case PyInt i -> i.value()!=0; case PyStr s -> !s.value().isEmpty(); case PyNull n -> false; case PyFunction f -> true; case PyList l -> !l.items().isEmpty(); case PyIterator it -> true; case PyFloat f -> f.value()!=0.0; case PyModule m -> true; case PyBuiltinFunction bf -> true; case PyException e -> true; }; }
 
     private void importModule(String name) {
         // Built-in modules take priority over file-based ones
@@ -286,7 +363,7 @@ public class Jython3Interpreter {
     public CompiledCode compileToCode(String src) { return compile(src.strip()); }
 
     // ─── Runtime object hierarchy ─────────────────────────────────────────
-    public sealed interface PyObject permits PyInt, PyStr, PyNull, PyFunction, PyList, PyIterator, PyModule, PyBuiltinFunction, PyFloat {}
+    public sealed interface PyObject permits PyInt, PyStr, PyNull, PyFunction, PyList, PyIterator, PyModule, PyBuiltinFunction, PyFloat, PyException {}
     public record PyInt(int value) implements PyObject { @Override public String toString() { return Integer.toString(value); } }
     public record PyStr(String value) implements PyObject { @Override public String toString() { return value; } }
     public record PyNull() implements PyObject { @Override public String toString() { return "None"; } }
@@ -300,7 +377,10 @@ public class Jython3Interpreter {
             return (value == Math.floor(value)) ? (long) value + ".0" : String.valueOf(value);
         }
     }
-    /** A built‑in module (e.g. math, sys, os) – a named attribute dictionary. */
+    /** A Python exception object — holds type name and message. */
+    public record PyException(String excType, String message) implements PyObject {
+        @Override public String toString() { return excType + ": " + message; }
+    }
     public record PyModule(String name, Map<String, PyObject> attrs) implements PyObject { @Override public String toString() { return "<module '" + name + "'>"; } }
     /** A Java‑backed callable exposed to Python scripts. */
     public record PyBuiltinFunction(String name, java.util.function.Function<PyObject[], PyObject> fn) implements PyObject { @Override public String toString() { return "<built-in function " + name + ">"; } }

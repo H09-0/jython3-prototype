@@ -472,4 +472,69 @@ class Jython3InterpreterTest {
         py.exec("import totally_unknown_xyz");
         assertTrue(err().contains("ImportError"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  18. Exception handling – try / except / raise  (Phase 8 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testTryNormalPath() {
+        // No exception raised – except block must NOT run
+        py.exec("try: print('ok') except: print('err')");
+        assertEquals("ok", out());
+        assertEquals("", err());
+    }
+
+    @Test void testTryCatchesZeroDivision() {
+        py.exec("try: print(1 / 0) except: print('caught')");
+        assertEquals("caught", out());
+        assertEquals("", err());
+    }
+
+    @Test void testTryCatchesNameError() {
+        py.exec("try: print(undefined_var) except: print('caught')");
+        assertEquals("caught", out());
+    }
+
+    @Test void testRaiseIsCaught() {
+        py.exec("try: raise ValueError('oops') except: print('handled')");
+        assertEquals("handled", out());
+    }
+
+    @Test void testRaiseUncaught() {
+        // raise outside try – should produce traceback
+        py.exec("raise RuntimeError('boom')");
+        assertTrue(err().contains("RuntimeError") || err().contains("Traceback"));
+    }
+
+    @Test void testRaiseBareExcType() {
+        // raise with no message
+        py.exec("try: raise StopIteration except: print('stopped')");
+        assertEquals("stopped", out());
+    }
+
+    @Test void testTryDoesNotSuppressOtherOutput() {
+        // code before try runs normally
+        py.exec("x = 5");
+        py.exec("try: print(x) except: print('err')");
+        assertEquals("5", out());
+    }
+
+    @Test void testTryWithTypedExcept() {
+        // try: ... except ExcType: ... syntax (typed except clause)
+        py.exec("try: raise ValueError('bad') except ValueError: print('type caught')");
+        assertEquals("type caught", out());
+    }
+
+    @Test void testExceptionInFunctionCaughtByCallerTry() {
+        // Exception raised inside a function propagates to caller’s try block
+        py.exec("def boom(): raise RuntimeError('fn err')");
+        py.exec("try: boom() except: print('caller caught')");
+        assertEquals("caller caught", out());
+    }
+
+    @Test void testRaiseWithIntMessage() {
+        // raise with integer expr as message
+        py.exec("try: raise ValueError(42) except: print('caught')");
+        assertEquals("caught", out());
+    }
 }
