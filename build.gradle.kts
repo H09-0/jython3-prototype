@@ -25,6 +25,14 @@ application {
     mainClass.set("org.example.jython3.Jython3Interpreter")
 }
 
+tasks.register<JavaExec>("runScript") {
+    group = "application"
+    description = "Run a Python script file"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("org.example.jython3.RunScript")
+    args = listOf("test.py")
+}
+
 tasks.generateGrammarSource {
     arguments = arguments + listOf(
         "-visitor", "-long-messages",
