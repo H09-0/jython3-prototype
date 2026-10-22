@@ -1,5 +1,5 @@
 /*====================================================================
- * Jython3Interpreter.java – Phase 6 (Real Bytecode Layer)
+ * Jython3Interpreter.java – Phase 7 (Partial Standard Library)
  *
  * Architecture:
  *   Source → ANTLR4 → ParseTree → CompileVisitor → CompiledCode
@@ -10,12 +10,13 @@
  *   high 16 bits = OpCode ordinal
  *   low 16 bits  = index into constPool (0xFFFF = no operand)
  *
- * Phase 6 additions:
- *   • CompiledCode record (bytecode + constants pool)
- *   • List literals:   [1, 2, 3]
- *   • Subscript access: list[index]
- *   • for ... in ... : loop
- *   • BUILD_LIST, BINARY_SUBSCR, GET_ITER, FOR_ITER opcodes
+ * Phase 7 additions:
+ *   • PyFloat, PyModule, PyBuiltinFunction runtime types
+ *   • LOAD_ATTR opcode  – attribute access (module.attr)
+ *   • import math / sys / os  →  built‑in modules via BuiltinModules
+ *   • math.sqrt, math.sin, math.cos, math.floor, math.ceil, math.pi, math.e
+ *   • sys.argv, sys.version, sys.platform
+ *   • os.getcwd(), os.sep, os.name
  *====================================================================*/
 
 package org.example.jython3;
@@ -46,6 +47,7 @@ public class Jython3Interpreter {
         JUMP_IF_FALSE, JUMP,
         IMPORT_MODULE, MAKE_FUNCTION, CALL_FUNCTION, RETURN_VALUE, POP_TOP,
         BUILD_LIST, BINARY_SUBSCR, GET_ITER, FOR_ITER,
+        LOAD_ATTR,  // pop object, push object.attr (attr name from constPool)
         HALT
     }
 
@@ -177,6 +179,16 @@ public class Jython3Interpreter {
             b.emitRaw(OpCode.BUILD_LIST, n); return null;
         }
         @Override public Void visitSubscript(Jython3Parser.SubscriptContext c) { visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.BINARY_SUBSCR); return null; }
+        /** module.attr  → LOAD_ATTR */
+        @Override public Void visitAttrAccess(Jython3Parser.AttrAccessContext c) {
+            visit(c.expr()); b.emit(OpCode.LOAD_ATTR, c.ID().getText()); return null;
+        }
+        /** module.func(args)  → LOAD_ATTR + CALL_FUNCTION */
+        @Override public Void visitAttrCall(Jython3Parser.AttrCallContext c) {
+            visit(c.expr()); b.emit(OpCode.LOAD_ATTR, c.ID().getText());
+            int n = 0; if (c.arg_list() != null) for (var e : c.arg_list().expr()) { visit(e); n++; }
+            b.emitRaw(OpCode.CALL_FUNCTION, n); return null;
+        }
     }
 
     // ─── Stack‑machine execution ──────────────────────────────────────────
@@ -217,6 +229,8 @@ public class Jython3Interpreter {
                         for (int i = 0; i < fn.params().size() && i < argc; i++) fl.put(fn.params().get(i), args[i]);
                         currentLocals = fl; stack = new ArrayDeque<>();
                         code = fn.code(); bc = code.bytecode(); pool = code.constPool(); pc = 0; continue;
+                    } else if (callable instanceof PyBuiltinFunction bf) {
+                        stack.push(bf.fn().apply(args));
                     } else throw new InterpreterException("TypeError: '" + callable + "' is not callable");
                 }
                 case RETURN_VALUE -> {
@@ -234,6 +248,15 @@ public class Jython3Interpreter {
                 }
                 case GET_ITER -> { PyObject o = stack.pop(); if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0)); else throw new InterpreterException("TypeError: '" + o + "' is not iterable"); }
                 case FOR_ITER -> { PyObject top = stack.peek(); if (top instanceof PyIterator iter) { if (iter.hasNext()) stack.push(iter.next()); else { stack.pop(); pc = ai; continue; } } else throw new InterpreterException("TypeError: expected iterator"); }
+                case LOAD_ATTR -> {
+                    String attr = (String) pool[ai];
+                    PyObject obj = stack.pop();
+                    if (obj instanceof PyModule mod) {
+                        PyObject val = mod.attrs().get(attr);
+                        if (val == null) throw new InterpreterException("AttributeError: module '" + mod.name() + "' has no attribute '" + attr + "'");
+                        stack.push(val);
+                    } else throw new InterpreterException("AttributeError: '" + obj + "' has no attribute '" + attr + "'");
+                }
                 case HALT -> { return; }
             }
             pc++;
@@ -242,9 +265,18 @@ public class Jython3Interpreter {
 
     @FunctionalInterface private interface IntBinOp { int apply(int a, int b); }
     private void binaryInt(IntBinOp op) { var r = stack.pop(); var l = stack.pop(); if (l instanceof PyInt li && r instanceof PyInt ri) stack.push(new PyInt(op.apply(li.value(), ri.value()))); else throw new InterpreterException("TypeError: unsupported operand types for arithmetic"); }
-    private static boolean isTruthy(PyObject v) { return switch (v) { case PyInt i -> i.value()!=0; case PyStr s -> !s.value().isEmpty(); case PyNull n -> false; case PyFunction f -> true; case PyList l -> !l.items().isEmpty(); case PyIterator it -> true; }; }
+    private static boolean isTruthy(PyObject v) { return switch (v) { case PyInt i -> i.value()!=0; case PyStr s -> !s.value().isEmpty(); case PyNull n -> false; case PyFunction f -> true; case PyList l -> !l.items().isEmpty(); case PyIterator it -> true; case PyFloat f -> f.value()!=0.0; case PyModule m -> true; case PyBuiltinFunction bf -> true; }; }
 
     private void importModule(String name) {
+        // Built-in modules take priority over file-based ones
+        PyModule builtin = switch (name) {
+            case "math" -> BuiltinModules.math();
+            case "sys"  -> BuiltinModules.sys();
+            case "os"   -> BuiltinModules.os();
+            default     -> null;
+        };
+        if (builtin != null) { globals.put(name, builtin); return; }
+        // Fall back to file-based modules in modules/ directory
         try (var br = new BufferedReader(new FileReader("modules/" + name + ".py"))) { String l; while ((l = br.readLine()) != null) if (!l.isBlank()) exec(l); }
         catch (IOException e) { throw new InterpreterException("ImportError: no module named '" + name + "'"); }
     }
@@ -254,11 +286,24 @@ public class Jython3Interpreter {
     public CompiledCode compileToCode(String src) { return compile(src.strip()); }
 
     // ─── Runtime object hierarchy ─────────────────────────────────────────
-    public sealed interface PyObject permits PyInt, PyStr, PyNull, PyFunction, PyList, PyIterator {}
+    public sealed interface PyObject permits PyInt, PyStr, PyNull, PyFunction, PyList, PyIterator, PyModule, PyBuiltinFunction, PyFloat {}
     public record PyInt(int value) implements PyObject { @Override public String toString() { return Integer.toString(value); } }
     public record PyStr(String value) implements PyObject { @Override public String toString() { return value; } }
     public record PyNull() implements PyObject { @Override public String toString() { return "None"; } }
     public record PyFunction(String name, List<String> params, CompiledCode code) implements PyObject { @Override public String toString() { return "<function " + name + ">"; } }
+    /** A Python float (64‑bit double). toString() mirrors CPython's repr. */
+    public record PyFloat(double value) implements PyObject {
+        @Override public String toString() {
+            if (Double.isInfinite(value)) return value > 0 ? "inf" : "-inf";
+            if (Double.isNaN(value)) return "nan";
+            // Format whole numbers as X.0, otherwise use Java's default
+            return (value == Math.floor(value)) ? (long) value + ".0" : String.valueOf(value);
+        }
+    }
+    /** A built‑in module (e.g. math, sys, os) – a named attribute dictionary. */
+    public record PyModule(String name, Map<String, PyObject> attrs) implements PyObject { @Override public String toString() { return "<module '" + name + "'>"; } }
+    /** A Java‑backed callable exposed to Python scripts. */
+    public record PyBuiltinFunction(String name, java.util.function.Function<PyObject[], PyObject> fn) implements PyObject { @Override public String toString() { return "<built-in function " + name + ">"; } }
     public record PyList(List<PyObject> items) implements PyObject {
         @Override public String toString() { var sb = new StringBuilder("["); for (int i=0;i<items.size();i++) { if (i>0) sb.append(", "); var it=items.get(i); if (it instanceof PyStr s) sb.append("'").append(s.value()).append("'"); else sb.append(it); } return sb.append("]").toString(); }
     }

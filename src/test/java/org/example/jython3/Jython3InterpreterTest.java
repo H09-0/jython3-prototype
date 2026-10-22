@@ -361,4 +361,115 @@ class Jython3InterpreterTest {
         // first instruction should be LOAD_CONST (ordinal 0) → high 16 bits = 0
         assertEquals(0, first >>> 16);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  14. math module (Phase 7 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testMathSqrt() {
+        py.exec("import math");
+        py.exec("print(math.sqrt(4))");
+        assertEquals("2.0", out());
+    }
+
+    @Test void testMathSqrt9() {
+        py.exec("import math");
+        py.exec("print(math.sqrt(9))");
+        assertEquals("3.0", out());
+    }
+
+    @Test void testMathFloor() {
+        py.exec("import math");
+        py.exec("print(math.floor(3))");
+        assertEquals("3", out());
+    }
+
+    @Test void testMathCeil() {
+        py.exec("import math");
+        py.exec("print(math.ceil(3))");
+        assertEquals("3", out());
+    }
+
+    @Test void testMathPiAttr() {
+        py.exec("import math");
+        py.exec("x = math.pi");
+        // x must be stored as PyFloat close to Math.PI
+        // just verify no error and something was printed
+        py.exec("print(math.pi)");
+        assertTrue(out().startsWith("3."));
+    }
+
+    @Test void testMathEAttr() {
+        py.exec("import math");
+        py.exec("print(math.e)");
+        assertTrue(out().startsWith("2."));
+    }
+
+    @Test void testMathModuleType() {
+        py.exec("import math");
+        // math should be importable without error
+        assertEquals("", err());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  15. sys module (Phase 7 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testSysArgvIsEmpty() {
+        py.exec("import sys");
+        py.exec("print(sys.argv)");
+        assertEquals("[]", out());
+    }
+
+    @Test void testSysVersion() {
+        py.exec("import sys");
+        py.exec("print(sys.version)");
+        assertTrue(out().contains("3"));
+    }
+
+    @Test void testSysPlatform() {
+        py.exec("import sys");
+        py.exec("print(sys.platform)");
+        assertEquals("java", out());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  16. os module (Phase 7 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testOsGetcwd() {
+        py.exec("import os");
+        py.exec("print(os.getcwd())");
+        // Should print the working directory (non-empty string, no error)
+        assertFalse(out().isBlank());
+        assertEquals("", err());
+    }
+
+    @Test void testOsSep() {
+        py.exec("import os");
+        py.exec("print(os.sep)");
+        // On Linux this is "/"
+        assertFalse(out().isBlank());
+    }
+
+    @Test void testOsName() {
+        py.exec("import os");
+        py.exec("print(os.name)");
+        assertEquals("java", out());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  17. Attribute-access error handling (Phase 7 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testModuleAttributeError() {
+        py.exec("import math");
+        py.exec("print(math.nonexistent)");
+        assertTrue(err().contains("AttributeError"));
+    }
+
+    @Test void testImportUnknownModule() {
+        py.exec("import totally_unknown_xyz");
+        assertTrue(err().contains("ImportError"));
+    }
 }

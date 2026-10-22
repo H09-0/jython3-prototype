@@ -1,7 +1,7 @@
 /**
  * Jython3.g4 – ANTLR4 grammar for a Python‑3 subset.
  *
- * Supported constructs (Phase 6):
+ * Supported constructs (Phase 7):
  *   • Integer and string literals
  *   • List literals:  [1, 2, 3]
  *   • Variable assignment (e.g.  x = 10)
@@ -11,7 +11,9 @@
  *   • if / else (single‑statement bodies on the same line)
  *   • while (single‑statement body on the same line)
  *   • for ... in ... : (single‑statement body)
- *   • import (from a local modules/ directory)
+ *   • import (from a local modules/ directory or built‑in modules)
+ *   • Attribute access:   module.attr
+ *   • Method/function call:  module.func(args)
  *   • Function definitions:  def name(params): body
  *   • Function calls:        name(args)
  *   • Return statements:     return expr
@@ -107,6 +109,8 @@ arg_list
  */
 expr
     : expr LBRACK expr RBRACK              # Subscript
+    | expr DOT ID LPAREN arg_list? RPAREN  # AttrCall
+    | expr DOT ID                          # AttrAccess
     | expr op=('*' | '/') expr             # MulDiv
     | expr op=('+' | '-') expr             # AddSub
     | ID LPAREN arg_list? RPAREN           # FuncCall
@@ -136,6 +140,7 @@ DEF    : 'def';
 RETURN : 'return';
 
 // Operators & punctuation
+DOT    : '.';
 ASSIGN : '=';
 LPAREN : '(';
 RPAREN : ')';
