@@ -7,6 +7,7 @@
 [![Java](https://img.shields.io/badge/Java-21%2B-blue)](https://openjdk.org/projects/jdk/21/)
 [![Build](https://img.shields.io/badge/Build-Gradle%208-green)](https://gradle.org/)
 [![ANTLR](https://img.shields.io/badge/Parser-ANTLR4%204.13.1-orange)](https://www.antlr.org/)
+[![Tests](https://img.shields.io/badge/Tests-49%20passing-brightgreen)]()
 
 ---
 
@@ -20,26 +21,36 @@ This project is a prototype Python 3 interpreter built on the JVM. It is designe
 | JVM target | Java 6 | **Java 21** |
 | Parser | Hand-written | **ANTLR4 grammar** |
 | Build system | Ant | **Gradle Kotlin DSL** |
+| Bytecode | CPython `.pyc` | **Custom `CompiledCode` (`int[]` + constants pool)** |
 | License | PSF 2.0 | **MIT** |
 
 ---
 
-## ✅ Current Features (v0.4.0-alpha)
+## ✅ Current Features (v0.6.0-alpha)
 
 | Feature | Status |
 |---------|--------|
 | `print()` built-in | ✅ |
 | Integer & string literals | ✅ |
+| **List literals** (`[1, 2, 3]`) | ✅ **NEW** |
 | Variable assignment (`x = 10`) | ✅ |
 | Arithmetic with full precedence (`+`, `-`, `*`, `/`) | ✅ |
 | Parenthesized expressions (`(2 + 3) * 4`) | ✅ |
+| **Subscript access** (`list[index]`) | ✅ **NEW** |
 | `if / else` control flow | ✅ |
 | `while` loops | ✅ |
+| **`for ... in ...` loops** | ✅ **NEW** |
+| Function definitions (`def name(a, b): body`) | ✅ |
+| Function calls (standalone & in expressions) | ✅ |
+| `return` values from functions | ✅ |
+| Local scope isolation (function params shadow globals) | ✅ |
+| Nested function calls (`inc(inc(3))`) | ✅ |
+| Multi-statement function bodies (`def f(): a; b; c`) | ✅ |
 | Module `import` (local `modules/` directory) | ✅ |
-| Error traceback (NameError, ZeroDivisionError, SyntaxError, ImportError) | ✅ |
-| Bytecode generation (`int[]` representation) | ✅ |
+| Error traceback (NameError, ZeroDivisionError, SyntaxError, ImportError, IndexError, TypeError) | ✅ |
+| **Real bytecode layer** (`CompiledCode` = `int[]` bytecode + `Object[]` constants pool) | ✅ **NEW** |
 | ANTLR4 grammar parser (`Jython3.g4`) | ✅ |
-| **26 JUnit 5 tests** (all passing) | ✅ |
+| **49 JUnit 5 tests** (all passing) | ✅ |
 
 ---
 
@@ -66,7 +77,7 @@ cd jython3-prototype
 
 # Run the test suite
 ./gradlew test
-# Expected: BUILD SUCCESSFUL – 26 tests, 0 failures
+# Expected: BUILD SUCCESSFUL – 49 tests, 0 failures
 ```
 
 ---
@@ -83,11 +94,34 @@ print(2 + 3 * 4)       # → 14
 print((2 + 3) * 4)     # → 20
 print(x + y)           # → 52
 
+# List literals
+xs = [1, 2, 3]
+print(xs)              # → [1, 2, 3]
+print(xs[0])           # → 1
+
+# for loop
+for n in [10, 20, 30]: print(n)
+
 # if / else
 if x: print('truthy') else: print('falsy')
 
 # while loop
 while 0: print('never runs')
+
+# Function definitions & calls
+def add(a, b): return a + b
+print(add(3, 4))       # → 7
+
+def greet(name): print(name)
+greet('Jython3')
+
+# Multi-statement function body
+def calc(a, b): print(a + b); print(a * b)
+calc(3, 5)             # → 8 then 15
+
+# Nested calls
+def inc(x): return x + 1
+print(inc(inc(3)))     # → 5
 
 # Module import (from modules/ directory)
 import mymodule
@@ -111,7 +145,13 @@ ANTLR4 Lexer + Parser (Jython3.g4)
 Parse Tree
       │
       ▼
-CompileVisitor → OpCode[] + instrArgs[]
+CompileVisitor → CodeBuilder
+      │
+      ▼
+CompiledCode {
+    int[]    bytecode     ← (opcode << 16) | constPoolIndex
+    Object[] constPool    ← strings, ints, PyFunction objects
+}
       │
       ▼
 Stack Machine (run())
@@ -120,28 +160,54 @@ Stack Machine (run())
 Output / Traceback
 ```
 
+### Bytecode Encoding
+
+Each instruction is a single **32-bit int**:
+
+```
+┌──────────────────┬──────────────────┐
+│  OpCode (16 bit) │ Operand (16 bit) │
+│   ordinal value  │ constPool index  │
+│                  │ or raw int arg   │
+└──────────────────┴──────────────────┘
+```
+
 ### Runtime Object Hierarchy
 
 ```java
-sealed interface PyObject permits PyInt, PyStr, PyNull {}
-record PyInt(int value)    implements PyObject {}
-record PyStr(String value) implements PyObject {}
-record PyNull()            implements PyObject {}
+sealed interface PyObject permits PyInt, PyStr, PyNull, PyFunction, PyList, PyIterator {}
+
+record PyInt(int value)                                  implements PyObject {}
+record PyStr(String value)                               implements PyObject {}
+record PyNull()                                          implements PyObject {}
+record PyFunction(String name, List<String> params,
+                  CompiledCode code)                      implements PyObject {}
+record PyList(List<PyObject> items)                      implements PyObject {}
+final class PyIterator                                   implements PyObject {}
 ```
 
-### Instruction Set
+### Instruction Set (21 opcodes)
 
-| OpCode | Description |
-|--------|-------------|
-| `LOAD_CONST` | Push a constant (int or string) onto the stack |
-| `LOAD_FAST` | Push a variable value from locals |
-| `STORE_FAST` | Pop and store into locals |
-| `ADD / SUBTRACT / MULTIPLY / DIVIDE` | Binary arithmetic |
-| `PRINT` | Pop and print top of stack |
-| `JUMP_IF_FALSE` | Conditional jump (for `if/while`) |
-| `JUMP` | Unconditional jump |
-| `IMPORT_MODULE` | Load and exec a `.py` module file |
-| `HALT` | End of program |
+| OpCode | Operand | Description |
+|--------|---------|-------------|
+| `LOAD_CONST` | constPool idx | Push a constant onto the stack |
+| `LOAD_FAST` | constPool idx | Push a local/global variable value |
+| `LOAD_GLOBAL` | constPool idx | Push a global variable value |
+| `STORE_FAST` | constPool idx | Pop and store into current scope |
+| `ADD / SUBTRACT / MULTIPLY / DIVIDE` | — | Binary arithmetic |
+| `PRINT` | — | Pop and print top of stack |
+| `JUMP_IF_FALSE` | target pc | Conditional jump |
+| `JUMP` | target pc | Unconditional jump |
+| `IMPORT_MODULE` | constPool idx | Load and exec a `.py` module |
+| `MAKE_FUNCTION` | constPool idx | Pop PyFunction, store in scope |
+| `CALL_FUNCTION` | argc | Call a function with N arguments |
+| `RETURN_VALUE` | — | Return from function |
+| `POP_TOP` | — | Discard top of stack |
+| `BUILD_LIST` | count | Build a list from N stack items |
+| `BINARY_SUBSCR` | — | Index into a list (`list[i]`) |
+| `GET_ITER` | — | Convert iterable to iterator |
+| `FOR_ITER` | target pc | Advance iterator or jump to exit |
+| `HALT` | — | End of program |
 
 ---
 
@@ -153,9 +219,9 @@ record PyNull()            implements PyObject {}
 | 2 | `v0.2.0-beta` | Variables + arithmetic (`+`, `-`, `*`, `/`) | ✅ Done |
 | 3 | `v0.3.0-rc1` | Control flow (`if/else`, `while`), import, traceback, bytecode | ✅ Done |
 | 4 | `v0.4.0-alpha` | ANTLR4 grammar integration, jump desync fix, 26 tests | ✅ Done |
-| 5 | `v0.5.0` | Function definitions (`def`), return values, call stack | 🔜 Next |
-| 6 | `v0.6.0` | Real bytecode layer (`CALL`, `RETURN`, `LOAD_GLOBAL`) | 🔜 Planned |
-| 7 | `v0.7.0` | Partial standard library (`math`, `sys`, `os`) | 🔜 Planned |
+| 5 | `v0.5.0-alpha` | Function definitions, return values, call stack, 37 tests | ✅ Done |
+| 6 | `v0.6.0-alpha` | Real bytecode layer, lists, subscript, for loops, 49 tests | ✅ Done |
+| 7 | `v0.7.0` | Partial standard library (`math`, `sys`, `os`) | 🔜 Next |
 | 8 | `v0.8.0` | Exception handling (`try/except/finally`) | 🔜 Planned |
 | 9 | `v1.0.0` | Stable release, Maven Central packaging, full docs | 🎯 Goal |
 
@@ -175,12 +241,12 @@ jython3-prototype/
 └── src/
     ├── main/
     │   ├── antlr/org/example/jython3/
-    │   │   └── Jython3.g4                    # ANTLR4 grammar definition
+    │   │   └── Jython3.g4                    # ANTLR4 grammar (21 rules)
     │   └── java/org/example/jython3/
-    │       └── Jython3Interpreter.java       # Core interpreter
+    │       └── Jython3Interpreter.java       # Core interpreter (279 lines)
     └── test/
         └── java/org/example/jython3/
-            └── Jython3InterpreterTest.java   # 26 JUnit 5 tests
+            └── Jython3InterpreterTest.java   # 49 JUnit 5 tests
 ```
 
 ---
