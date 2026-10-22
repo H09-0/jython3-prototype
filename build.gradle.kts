@@ -1,6 +1,7 @@
 plugins {
     java
     application
+    antlr
 }
 
 repositories {
@@ -14,11 +15,28 @@ java {
 }
 
 dependencies {
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    antlr("org.antlr:antlr4:4.13.1")
+    implementation("org.antlr:antlr4-runtime:4.13.1")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.0")
 }
 
 application {
     mainClass.set("org.example.jython3.Jython3Interpreter")
+}
+
+tasks.generateGrammarSource {
+    arguments = arguments + listOf(
+        "-visitor", "-long-messages",
+        "-package", "org.example.jython3"
+    )
+    outputDirectory = file("${layout.buildDirectory.get()}/generated-src/antlr/main")
+}
+
+sourceSets["main"].java.srcDir("${layout.buildDirectory.get()}/generated-src/antlr/main")
+
+tasks.compileJava {
+    dependsOn(tasks.generateGrammarSource)
 }
 
 tasks.test {
