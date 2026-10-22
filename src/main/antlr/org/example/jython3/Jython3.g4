@@ -1,13 +1,16 @@
 /**
  * Jython3.g4 – ANTLR4 grammar for a Python‑3 subset.
  *
- * Supported constructs (Phase 5):
+ * Supported constructs (Phase 6):
  *   • Integer and string literals
+ *   • List literals:  [1, 2, 3]
  *   • Variable assignment (e.g.  x = 10)
  *   • Arithmetic expressions with full operator precedence (+, -, *, /)
+ *   • Subscript access:  list[index]
  *   • print() built‑in
  *   • if / else (single‑statement bodies on the same line)
  *   • while (single‑statement body on the same line)
+ *   • for ... in ... : (single‑statement body)
  *   • import (from a local modules/ directory)
  *   • Function definitions:  def name(params): body
  *   • Function calls:        name(args)
@@ -59,6 +62,7 @@ call_stmt
 compound_stmt
     : if_stmt
     | while_stmt
+    | for_stmt
     | func_def
     ;
 
@@ -70,6 +74,11 @@ if_stmt
 /** while expr : simple_stmt */
 while_stmt
     : WHILE expr COLON simple_stmt
+    ;
+
+/** for id in expr : simple_stmt */
+for_stmt
+    : FOR ID IN expr COLON simple_stmt
     ;
 
 /** def name(params): body */
@@ -97,13 +106,20 @@ arg_list
  * Highest precedence first (ANTLR4 resolves ambiguity by rule order).
  */
 expr
-    : expr op=('*' | '/') expr          # MulDiv
-    | expr op=('+' | '-') expr          # AddSub
-    | ID LPAREN arg_list? RPAREN        # FuncCall
-    | LPAREN expr RPAREN                # Paren
-    | INT                               # Int
-    | STRING                            # Str
-    | ID                                # Id
+    : expr LBRACK expr RBRACK              # Subscript
+    | expr op=('*' | '/') expr             # MulDiv
+    | expr op=('+' | '-') expr             # AddSub
+    | ID LPAREN arg_list? RPAREN           # FuncCall
+    | LPAREN expr RPAREN                   # Paren
+    | LBRACK expr_list? RBRACK             # ListLiteral
+    | INT                                  # Int
+    | STRING                               # Str
+    | ID                                   # Id
+    ;
+
+/** Comma‑separated list of expressions (for list literals). */
+expr_list
+    : expr (COMMA expr)*
     ;
 
 // ─── Lexer rules ──────────────────────────────────────────────────────────────
@@ -113,6 +129,8 @@ PRINT  : 'print';
 IF     : 'if';
 ELSE   : 'else';
 WHILE  : 'while';
+FOR    : 'for';
+IN     : 'in';
 IMPORT : 'import';
 DEF    : 'def';
 RETURN : 'return';
@@ -121,6 +139,8 @@ RETURN : 'return';
 ASSIGN : '=';
 LPAREN : '(';
 RPAREN : ')';
+LBRACK : '[';
+RBRACK : ']';
 COLON  : ':';
 SEMI   : ';';
 COMMA  : ',';

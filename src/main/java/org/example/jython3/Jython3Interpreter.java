@@ -1,28 +1,21 @@
 /*====================================================================
- * Jython3Interpreter.java – Phase 5 (Functions & Call Stack)
+ * Jython3Interpreter.java – Phase 6 (Real Bytecode Layer)
  *
  * Architecture:
- *   Source → ANTLR4 Lexer/Parser → ParseTree → CompileVisitor →
- *   OpCode[] + instrArgs[] → run() stack‑machine → output
+ *   Source → ANTLR4 → ParseTree → CompileVisitor → CompiledCode
+ *   CompiledCode = int[] bytecode + Object[] constPool
+ *   run() decodes bytecode and executes via stack machine
  *
- * Supported Python‑3 subset (defined by Jython3.g4):
- *   • Integer and string literals
- *   • Variable assignment  (x = 10)
- *   • Arithmetic with full precedence  (+, -, *, /)
- *   • print() built‑in
- *   • if / else  (single‑statement body)
- *   • while  (single‑statement body)
- *   • import (local modules/ directory)
- *   • Function definitions:  def name(a, b): body
- *   • Function calls as expressions:  name(1, 2)
- *   • Standalone function calls:  name(1, 2)
- *   • Return statements:  return expr
+ * Bytecode encoding: each instruction is a 32-bit int
+ *   high 16 bits = OpCode ordinal
+ *   low 16 bits  = index into constPool (0xFFFF = no operand)
  *
- * Modern Java 21 features:
- *   • sealed interface + records for PyObject hierarchy
- *   • Pattern‑matching instanceof & switch
- *   • Enhanced switch expressions
- *   • var (local type inference)
+ * Phase 6 additions:
+ *   • CompiledCode record (bytecode + constants pool)
+ *   • List literals:   [1, 2, 3]
+ *   • Subscript access: list[index]
+ *   • for ... in ... : loop
+ *   • BUILD_LIST, BINARY_SUBSCR, GET_ITER, FOR_ITER opcodes
  *====================================================================*/
 
 package org.example.jython3;
@@ -43,73 +36,39 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.RecognitionException;
 import org.antlr.v4.runtime.Recognizer;
 
-/**
- * Core interpreter.  Call {@link #exec(String)} to execute a single line
- * of Python‑3 source code.
- */
 public class Jython3Interpreter {
 
     // ─── Op‑code set ──────────────────────────────────────────────────────
-    private enum OpCode {
-        LOAD_CONST,       // operand: Integer or String
-        LOAD_FAST,       // operand: variable name (String)
-        LOAD_GLOBAL,     // operand: variable name from globals (String)
-        STORE_FAST,      // operand: variable name (String)
+    enum OpCode {
+        LOAD_CONST, LOAD_FAST, LOAD_GLOBAL, STORE_FAST,
         ADD, SUBTRACT, MULTIPLY, DIVIDE,
         PRINT,
-        JUMP_IF_FALSE,   // operand: target pc (Integer)
-        JUMP,            // operand: target pc (Integer)
-        IMPORT_MODULE,   // operand: module name (String)
-        MAKE_FUNCTION,   // operand: function name (String) — pops PyFunction body from stack
-        CALL_FUNCTION,   // operand: number of args (Integer)
-        RETURN_VALUE,    // no operand — pops top of stack as return value
-        POP_TOP,         // discard top of stack (for standalone call_stmt)
+        JUMP_IF_FALSE, JUMP,
+        IMPORT_MODULE, MAKE_FUNCTION, CALL_FUNCTION, RETURN_VALUE, POP_TOP,
+        BUILD_LIST, BINARY_SUBSCR, GET_ITER, FOR_ITER,
         HALT
     }
 
+    private static final int NO_ARG = 0xFFFF;
+
+    // ─── CompiledCode ─────────────────────────────────────────────────────
+    public record CompiledCode(int[] bytecode, Object[] constPool) {}
+
     // ─── Runtime state ────────────────────────────────────────────────────
-
-    /** Per-instruction operand array, parallel to OpCode[]. */
-    private Object[] instrArgs;
-
-    /**
-     * Global scope — holds top-level variables AND function objects.
-     * Function bodies have their own local scope (Frame.locals).
-     */
     private final Map<String, PyObject> globals = new HashMap<>();
-
-    /** Operand stack — shared across the current frame's execution. */
     private Deque<PyObject> stack;
-
-    /**
-     * Call stack — each entry is a saved Frame (return address + local scope).
-     * When a function is called we push a new Frame; when RETURN_VALUE fires
-     * we pop the Frame and restore the caller's state.
-     */
-    private final Deque<Frame> callStack = new ArrayDeque<>();
-
-    /** Current local scope (starts as the same reference as globals). */
     private Map<String, PyObject> currentLocals;
-
-    /** A saved execution frame for the call stack. */
-    private record Frame(OpCode[] program, Object[] args, int returnPc,
+    private final Deque<Frame> callStack = new ArrayDeque<>();
+    private record Frame(CompiledCode code, int returnPc,
                          Map<String, PyObject> locals, Deque<PyObject> stack) {}
 
     // ─── Public API ───────────────────────────────────────────────────────
 
-    /**
-     * Execute a single line of Python‑3 source code.
-     *
-     * @param source e.g. {@code "print(x + 5)"}
-     */
     public void exec(String source) {
-        instrArgs = null;
         stack = new ArrayDeque<>();
-        currentLocals = globals;         // top-level code uses globals as locals
+        currentLocals = globals;
         try {
             run(compile(source.strip()));
-        } catch (ReturnSignal rs) {
-            // return outside a function — silently ignore at top level
         } catch (InterpreterException e) {
             System.err.println("Traceback (most recent call last):");
             System.err.println("  File \"<stdin>\", line 1, in <module>");
@@ -118,411 +77,203 @@ public class Jython3Interpreter {
         }
     }
 
-    // ─── ANTLR compilation ────────────────────────────────────────────────
+    // ─── ANTLR compilation → CompiledCode ─────────────────────────────────
 
-    private OpCode[] compile(String src) throws InterpreterException {
+    private CompiledCode compile(String src) throws InterpreterException {
         var lexer = new Jython3Lexer(CharStreams.fromString(src));
         lexer.removeErrorListeners();
         lexer.addErrorListener(ThrowingErrorListener.INSTANCE);
-
         var parser = new Jython3Parser(new CommonTokenStream(lexer));
         parser.removeErrorListeners();
         parser.addErrorListener(ThrowingErrorListener.INSTANCE);
-
-        var prog = new ArrayList<OpCode>();
-        var args = new ArrayList<Object>();
-        new CompileVisitor(prog, args).visit(parser.stat());
-        prog.add(OpCode.HALT);
-        args.add(null);
-        instrArgs = args.toArray();
-        return prog.toArray(OpCode[]::new);
+        var b = new CodeBuilder();
+        new CompileVisitor(b).visit(parser.stat());
+        b.emit(OpCode.HALT);
+        return b.build();
     }
 
-    /**
-     * Compile a function body (a list of simple_stmts separated by ';') into
-     * its own OpCode[] + Object[] pair, packaged as a PyFunction.
-     */
-    private PyFunction compileFunction(String name, List<String> params,
-                                        Jython3Parser.Func_bodyContext bodyCtx) {
-        var prog = new ArrayList<OpCode>();
-        var args = new ArrayList<Object>();
-        var visitor = new CompileVisitor(prog, args);
-        // visit each simple_stmt inside the body
-        for (var stmtCtx : bodyCtx.simple_stmt()) {
-            visitor.visit(stmtCtx);
+    // ─── CodeBuilder ──────────────────────────────────────────────────────
+
+    private static class CodeBuilder {
+        private final List<Integer> bytecode = new ArrayList<>();
+        private final List<Object> constPool = new ArrayList<>();
+        private final Map<Object, Integer> constMap = new HashMap<>();
+        int addConst(Object val) {
+            if (val == null) { int i = constPool.size(); constPool.add(null); return i; }
+            return constMap.computeIfAbsent(val, k -> { int i = constPool.size(); constPool.add(k); return i; });
         }
-        // implicit return None if no explicit return
-        prog.add(OpCode.LOAD_CONST);
-        args.add(null);  // will push PyNull
-        prog.add(OpCode.RETURN_VALUE);
-        args.add(null);
-        prog.add(OpCode.HALT);
-        args.add(null);
-        return new PyFunction(name, params, prog.toArray(OpCode[]::new), args.toArray());
+        void emit(OpCode op, Object cv) { bytecode.add((op.ordinal() << 16) | (addConst(cv) & 0xFFFF)); }
+        void emitRaw(OpCode op, int raw) { bytecode.add((op.ordinal() << 16) | (raw & 0xFFFF)); }
+        void emit(OpCode op)             { bytecode.add((op.ordinal() << 16) | NO_ARG); }
+        int size()                       { return bytecode.size(); }
+        void patch(int idx, int arg)     { int old = bytecode.get(idx); bytecode.set(idx, (old & 0xFFFF0000) | (arg & 0xFFFF)); }
+        CompiledCode build()             { return new CompiledCode(bytecode.stream().mapToInt(Integer::intValue).toArray(), constPool.toArray()); }
     }
 
-    /**
-     * AST visitor: translates parse‑tree nodes into op‑codes.
-     */
+    // ─── CompileVisitor ───────────────────────────────────────────────────
+
     private class CompileVisitor extends Jython3BaseVisitor<Void> {
+        private final CodeBuilder b;
+        CompileVisitor(CodeBuilder b) { this.b = b; }
 
-        private final List<OpCode> prog;
-        private final List<Object> args;
+        @Override public Void visitStat(Jython3Parser.StatContext c)                   { return visitChildren(c); }
+        @Override public Void visitSimple_stmt(Jython3Parser.Simple_stmtContext c)     { return visitChildren(c); }
+        @Override public Void visitCompound_stmt(Jython3Parser.Compound_stmtContext c) { return visitChildren(c); }
+        @Override public Void visitFunc_body(Jython3Parser.Func_bodyContext c)         { return visitChildren(c); }
 
-        CompileVisitor(List<OpCode> prog, List<Object> args) {
-            this.prog = prog;
-            this.args = args;
+        @Override public Void visitPrint_stmt(Jython3Parser.Print_stmtContext c) { visit(c.expr()); b.emit(OpCode.PRINT); return null; }
+        @Override public Void visitAssign_stmt(Jython3Parser.Assign_stmtContext c) { visit(c.expr()); b.emit(OpCode.STORE_FAST, c.ID().getText()); return null; }
+        @Override public Void visitImport_stmt(Jython3Parser.Import_stmtContext c) { b.emit(OpCode.IMPORT_MODULE, c.ID().getText()); return null; }
+        @Override public Void visitReturn_stmt(Jython3Parser.Return_stmtContext c) { visit(c.expr()); b.emit(OpCode.RETURN_VALUE); return null; }
+
+        @Override public Void visitCall_stmt(Jython3Parser.Call_stmtContext c) {
+            b.emit(OpCode.LOAD_FAST, c.ID().getText());
+            int n = 0; if (c.arg_list() != null) for (var e : c.arg_list().expr()) { visit(e); n++; }
+            b.emitRaw(OpCode.CALL_FUNCTION, n); b.emit(OpCode.POP_TOP); return null;
+        }
+        @Override public Void visitFunc_def(Jython3Parser.Func_defContext c) {
+            String name = c.ID().getText();
+            var params = new ArrayList<String>();
+            if (c.param_list() != null) for (var id : c.param_list().ID()) params.add(id.getText());
+            var fb = new CodeBuilder(); var fv = new CompileVisitor(fb);
+            for (var s : c.func_body().simple_stmt()) fv.visit(s);
+            fb.emit(OpCode.LOAD_CONST, null); fb.emit(OpCode.RETURN_VALUE); fb.emit(OpCode.HALT);
+            b.emit(OpCode.LOAD_CONST, new PyFunction(name, params, fb.build()));
+            b.emit(OpCode.MAKE_FUNCTION, name); return null;
         }
 
-        private void emit(OpCode op, Object arg) { prog.add(op); args.add(arg); }
-        private void emit(OpCode op)              { emit(op, null); }
-
-        // ── Dispatch ───────────────────────────────────────────────────
-        @Override public Void visitStat(Jython3Parser.StatContext ctx)                   { return visitChildren(ctx); }
-        @Override public Void visitSimple_stmt(Jython3Parser.Simple_stmtContext ctx)     { return visitChildren(ctx); }
-        @Override public Void visitCompound_stmt(Jython3Parser.Compound_stmtContext ctx) { return visitChildren(ctx); }
-        @Override public Void visitFunc_body(Jython3Parser.Func_bodyContext ctx)         { return visitChildren(ctx); }
-
-        // ── Statements ─────────────────────────────────────────────────
-
-        @Override
-        public Void visitPrint_stmt(Jython3Parser.Print_stmtContext ctx) {
-            visit(ctx.expr());
-            emit(OpCode.PRINT);
+        @Override public Void visitIf_stmt(Jython3Parser.If_stmtContext c) {
+            visit(c.expr()); int jf = b.size(); b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+            visit(c.simple_stmt(0)); int j = b.size(); b.emitRaw(OpCode.JUMP, 0);
+            b.patch(jf, b.size());
+            if (c.ELSE() != null) { visit(c.simple_stmt(1)); b.patch(j, b.size()); }
+            else b.patch(j, b.size());
             return null;
         }
-
-        @Override
-        public Void visitAssign_stmt(Jython3Parser.Assign_stmtContext ctx) {
-            visit(ctx.expr());
-            emit(OpCode.STORE_FAST, ctx.ID().getText());
-            return null;
+        @Override public Void visitWhile_stmt(Jython3Parser.While_stmtContext c) {
+            int ls = b.size(); visit(c.expr()); int jf = b.size(); b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+            visit(c.simple_stmt()); b.emitRaw(OpCode.JUMP, ls); b.patch(jf, b.size()); return null;
+        }
+        @Override public Void visitFor_stmt(Jython3Parser.For_stmtContext c) {
+            visit(c.expr()); b.emit(OpCode.GET_ITER);
+            int lt = b.size(); int fi = b.size(); b.emitRaw(OpCode.FOR_ITER, 0);
+            b.emit(OpCode.STORE_FAST, c.ID().getText()); visit(c.simple_stmt());
+            b.emitRaw(OpCode.JUMP, lt); b.patch(fi, b.size()); return null;
         }
 
-        @Override
-        public Void visitImport_stmt(Jython3Parser.Import_stmtContext ctx) {
-            emit(OpCode.IMPORT_MODULE, ctx.ID().getText());
-            return null;
+        @Override public Void visitMulDiv(Jython3Parser.MulDivContext c) { visit(c.expr(0)); visit(c.expr(1)); b.emit(c.op.getText().equals("*") ? OpCode.MULTIPLY : OpCode.DIVIDE); return null; }
+        @Override public Void visitAddSub(Jython3Parser.AddSubContext c) { visit(c.expr(0)); visit(c.expr(1)); b.emit(c.op.getText().equals("+") ? OpCode.ADD : OpCode.SUBTRACT); return null; }
+        @Override public Void visitParen(Jython3Parser.ParenContext c) { visit(c.expr()); return null; }
+        @Override public Void visitInt(Jython3Parser.IntContext c) { b.emit(OpCode.LOAD_CONST, Integer.valueOf(c.INT().getText())); return null; }
+        @Override public Void visitStr(Jython3Parser.StrContext c) { String r = c.STRING().getText(); b.emit(OpCode.LOAD_CONST, r.substring(1, r.length()-1)); return null; }
+        @Override public Void visitId(Jython3Parser.IdContext c) { b.emit(OpCode.LOAD_FAST, c.ID().getText()); return null; }
+        @Override public Void visitFuncCall(Jython3Parser.FuncCallContext c) {
+            b.emit(OpCode.LOAD_FAST, c.ID().getText());
+            int n = 0; if (c.arg_list() != null) for (var e : c.arg_list().expr()) { visit(e); n++; }
+            b.emitRaw(OpCode.CALL_FUNCTION, n); return null;
         }
-
-        @Override
-        public Void visitReturn_stmt(Jython3Parser.Return_stmtContext ctx) {
-            visit(ctx.expr());
-            emit(OpCode.RETURN_VALUE);
-            return null;
+        @Override public Void visitListLiteral(Jython3Parser.ListLiteralContext c) {
+            int n = 0; if (c.expr_list() != null) for (var e : c.expr_list().expr()) { visit(e); n++; }
+            b.emitRaw(OpCode.BUILD_LIST, n); return null;
         }
-
-        /** Standalone function call statement — call and discard result */
-        @Override
-        public Void visitCall_stmt(Jython3Parser.Call_stmtContext ctx) {
-            // push function object
-            emit(OpCode.LOAD_FAST, ctx.ID().getText());
-            // push each argument
-            int argCount = 0;
-            if (ctx.arg_list() != null) {
-                for (var exprCtx : ctx.arg_list().expr()) {
-                    visit(exprCtx);
-                    argCount++;
-                }
-            }
-            emit(OpCode.CALL_FUNCTION, argCount);
-            emit(OpCode.POP_TOP);        // discard return value
-            return null;
-        }
-
-        /** def name(params): body → compile body separately, emit MAKE_FUNCTION */
-        @Override
-        public Void visitFunc_def(Jython3Parser.Func_defContext ctx) {
-            String funcName = ctx.ID().getText();
-            List<String> params = new ArrayList<>();
-            if (ctx.param_list() != null) {
-                for (var id : ctx.param_list().ID()) {
-                    params.add(id.getText());
-                }
-            }
-            // compile the body into a separate PyFunction object
-            PyFunction fn = compileFunction(funcName, params, ctx.func_body());
-            // at runtime: push the PyFunction, then MAKE_FUNCTION stores it in scope
-            emit(OpCode.LOAD_CONST, fn);
-            emit(OpCode.MAKE_FUNCTION, funcName);
-            return null;
-        }
-
-        // ── Control flow ───────────────────────────────────────────────
-
-        @Override
-        public Void visitIf_stmt(Jython3Parser.If_stmtContext ctx) {
-            visit(ctx.expr());
-            int jfIdx = prog.size();
-            emit(OpCode.JUMP_IF_FALSE, -1);
-            visit(ctx.simple_stmt(0));
-            int jIdx = prog.size();
-            emit(OpCode.JUMP, -1);
-            int afterThen = prog.size();
-            args.set(jfIdx, afterThen);
-            if (ctx.ELSE() != null) {
-                visit(ctx.simple_stmt(1));
-                args.set(jIdx, prog.size());
-            } else {
-                args.set(jIdx, afterThen);
-            }
-            return null;
-        }
-
-        @Override
-        public Void visitWhile_stmt(Jython3Parser.While_stmtContext ctx) {
-            int loopStart = prog.size();
-            visit(ctx.expr());
-            int jfIdx = prog.size();
-            emit(OpCode.JUMP_IF_FALSE, -1);
-            visit(ctx.simple_stmt());
-            emit(OpCode.JUMP, loopStart);
-            args.set(jfIdx, prog.size());
-            return null;
-        }
-
-        // ── Expressions ────────────────────────────────────────────────
-
-        @Override
-        public Void visitMulDiv(Jython3Parser.MulDivContext ctx) {
-            visit(ctx.expr(0)); visit(ctx.expr(1));
-            emit(ctx.op.getText().equals("*") ? OpCode.MULTIPLY : OpCode.DIVIDE);
-            return null;
-        }
-
-        @Override
-        public Void visitAddSub(Jython3Parser.AddSubContext ctx) {
-            visit(ctx.expr(0)); visit(ctx.expr(1));
-            emit(ctx.op.getText().equals("+") ? OpCode.ADD : OpCode.SUBTRACT);
-            return null;
-        }
-
-        @Override public Void visitParen(Jython3Parser.ParenContext ctx) { visit(ctx.expr()); return null; }
-
-        @Override
-        public Void visitInt(Jython3Parser.IntContext ctx) {
-            emit(OpCode.LOAD_CONST, Integer.valueOf(ctx.INT().getText()));
-            return null;
-        }
-
-        @Override
-        public Void visitStr(Jython3Parser.StrContext ctx) {
-            String raw = ctx.STRING().getText();
-            emit(OpCode.LOAD_CONST, raw.substring(1, raw.length() - 1));
-            return null;
-        }
-
-        @Override
-        public Void visitId(Jython3Parser.IdContext ctx) {
-            emit(OpCode.LOAD_FAST, ctx.ID().getText());
-            return null;
-        }
-
-        /** Function call as an expression (keeps return value on stack). */
-        @Override
-        public Void visitFuncCall(Jython3Parser.FuncCallContext ctx) {
-            // push the callable
-            emit(OpCode.LOAD_FAST, ctx.ID().getText());
-            int argCount = 0;
-            if (ctx.arg_list() != null) {
-                for (var exprCtx : ctx.arg_list().expr()) {
-                    visit(exprCtx);
-                    argCount++;
-                }
-            }
-            emit(OpCode.CALL_FUNCTION, argCount);
-            return null;
-        }
+        @Override public Void visitSubscript(Jython3Parser.SubscriptContext c) { visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.BINARY_SUBSCR); return null; }
     }
 
     // ─── Stack‑machine execution ──────────────────────────────────────────
 
-    private void run(OpCode[] program) throws InterpreterException {
-        int pc = 0;
-        while (pc < program.length) {
-            Object arg = instrArgs[pc];
-            switch (program[pc]) {
+    private void run(CompiledCode code) throws InterpreterException {
+        int[] bc = code.bytecode(); Object[] pool = code.constPool(); int pc = 0;
+        while (pc < bc.length) {
+            int instr = bc[pc]; OpCode op = OpCode.values()[instr >>> 16]; int ai = instr & 0xFFFF;
+            switch (op) {
                 case LOAD_CONST -> {
-                    if (arg == null)               stack.push(new PyNull());
-                    else if (arg instanceof String s)   stack.push(new PyStr(s));
-                    else if (arg instanceof Integer i)  stack.push(new PyInt(i));
-                    else if (arg instanceof PyFunction fn) stack.push(fn);
-                    else throw new InterpreterException("Unknown constant type: " + arg);
+                    if (ai == NO_ARG) { stack.push(new PyNull()); break; }
+                    Object v = pool[ai];
+                    if (v == null) stack.push(new PyNull());
+                    else if (v instanceof String s) stack.push(new PyStr(s));
+                    else if (v instanceof Integer i) stack.push(new PyInt(i));
+                    else if (v instanceof PyFunction f) stack.push(f);
+                    else throw new InterpreterException("Unknown const: " + v);
                 }
-                case LOAD_FAST -> {
-                    String name = (String) arg;
-                    // check local scope first, then global
-                    PyObject v = currentLocals.get(name);
-                    if (v == null) v = globals.get(name);
-                    if (v == null)
-                        throw new InterpreterException("NameError: name '" + name + "' is not defined");
-                    stack.push(v);
-                }
-                case LOAD_GLOBAL -> {
-                    String name = (String) arg;
-                    PyObject v = globals.get(name);
-                    if (v == null)
-                        throw new InterpreterException("NameError: name '" + name + "' is not defined");
-                    stack.push(v);
-                }
-                case STORE_FAST -> currentLocals.put((String) arg, stack.pop());
+                case LOAD_FAST -> { String n = (String) pool[ai]; PyObject v = currentLocals.get(n); if (v == null) v = globals.get(n); if (v == null) throw new InterpreterException("NameError: name '" + n + "' is not defined"); stack.push(v); }
+                case LOAD_GLOBAL -> { String n = (String) pool[ai]; PyObject v = globals.get(n); if (v == null) throw new InterpreterException("NameError: name '" + n + "' is not defined"); stack.push(v); }
+                case STORE_FAST -> currentLocals.put((String) pool[ai], stack.pop());
                 case ADD      -> binaryInt(Integer::sum);
-                case SUBTRACT -> binaryInt((a, b) -> a - b);
-                case MULTIPLY -> binaryInt((a, b) -> a * b);
-                case DIVIDE   -> {
-                    var r = stack.pop(); var l = stack.pop();
-                    if (l instanceof PyInt li && r instanceof PyInt ri) {
-                        if (ri.value() == 0)
-                            throw new InterpreterException("ZeroDivisionError: division by zero");
-                        stack.push(new PyInt(li.value() / ri.value()));
-                    } else throw new InterpreterException("TypeError: unsupported operand types for /");
-                }
+                case SUBTRACT -> binaryInt((a, b2) -> a - b2);
+                case MULTIPLY -> binaryInt((a, b2) -> a * b2);
+                case DIVIDE   -> { var r = stack.pop(); var l = stack.pop(); if (l instanceof PyInt li && r instanceof PyInt ri) { if (ri.value()==0) throw new InterpreterException("ZeroDivisionError: division by zero"); stack.push(new PyInt(li.value()/ri.value())); } else throw new InterpreterException("TypeError: unsupported operand types for /"); }
                 case PRINT -> System.out.println(stack.pop());
-                case JUMP_IF_FALSE -> {
-                    var cond = stack.pop();
-                    int target = (Integer) arg;
-                    if (!isTruthy(cond)) { pc = target; continue; }
-                }
-                case JUMP -> { pc = (Integer) arg; continue; }
-                case IMPORT_MODULE -> importModule((String) arg);
-                case MAKE_FUNCTION -> {
-                    String funcName = (String) arg;
-                    PyObject fn = stack.pop();   // the PyFunction object
-                    currentLocals.put(funcName, fn);
-                }
+                case JUMP_IF_FALSE -> { if (!isTruthy(stack.pop())) { pc = ai; continue; } }
+                case JUMP -> { pc = ai; continue; }
+                case IMPORT_MODULE -> importModule((String) pool[ai]);
+                case MAKE_FUNCTION -> currentLocals.put((String) pool[ai], stack.pop());
                 case CALL_FUNCTION -> {
-                    int argCount = (Integer) arg;
-                    // collect arguments from stack (right-to-left)
-                    PyObject[] callArgs = new PyObject[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) {
-                        callArgs[i] = stack.pop();
-                    }
-                    // pop the callable
+                    int argc = ai; var args = new PyObject[argc];
+                    for (int i = argc-1; i >= 0; i--) args[i] = stack.pop();
                     PyObject callable = stack.pop();
                     if (callable instanceof PyFunction fn) {
-                        // save current state
-                        callStack.push(new Frame(program, instrArgs, pc + 1,
-                                                  currentLocals, stack));
-                        // set up new frame
-                        var fnLocals = new HashMap<String, PyObject>();
-                        for (int i = 0; i < fn.params().size() && i < argCount; i++) {
-                            fnLocals.put(fn.params().get(i), callArgs[i]);
-                        }
-                        currentLocals = fnLocals;
-                        instrArgs = fn.instrArgs();
-                        stack = new ArrayDeque<>();
-                        program = fn.body();
-                        pc = 0;
-                        continue;
-                    } else {
-                        throw new InterpreterException("TypeError: '" + callable + "' is not callable");
-                    }
+                        callStack.push(new Frame(code, pc+1, currentLocals, stack));
+                        var fl = new HashMap<String, PyObject>();
+                        for (int i = 0; i < fn.params().size() && i < argc; i++) fl.put(fn.params().get(i), args[i]);
+                        currentLocals = fl; stack = new ArrayDeque<>();
+                        code = fn.code(); bc = code.bytecode(); pool = code.constPool(); pc = 0; continue;
+                    } else throw new InterpreterException("TypeError: '" + callable + "' is not callable");
                 }
                 case RETURN_VALUE -> {
-                    PyObject retVal = stack.pop();
-                    if (callStack.isEmpty()) {
-                        // top-level return — push value and halt
-                        stack.push(retVal);
-                        return;
-                    }
-                    // restore caller's frame
-                    Frame caller = callStack.pop();
-                    program = caller.program();
-                    instrArgs = caller.args();
-                    pc = caller.returnPc();
-                    currentLocals = caller.locals();
-                    stack = caller.stack();
-                    stack.push(retVal);    // push return value onto caller's stack
-                    continue;
+                    PyObject rv = stack.pop();
+                    if (callStack.isEmpty()) { stack.push(rv); return; }
+                    Frame cf = callStack.pop(); code = cf.code(); bc = code.bytecode(); pool = code.constPool();
+                    pc = cf.returnPc(); currentLocals = cf.locals(); stack = cf.stack(); stack.push(rv); continue;
                 }
                 case POP_TOP -> stack.pop();
+                case BUILD_LIST -> { int n = ai; var items = new ArrayList<PyObject>(n); for (int i = 0; i < n; i++) items.addFirst(stack.pop()); stack.push(new PyList(items)); }
+                case BINARY_SUBSCR -> {
+                    PyObject idx = stack.pop(); PyObject ctr = stack.pop();
+                    if (ctr instanceof PyList list && idx instanceof PyInt ix) { int i = ix.value(); if (i<0) i += list.items().size(); if (i<0||i>=list.items().size()) throw new InterpreterException("IndexError: list index out of range"); stack.push(list.items().get(i)); }
+                    else throw new InterpreterException("TypeError: unsupported subscript types");
+                }
+                case GET_ITER -> { PyObject o = stack.pop(); if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0)); else throw new InterpreterException("TypeError: '" + o + "' is not iterable"); }
+                case FOR_ITER -> { PyObject top = stack.peek(); if (top instanceof PyIterator iter) { if (iter.hasNext()) stack.push(iter.next()); else { stack.pop(); pc = ai; continue; } } else throw new InterpreterException("TypeError: expected iterator"); }
                 case HALT -> { return; }
             }
             pc++;
         }
     }
 
-    @FunctionalInterface
-    private interface IntBinOp { int apply(int a, int b); }
+    @FunctionalInterface private interface IntBinOp { int apply(int a, int b); }
+    private void binaryInt(IntBinOp op) { var r = stack.pop(); var l = stack.pop(); if (l instanceof PyInt li && r instanceof PyInt ri) stack.push(new PyInt(op.apply(li.value(), ri.value()))); else throw new InterpreterException("TypeError: unsupported operand types for arithmetic"); }
+    private static boolean isTruthy(PyObject v) { return switch (v) { case PyInt i -> i.value()!=0; case PyStr s -> !s.value().isEmpty(); case PyNull n -> false; case PyFunction f -> true; case PyList l -> !l.items().isEmpty(); case PyIterator it -> true; }; }
 
-    private void binaryInt(IntBinOp op) throws InterpreterException {
-        var rhs = stack.pop(); var lhs = stack.pop();
-        if (lhs instanceof PyInt l && rhs instanceof PyInt r)
-            stack.push(new PyInt(op.apply(l.value(), r.value())));
-        else
-            throw new InterpreterException("TypeError: unsupported operand types for arithmetic");
+    private void importModule(String name) {
+        try (var br = new BufferedReader(new FileReader("modules/" + name + ".py"))) { String l; while ((l = br.readLine()) != null) if (!l.isBlank()) exec(l); }
+        catch (IOException e) { throw new InterpreterException("ImportError: no module named '" + name + "'"); }
     }
 
-    private static boolean isTruthy(PyObject v) {
-        return switch (v) {
-            case PyInt i -> i.value() != 0;
-            case PyStr s -> !s.value().isEmpty();
-            case PyNull n -> false;
-            case PyFunction f -> true;
-        };
+    // ─── Bytecode public API ──────────────────────────────────────────────
+    public int[] compileToBytecode(String src) { return compile(src.strip()).bytecode(); }
+    public CompiledCode compileToCode(String src) { return compile(src.strip()); }
+
+    // ─── Runtime object hierarchy ─────────────────────────────────────────
+    public sealed interface PyObject permits PyInt, PyStr, PyNull, PyFunction, PyList, PyIterator {}
+    public record PyInt(int value) implements PyObject { @Override public String toString() { return Integer.toString(value); } }
+    public record PyStr(String value) implements PyObject { @Override public String toString() { return value; } }
+    public record PyNull() implements PyObject { @Override public String toString() { return "None"; } }
+    public record PyFunction(String name, List<String> params, CompiledCode code) implements PyObject { @Override public String toString() { return "<function " + name + ">"; } }
+    public record PyList(List<PyObject> items) implements PyObject {
+        @Override public String toString() { var sb = new StringBuilder("["); for (int i=0;i<items.size();i++) { if (i>0) sb.append(", "); var it=items.get(i); if (it instanceof PyStr s) sb.append("'").append(s.value()).append("'"); else sb.append(it); } return sb.append("]").toString(); }
     }
-
-    private void importModule(String name) throws InterpreterException {
-        String path = "modules/" + name + ".py";
-        try (var br = new BufferedReader(new FileReader(path))) {
-            String line;
-            while ((line = br.readLine()) != null)
-                if (!line.isBlank()) exec(line);
-        } catch (IOException e) {
-            throw new InterpreterException("ImportError: no module named '" + name + "'");
-        }
-    }
-
-    // ─── Bytecode generation ──────────────────────────────────────────────
-
-    public int[] compileToBytecode(String src) throws InterpreterException {
-        OpCode[] prog = compile(src.strip());
-        int[] bc = new int[prog.length];
-        for (int i = 0; i < prog.length; i++) {
-            int operand = (instrArgs[i] instanceof Integer iv) ? iv : 0;
-            bc[i] = (prog[i].ordinal() << 16) | (operand & 0xFFFF);
-        }
-        return bc;
-    }
-
-    // ─── Runtime object hierarchy (Java 21: sealed + records) ────────────
-
-    public sealed interface PyObject permits PyInt, PyStr, PyNull, PyFunction {}
-
-    public record PyInt(int value) implements PyObject {
-        @Override public String toString() { return Integer.toString(value); }
-    }
-    public record PyStr(String value) implements PyObject {
-        @Override public String toString() { return value; }
-    }
-    public record PyNull() implements PyObject {
-        @Override public String toString() { return "None"; }
-    }
-
-    /** A callable function object holding compiled body + parameter names. */
-    public record PyFunction(String name, List<String> params,
-                              OpCode[] body, Object[] instrArgs) implements PyObject {
-        @Override public String toString() { return "<function " + name + ">"; }
+    public static final class PyIterator implements PyObject {
+        private final List<PyObject> items; private int cursor;
+        public PyIterator(List<PyObject> items, int cursor) { this.items = items; this.cursor = cursor; }
+        boolean hasNext() { return cursor < items.size(); }
+        PyObject next() { return items.get(cursor++); }
+        @Override public String toString() { return "<iterator>"; }
     }
 
     // ─── Error handling ───────────────────────────────────────────────────
-
-    public static class InterpreterException extends RuntimeException {
-        public InterpreterException(String msg) { super(msg); }
-    }
-
-    /** Used internally to unwind through RETURN_VALUE at top level. */
-    private static class ReturnSignal extends RuntimeException {
-        final PyObject value;
-        ReturnSignal(PyObject v) { this.value = v; }
-    }
-
+    public static class InterpreterException extends RuntimeException { public InterpreterException(String m) { super(m); } }
     private static final class ThrowingErrorListener extends BaseErrorListener {
         static final ThrowingErrorListener INSTANCE = new ThrowingErrorListener();
-        @Override
-        public void syntaxError(Recognizer<?, ?> rec, Object sym,
-                                int line, int col, String msg, RecognitionException e) {
-            throw new InterpreterException("SyntaxError at " + line + ":" + col + " – " + msg);
-        }
+        @Override public void syntaxError(Recognizer<?,?> r, Object s, int l, int c, String m, RecognitionException e) { throw new InterpreterException("SyntaxError at "+l+":"+c+" – "+m); }
     }
 }

@@ -274,4 +274,91 @@ class Jython3InterpreterTest {
         py.exec("x()");
         assertTrue(err().contains("TypeError") || err().contains("not callable"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  10. List literals (Phase 6 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testListLiteralPrint() {
+        py.exec("print([1, 2, 3])");
+        assertEquals("[1, 2, 3]", out());
+    }
+
+    @Test void testListAssignAndPrint() {
+        py.exec("xs = [10, 20, 30]");
+        py.exec("print(xs)");
+        assertEquals("[10, 20, 30]", out());
+    }
+
+    @Test void testEmptyList() {
+        py.exec("print([])");
+        assertEquals("[]", out());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  11. Subscript access (Phase 6 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testSubscriptAccess() {
+        py.exec("xs = [10, 20, 30]");
+        py.exec("print(xs[1])");
+        assertEquals("20", out());
+    }
+
+    @Test void testSubscriptFirstElement() {
+        py.exec("xs = [5, 6, 7]");
+        py.exec("print(xs[0])");
+        assertEquals("5", out());
+    }
+
+    @Test void testSubscriptOutOfRange() {
+        py.exec("xs = [1, 2]");
+        py.exec("print(xs[5])");
+        assertTrue(err().contains("IndexError"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  12. for ... in ... loops (Phase 6 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testForLoopOverList() {
+        py.exec("xs = [1, 2, 3]");
+        py.exec("for x in xs: print(x)");
+        assertEquals("1" + System.lineSeparator() + "2" + System.lineSeparator() + "3",
+                     outCapture.toString().trim());
+    }
+
+    @Test void testForLoopOverEmptyList() {
+        py.exec("for x in []: print(x)");
+        assertEquals("", out());
+    }
+
+    @Test void testForLoopWithArithmetic() {
+        py.exec("for n in [10, 20]: print(n + 1)");
+        assertEquals("11" + System.lineSeparator() + "21", outCapture.toString().trim());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  13. CompiledCode & bytecode layer (Phase 6 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testCompiledCodeHasConstPool() {
+        var code = py.compileToCode("print(42)");
+        assertNotNull(code);
+        assertNotNull(code.constPool());
+        assertTrue(code.constPool().length > 0);
+    }
+
+    @Test void testCompiledCodeBytecodeLength() {
+        var code = py.compileToCode("x = 5");
+        // x = 5 → LOAD_CONST, STORE_FAST, HALT = 3
+        assertEquals(3, code.bytecode().length);
+    }
+
+    @Test void testBytecodeEncoding() {
+        var code = py.compileToCode("print(1)");
+        int first = code.bytecode()[0];
+        // first instruction should be LOAD_CONST (ordinal 0) → high 16 bits = 0
+        assertEquals(0, first >>> 16);
+    }
 }
