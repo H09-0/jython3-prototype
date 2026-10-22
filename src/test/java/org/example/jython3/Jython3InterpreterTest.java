@@ -6,7 +6,7 @@ import java.nio.file.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Comprehensive test suite for Jython3Interpreter (Phase 4 – ANTLR4 parser).
+ * Comprehensive test suite for Jython3Interpreter (Phase 5 – Functions & Call Stack).
  *
  * Covers:
  *   • print() with string literals
@@ -17,6 +17,9 @@ import static org.junit.jupiter.api.Assertions.*;
  *   • Module import
  *   • Error handling (NameError, ZeroDivisionError, SyntaxError)
  *   • Bytecode generation
+ *   • Function definitions, calls, parameters, return values
+ *   • Nested function calls
+ *   • Local scope isolation
  */
 class Jython3InterpreterTest {
 
@@ -43,11 +46,12 @@ class Jython3InterpreterTest {
         System.setErr(originalErr);
     }
 
-    // ─── Utility ──────────────────────────────────────────────────────
     private String out() { return outCapture.toString().trim(); }
     private String err() { return errCapture.toString().trim(); }
 
-    // ─── 1. print() with string literals ────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //  1. print() with string literals
+    // ═══════════════════════════════════════════════════════════════════
     @Test void testPrintString() {
         py.exec("print('Hello, World!')");
         assertEquals("Hello, World!", out());
@@ -58,7 +62,9 @@ class Jython3InterpreterTest {
         assertEquals("Jython3", out());
     }
 
-    // ─── 2. Variable assignment & retrieval ─────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //  2. Variable assignment & retrieval
+    // ═══════════════════════════════════════════════════════════════════
     @Test void testVariableAssignAndPrint() {
         py.exec("x = 42");
         py.exec("print(x)");
@@ -73,35 +79,20 @@ class Jython3InterpreterTest {
         assertEquals("10" + System.lineSeparator() + "20", outCapture.toString().trim());
     }
 
-    // ─── 3. Arithmetic ───────────────────────────────────────────────
-    @Test void testAddition() {
-        py.exec("print(3 + 4)");
-        assertEquals("7", out());
-    }
-
-    @Test void testSubtraction() {
-        py.exec("print(10 - 3)");
-        assertEquals("7", out());
-    }
-
-    @Test void testMultiplication() {
-        py.exec("print(6 * 7)");
-        assertEquals("42", out());
-    }
-
-    @Test void testDivision() {
-        py.exec("print(20 / 4)");
-        assertEquals("5", out());
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    //  3. Arithmetic
+    // ═══════════════════════════════════════════════════════════════════
+    @Test void testAddition() { py.exec("print(3 + 4)"); assertEquals("7", out()); }
+    @Test void testSubtraction() { py.exec("print(10 - 3)"); assertEquals("7", out()); }
+    @Test void testMultiplication() { py.exec("print(6 * 7)"); assertEquals("42", out()); }
+    @Test void testDivision() { py.exec("print(20 / 4)"); assertEquals("5", out()); }
 
     @Test void testOperatorPrecedence_MulBeforeAdd() {
-        // 2 + 3 * 4 = 14  (not 20)
         py.exec("print(2 + 3 * 4)");
         assertEquals("14", out());
     }
 
     @Test void testParenthesesOverridePrecedence() {
-        // (2 + 3) * 4 = 20
         py.exec("print((2 + 3) * 4)");
         assertEquals("20", out());
     }
@@ -113,21 +104,15 @@ class Jython3InterpreterTest {
     }
 
     @Test void testComplexArithmetic() {
-        // 10 + 2 * 3 - 1 = 15
         py.exec("print(10 + 2 * 3 - 1)");
         assertEquals("15", out());
     }
 
-    // ─── 4. if / else ────────────────────────────────────────────────
-    @Test void testIfTrue() {
-        py.exec("if 1: print('yes')");
-        assertEquals("yes", out());
-    }
-
-    @Test void testIfFalse() {
-        py.exec("if 0: print('yes')");
-        assertEquals("", out());
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    //  4. if / else
+    // ═══════════════════════════════════════════════════════════════════
+    @Test void testIfTrue() { py.exec("if 1: print('yes')"); assertEquals("yes", out()); }
+    @Test void testIfFalse() { py.exec("if 0: print('yes')"); assertEquals("", out()); }
 
     @Test void testIfElseTrueBranch() {
         py.exec("if 1: print('yes') else: print('no')");
@@ -145,13 +130,17 @@ class Jython3InterpreterTest {
         assertEquals("truthy", out());
     }
 
-    // ─── 5. while loops ──────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //  5. while loops
+    // ═══════════════════════════════════════════════════════════════════
     @Test void testWhileFalseDoesNotExecute() {
         py.exec("while 0: print('loop')");
         assertEquals("", out());
     }
 
-    // ─── 6. Module import ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //  6. Module import
+    // ═══════════════════════════════════════════════════════════════════
     @Test void testImportModule() throws IOException {
         Files.createDirectories(Path.of("modules"));
         Files.writeString(Path.of("modules/testmod.py"), "a = 99\n");
@@ -165,7 +154,9 @@ class Jython3InterpreterTest {
         assertTrue(err().contains("ImportError"));
     }
 
-    // ─── 7. Error handling ───────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //  7. Error handling
+    // ═══════════════════════════════════════════════════════════════════
     @Test void testNameError() {
         py.exec("print(undefined_var)");
         assertTrue(err().contains("NameError"));
@@ -182,7 +173,9 @@ class Jython3InterpreterTest {
         assertTrue(combined.contains("SyntaxError") || combined.contains("Traceback"));
     }
 
-    // ─── 8. Bytecode generation ──────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //  8. Bytecode generation
+    // ═══════════════════════════════════════════════════════════════════
     @Test void testBytecodeNotNullOrEmpty() throws Jython3Interpreter.InterpreterException {
         int[] bc = py.compileToBytecode("print(1 + 2)");
         assertNotNull(bc);
@@ -190,14 +183,95 @@ class Jython3InterpreterTest {
     }
 
     @Test void testBytecodeLength_PrintInt() throws Jython3Interpreter.InterpreterException {
-        // print(5) → LOAD_CONST, PRINT, HALT = 3 opcodes
         int[] bc = py.compileToBytecode("print(5)");
         assertEquals(3, bc.length);
     }
 
     @Test void testBytecodeLength_Assign() throws Jython3Interpreter.InterpreterException {
-        // x = 10 → LOAD_CONST, STORE_FAST, HALT = 3 opcodes
         int[] bc = py.compileToBytecode("x = 10");
         assertEquals(3, bc.length);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  9. Function definitions & calls (Phase 5 – NEW)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testDefineAndCallSimpleFunction() {
+        // def greet(): print('hi')
+        // greet()
+        py.exec("def greet(): print('hi')");
+        py.exec("greet()");
+        assertEquals("hi", out());
+    }
+
+    @Test void testFunctionWithOneParam() {
+        py.exec("def say(msg): print(msg)");
+        py.exec("say('hello')");
+        assertEquals("hello", out());
+    }
+
+    @Test void testFunctionWithTwoParams() {
+        // def add(a, b): print(a + b)
+        py.exec("def add(a, b): print(a + b)");
+        py.exec("add(3, 4)");
+        assertEquals("7", out());
+    }
+
+    @Test void testFunctionWithReturnValue() {
+        // def double(x): return x * 2
+        py.exec("def double(x): return x * 2");
+        py.exec("print(double(5))");
+        assertEquals("10", out());
+    }
+
+    @Test void testFunctionReturnInExpression() {
+        // def square(n): return n * n
+        py.exec("def square(n): return n * n");
+        py.exec("print(square(4) + 1)");
+        assertEquals("17", out());
+    }
+
+    @Test void testFunctionCallAsArgument() {
+        // def inc(x): return x + 1
+        py.exec("def inc(x): return x + 1");
+        py.exec("print(inc(inc(3)))");
+        assertEquals("5", out());
+    }
+
+    @Test void testFunctionLocalScopeIsolation() {
+        // x at global level should not be changed by local x inside function
+        py.exec("x = 100");
+        py.exec("def f(x): print(x)");
+        py.exec("f(42)");
+        py.exec("print(x)");
+        assertEquals("42" + System.lineSeparator() + "100", outCapture.toString().trim());
+    }
+
+    @Test void testFunctionMultipleStatements() {
+        // def calc(a, b): print(a + b); print(a * b)
+        py.exec("def calc(a, b): print(a + b); print(a * b)");
+        py.exec("calc(3, 5)");
+        assertEquals("8" + System.lineSeparator() + "15", outCapture.toString().trim());
+    }
+
+    @Test void testFunctionReadsGlobalVariable() {
+        // Function can read global variables
+        py.exec("g = 10");
+        py.exec("def show(): print(g)");
+        py.exec("show()");
+        assertEquals("10", out());
+    }
+
+    @Test void testStandaloneCallDoesNotLeakReturnValue() {
+        // Standalone call discards return value
+        py.exec("def noop(): return 42");
+        py.exec("noop()");
+        assertEquals("", out());  // nothing printed
+    }
+
+    @Test void testUncallableError() {
+        py.exec("x = 5");
+        py.exec("x()");
+        assertTrue(err().contains("TypeError") || err().contains("not callable"));
     }
 }
