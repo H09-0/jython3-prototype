@@ -47,6 +47,11 @@ public final class PyException implements PyObject {
         return new PyException(typeName, message);
     }
 
+    /** Creates an exception value that remembers the JVM throwable behind it. */
+    public static PyException withJavaCause(String typeName, String message, Throwable javaCause) {
+        return new PyException(typeName, message, defaultArgs(message), null, null, javaCause);
+    }
+
     public String typeName() { return typeName; }
     public String message() { return message; }
     public List<PyObject> args() { return args; }

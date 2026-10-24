@@ -44,6 +44,7 @@ import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyCompiledCodeWrapper;
 import org.example.jython3.runtime.PyDict;
+import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyGenerator;
@@ -309,29 +310,6 @@ public class Jython3Interpreter {
             currentLine = savedLine;
         }
         return collected;
-    }
-
-    /**
-     * Python-style exception matching for the single-string exception model used
-     * by the VM. {@code Exception} and {@code BaseException} are catch-alls;
-     * Java reflection failures are wrapped as {@code JavaException: <fqcn>: ...}.
-     */
-    private static boolean matchesExceptionType(String typeName, String excMsg) {
-        if (typeName.equals("Exception") || typeName.equals("BaseException")) return true;
-        if (excMsg.equals(typeName) || excMsg.startsWith(typeName + ":") || excMsg.startsWith(typeName + "(")) {
-            return true;
-        }
-        if (excMsg.startsWith("JavaException: ")) {
-            return switch (typeName) {
-                case "IndexError" -> excMsg.contains("IndexOutOfBoundsException");
-                case "KeyError" -> excMsg.contains("NoSuchElementException");
-                case "ValueError" -> excMsg.contains("NumberFormatException")
-                        || excMsg.contains("IllegalArgumentException");
-                case "TypeError" -> excMsg.contains("ClassCastException");
-                default -> false;
-            };
-        }
-        return false;
     }
 
     public PyObject getGlobal(String name) {
@@ -830,7 +808,7 @@ public class Jython3Interpreter {
                         while (!gen.isDone()) {
                             try { items.add(gen.next()); }
                             catch (InterpreterException ie) {
-                                if (ie.getMessage().startsWith("StopIteration")) break;
+                                if ("StopIteration".equals(ie.typeName())) break;
                                 throw ie;
                             }
                         }
@@ -896,18 +874,16 @@ public class Jython3Interpreter {
                     throw new InterpreterException(excType + ": " + msg);
                 }
                 case COMPARE_EXC_TYPE -> {
-                    // Stack: [..., excMsg, typeName]
-                    // Pops typeName, keeps excMsg for binding, and pushes the match result.
+                    // Stack: [..., exceptionValue, typeName]
+                    // Pops typeName, keeps the value for binding, and pushes the match result.
                     PyObject typeNameObj = stack.pop();
-                    PyObject excMsgObj = stack.peek();
+                    PyObject excValue = stack.peek();
                     String typeName2 = typeNameObj instanceof PyStr s ? s.value() : typeNameObj.toString();
-                    String excMsg = excMsgObj instanceof PyStr s ? s.value() : excMsgObj.toString();
-                    stack.push(PyBool.of(matchesExceptionType(typeName2, excMsg)));
+                    stack.push(PyBool.of(PyErrors.matches(excValue, typeName2)));
                 }
                 case RERAISE -> {
                     PyObject excObj = stack.pop();
-                    String excMsg = excObj instanceof PyStr s ? s.value() : excObj.toString();
-                    throw new InterpreterException(excMsg);
+                    throw new InterpreterException(excObj);
                 }
                 case EXECFILE -> {
                     // Stack top = file path string
@@ -935,7 +911,7 @@ public class Jython3Interpreter {
             } catch (InterpreterException ie) {
                 if (!exceptStack.isEmpty()) {
                     ExceptHandler h = exceptStack.pop();
-                    stack.push(new PyStr(ie.getMessage()));
+                    stack.push(ie.value());
                     pc = h.exceptPc();
                     continue outer;
                 }
@@ -956,7 +932,7 @@ public class Jython3Interpreter {
                     currentLine = cf.line();
                     if (!exceptStack.isEmpty()) {
                         ExceptHandler h = exceptStack.pop();
-                        stack.push(new PyStr(ie.getMessage()));
+                        stack.push(ie.value());
                         pc = h.exceptPc();
                         continue outer;
                     }
