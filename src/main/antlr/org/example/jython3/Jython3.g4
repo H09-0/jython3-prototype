@@ -72,9 +72,22 @@ aug_op
     | POWER_ASSIGN
     ;
 
-/** import module_name */
+/** import module_name or from module import name */
 import_stmt
-    : IMPORT ID
+    : IMPORT dotted_as_name (COMMA dotted_as_name)*
+    | FROM dotted_name IMPORT (MUL | import_as_name (COMMA import_as_name)*)
+    ;
+
+dotted_as_name
+    : dotted_name (AS ID)?
+    ;
+
+import_as_name
+    : ID (AS ID)?
+    ;
+
+dotted_name
+    : ID (DOT ID)*
     ;
 
 /** raise [ExcType[(msg)]] */
@@ -227,6 +240,8 @@ TRY      : 'try';
 EXCEPT   : 'except';
 RAISE    : 'raise';
 IMPORT   : 'import';
+FROM     : 'from';
+AS       : 'as';
 DEF      : 'def';
 CLASS    : 'class';
 RETURN   : 'return';
