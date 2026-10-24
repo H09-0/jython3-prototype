@@ -1373,6 +1373,39 @@ class Jython3InterpreterTest {
         assertTrue(err().contains("b = a / 0"), err());
     }
 
+    @Test void testNextWalksAnIterator() {
+        py.exec("""
+            it = iter([10, 20])
+            print(next(it))
+            print(next(it))
+            print(next(it, "done"))
+            """);
+        assertEquals("10\n20\ndone", out());
+        assertEquals("", err());
+    }
+
+    @Test void testNextOnGenerator() {
+        py.exec("""
+            def gen():
+                yield "a"
+                yield "b"
+
+            g = gen()
+            print(next(g))
+            print(next(g))
+            print(next(g, "end"))
+            """);
+        assertEquals("a\nb\nend", out());
+    }
+
+    @Test void testIterOverStringAndForLoop() {
+        py.exec("""
+            for ch in iter("abc"):
+                print(ch)
+            """);
+        assertEquals("a\nb\nc", out());
+    }
+
     @Test void testTryFinallyWithoutExcept() {
         py.exec("""
             try:

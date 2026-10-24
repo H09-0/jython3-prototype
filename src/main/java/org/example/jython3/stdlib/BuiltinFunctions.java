@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
+import org.example.jython3.bridge.JavaBridge;
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBuiltinFunction;
@@ -15,8 +16,10 @@ import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyFloat;
+import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
 import org.example.jython3.runtime.PyInt;
+import org.example.jython3.runtime.PyIterator;
 import org.example.jython3.runtime.PyJavaObject;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
@@ -222,6 +225,30 @@ public final class BuiltinFunctions {
             return new PyList(items);
         }));
 
+        // iter(obj) and next(iterator[, default])
+        define.accept("iter", new PyBuiltinFunction("iter", args -> {
+            checkArgCount("iter", args, 1);
+            return toIterator(args[0]);
+        }));
+
+        define.accept("next", new PyBuiltinFunction("next", args -> {
+            if (args.length < 1 || args.length > 2) {
+                throw new InterpreterException("TypeError: next expected 1 or 2 arguments, got " + args.length);
+            }
+            PyObject o = args[0];
+            try {
+                if (o instanceof PyIterator it) {
+                    if (it.hasNext()) return it.next();
+                    throw new InterpreterException("StopIteration");
+                }
+                if (o instanceof PyGenerator gen) return gen.next();
+                throw new InterpreterException("TypeError: '" + typeName(o) + "' object is not an iterator");
+            } catch (InterpreterException ie) {
+                if (args.length == 2 && ie.getMessage().startsWith("StopIteration")) return args[1];
+                throw ie;
+            }
+        }));
+
         // enumerate(iterable)
         define.accept("enumerate", new PyBuiltinFunction("enumerate", args -> {
             checkArgCount("enumerate", args, 1);
@@ -375,6 +402,29 @@ public final class BuiltinFunctions {
                 throw new InterpreterException("IOError: " + e.getMessage());
             }
         }));
+    }
+
+    /** Converts a supported iterable into a fresh iterator. */
+    private static PyIterator toIterator(PyObject o) {
+        if (o instanceof PyIterator it) return it;
+        if (o instanceof PyList list) return new PyIterator(list.items(), 0);
+        if (o instanceof PyStr s) {
+            var chars = new ArrayList<PyObject>();
+            for (char ch : s.value().toCharArray()) chars.add(new PyStr(String.valueOf(ch)));
+            return new PyIterator(chars, 0);
+        }
+        if (o instanceof PyDict d) return new PyIterator(new ArrayList<>(d.map().keySet()), 0);
+        if (o instanceof PyGenerator gen) {
+            var items = new ArrayList<PyObject>();
+            while (!gen.isDone()) items.add(gen.next());
+            return new PyIterator(items, 0);
+        }
+        if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
+            var items = new ArrayList<PyObject>();
+            for (Object item : iterable) items.add(JavaBridge.toPyObject(item));
+            return new PyIterator(items, 0);
+        }
+        throw new InterpreterException("TypeError: '" + typeName(o) + "' object is not iterable");
     }
 
     private static PyObject map(PyCaller caller, PyObject[] args) {

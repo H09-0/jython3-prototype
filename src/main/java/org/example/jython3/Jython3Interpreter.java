@@ -809,7 +809,8 @@ public class Jython3Interpreter {
                 }
                 case GET_ITER -> {
                     PyObject o = stack.pop();
-                    if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0));
+                    if (o instanceof PyIterator iter) stack.push(iter);
+                    else if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0));
                     else if (o instanceof PyStr s) {
                         var chars = new ArrayList<PyObject>();
                         for (char ch : s.value().toCharArray()) chars.add(new PyStr(String.valueOf(ch)));
