@@ -1,6 +1,5 @@
 package org.example.jython3.runtime;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -10,6 +9,10 @@ import java.util.regex.Pattern;
  * {@link #error(String, String)} instead of constructing
  * {@link InterpreterException} with a formatted string, and Java throwables
  * should enter through {@link #fromJava(Throwable)}.
+ *
+ * <p>Every exception value carries a {@link PyClass}. A type name is only a
+ * lookup key at the entry points that still receive text; once the value
+ * exists, matching walks the class's real base list.
  */
 public final class PyErrors {
     private PyErrors() {}
@@ -36,13 +39,19 @@ public final class PyErrors {
      * throwable when it already is an {@link InterpreterException}, so Python
      * errors raised inside reflective calls do not turn into
      * {@code JavaException}.
+     *
+     * <p>The Java table chooses the Python type; it does not create Python
+     * inheritance. The chosen type is resolved in the active runtime's
+     * {@link ExceptionTypeRegistry}, and the original throwable is preserved in
+     * {@code javaCause}.
      */
     public static InterpreterException fromJava(Throwable throwable) {
         if (throwable instanceof InterpreterException ie) return ie;
         Throwable cause = unwrap(throwable);
         String typeName = javaTypeName(cause);
         String message = javaMessage(cause, typeName);
-        return new InterpreterException(PyException.withJavaCause(typeName, message, cause));
+        PyClass type = ExceptionTypeRegistry.current().type(typeName);
+        return new InterpreterException(PyException.withJavaCause(type, message, cause));
     }
 
     private static Throwable unwrap(Throwable throwable) {
@@ -80,25 +89,36 @@ public final class PyErrors {
     // ─── Matching ────────────────────────────────────────────────────────
 
     /**
-     * Python-style exception matching. This is the single place that decides
-     * whether a raised value is caught by {@code except <typeName>}. Matching
-     * follows the real type hierarchy rather than the type name alone, so
-     * {@code except Exception} does not catch {@code SystemExit},
-     * {@code KeyboardInterrupt}, or {@code GeneratorExit}.
+     * Python-style exception matching against a type name resolved in the
+     * active runtime. Prefer {@link #matches(PyObject, PyClass)} when the
+     * handler already has a class object.
      */
     public static boolean matches(PyObject value, String typeName) {
         if (typeName == null || typeName.isEmpty()) return true;
+        return matches(value, ExceptionTypeRegistry.current().type(typeName));
+    }
+
+    /**
+     * Python-style exception matching. This is the single place that decides
+     * whether a raised value is caught by a handler type, using the class's
+     * real base list rather than a name table. {@code Exception} therefore does
+     * not catch {@code SystemExit}, {@code KeyboardInterrupt}, or
+     * {@code GeneratorExit}.
+     */
+    public static boolean matches(PyObject value, PyClass type) {
+        if (type == null) return true;
 
         if (value instanceof PyException pe) {
-            if (isInstanceOf(pe.typeName(), typeName)) return true;
-            if (pe.javaCause() != null
-                    && isInstanceOf(javaTypeName(pe.javaCause()), typeName)) {
-                return true;
+            if (pe.type().isSubclassOf(type)) return true;
+            if (pe.javaCause() != null) {
+                PyClass mapped = ExceptionTypeRegistry.current().type(javaTypeName(pe.javaCause()));
+                if (mapped.isSubclassOf(type)) return true;
             }
             // Values created before the bridge migration carry the Java class
             // name in the message instead of a javaCause.
             if (pe.typeName().equals("JavaException") && !pe.message().isEmpty()) {
-                return isInstanceOf(javaTypeName(pe.message()), typeName);
+                PyClass mapped = ExceptionTypeRegistry.current().type(javaTypeName(pe.message()));
+                if (mapped.isSubclassOf(type)) return true;
             }
             return false;
         }
@@ -106,97 +126,8 @@ public final class PyErrors {
         // Legacy non-exception values. Raised strings and numbers are not
         // Python exceptions, so only an exact textual match applies.
         String text = value == null ? "" : value.toString();
-        return text.equals(typeName) || text.startsWith(typeName + ":") || text.startsWith(typeName + "(");
-    }
-
-    /** Whether {@code typeName} is {@code ancestor} or derives from it. */
-    public static boolean isInstanceOf(String typeName, String ancestor) {
-        if (typeName == null || ancestor == null) return false;
-        if (typeName.equals(ancestor)) return true;
-        String current = typeName;
-        for (int depth = 0; depth < 64; depth++) {
-            String parent = parentOf(current);
-            if (parent == null || parent.isEmpty()) return false;
-            if (parent.equals(ancestor)) return true;
-            current = parent;
-        }
-        return false;
-    }
-
-    /**
-     * The parent of a Python exception type. Unknown names are treated as
-     * user-defined exception classes, which inherit from {@code Exception}.
-     */
-    private static String parentOf(String typeName) {
-        if (typeName == null || typeName.isEmpty()) return "";
-        String known = PARENTS.get(typeName);
-        if (known != null) return known;
-        return "Exception";
-    }
-
-    private static final Map<String, String> PARENTS = buildParents();
-
-    private static Map<String, String> buildParents() {
-        Map<String, String> m = new HashMap<>();
-        // Direct subclasses of BaseException.
-        m.put("BaseException", "");
-        m.put("Exception", "BaseException");
-        m.put("SystemExit", "BaseException");
-        m.put("KeyboardInterrupt", "BaseException");
-        m.put("GeneratorExit", "BaseException");
-        // Direct subclasses of Exception.
-        m.put("ArithmeticError", "Exception");
-        m.put("AssertionError", "Exception");
-        m.put("AttributeError", "Exception");
-        m.put("BufferError", "Exception");
-        m.put("EOFError", "Exception");
-        m.put("ImportError", "Exception");
-        m.put("LookupError", "Exception");
-        m.put("MemoryError", "Exception");
-        m.put("NameError", "Exception");
-        m.put("OSError", "Exception");
-        m.put("ReferenceError", "Exception");
-        m.put("RuntimeError", "Exception");
-        m.put("StopAsyncIteration", "Exception");
-        m.put("StopIteration", "Exception");
-        m.put("SyntaxError", "Exception");
-        m.put("SystemError", "Exception");
-        m.put("TypeError", "Exception");
-        m.put("ValueError", "Exception");
-        m.put("Warning", "Exception");
-        // Deeper levels.
-        m.put("ZeroDivisionError", "ArithmeticError");
-        m.put("OverflowError", "ArithmeticError");
-        m.put("FloatingPointError", "ArithmeticError");
-        m.put("IndexError", "LookupError");
-        m.put("KeyError", "LookupError");
-        m.put("ModuleNotFoundError", "ImportError");
-        m.put("IndentationError", "SyntaxError");
-        m.put("TabError", "IndentationError");
-        m.put("UnboundLocalError", "NameError");
-        m.put("RecursionError", "RuntimeError");
-        m.put("NotImplementedError", "RuntimeError");
-        m.put("FileNotFoundError", "OSError");
-        m.put("FileExistsError", "OSError");
-        m.put("PermissionError", "OSError");
-        m.put("IsADirectoryError", "OSError");
-        m.put("NotADirectoryError", "OSError");
-        m.put("TimeoutError", "OSError");
-        m.put("ConnectionError", "OSError");
-        m.put("UnicodeError", "ValueError");
-        m.put("UnicodeDecodeError", "UnicodeError");
-        m.put("UnicodeEncodeError", "UnicodeError");
-        m.put("DeprecationWarning", "Warning");
-        m.put("UserWarning", "Warning");
-        m.put("RuntimeWarning", "Warning");
-        m.put("SyntaxWarning", "Warning");
-        m.put("ResourceWarning", "Warning");
-        // Runtime-specific types. They are not CPython built-ins but behave as
-        // ordinary exception classes and inherit from Exception.
-        m.put("SecurityError", "Exception");
-        m.put("JavaException", "Exception");
-        m.put("JavaError", "Exception");
-        return Map.copyOf(m);
+        String name = type.name();
+        return text.equals(name) || text.startsWith(name + ":") || text.startsWith(name + "(");
     }
 
     // ─── Java throwable mapping ──────────────────────────────────────────
@@ -204,7 +135,8 @@ public final class PyErrors {
     /**
      * Maps a Java throwable to the Python type it should be caught as. The
      * table is consulted from the concrete class upwards, so a specific entry
-     * wins over a superclass entry.
+     * wins over a superclass entry. This mapping is separate from Python
+     * inheritance.
      */
     private static final Map<String, String> JAVA_TYPES = Map.ofEntries(
             Map.entry("ArrayIndexOutOfBoundsException", "IndexError"),

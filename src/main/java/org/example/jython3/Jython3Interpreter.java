@@ -37,6 +37,7 @@ import org.example.jython3.parse.PythonIndentStream;
 import org.example.jython3.runtime.BigInt;
 import org.example.jython3.runtime.ExceptHandler;
 import org.example.jython3.runtime.Frame;
+import org.example.jython3.runtime.ExceptionTypeRegistry;
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBoundMethod;
@@ -88,6 +89,8 @@ public class Jython3Interpreter {
     private final Map<String, CompiledCode> bytecodeCache = new ConcurrentHashMap<>();
     /** Gate for every Java class, constructor, method, and field access. */
     private final JavaAccessPolicy javaAccessPolicy;
+    /** Built-in exception classes owned by this interpreter. */
+    private final ExceptionTypeRegistry exceptionTypes;
 
     public void clearCache() {
         bytecodeCache.clear();
@@ -177,7 +180,17 @@ public class Jython3Interpreter {
 
     /** Creates an interpreter whose Java access is controlled by {@code javaAccessPolicy}. */
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy) {
+        this(javaAccessPolicy, ExceptionTypeRegistry.standard());
+    }
+
+    /**
+     * Creates an interpreter with an explicit exception-type registry. Most
+     * callers should use {@link #Jython3Interpreter(JavaAccessPolicy)}.
+     */
+    public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
+                              ExceptionTypeRegistry exceptionTypes) {
         this.javaAccessPolicy = Objects.requireNonNull(javaAccessPolicy, "javaAccessPolicy");
+        this.exceptionTypes = Objects.requireNonNull(exceptionTypes, "exceptionTypes");
         PyCaller.CURRENT.set(new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
                 return callPyCallable(callable, args);
@@ -193,6 +206,11 @@ public class Jython3Interpreter {
     /** The policy this interpreter applies to Java access. */
     public JavaAccessPolicy javaAccessPolicy() {
         return javaAccessPolicy;
+    }
+
+    /** The exception classes owned by this interpreter. */
+    public ExceptionTypeRegistry exceptionTypes() {
+        return exceptionTypes;
     }
 
     /** Install built-in functions into the global namespace. */
@@ -270,27 +288,32 @@ public class Jython3Interpreter {
      * {@code filename}.
      */
     public void eval(String source, String filename) {
-        stack = new ArrayDeque<>();
-        currentLocals = globals;
-        exceptStack = new ArrayDeque<>();
-        callStack.clear();
-        yieldCollector = null;
-        currentFile = filename;
-        currentFunc = "<module>";
-        currentLine = 0;
-        currentSource = source;
-        execCount++;
+        ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
+        try {
+            stack = new ArrayDeque<>();
+            currentLocals = globals;
+            exceptStack = new ArrayDeque<>();
+            callStack.clear();
+            yieldCollector = null;
+            currentFile = filename;
+            currentFunc = "<module>";
+            currentLine = 0;
+            currentSource = source;
+            execCount++;
 
-        long compileStart = profilingEnabled ? System.nanoTime() : 0;
-        CompiledCode code = compile(source);
-        if (profilingEnabled) {
-            compilationTime += System.nanoTime() - compileStart;
-        }
+            long compileStart = profilingEnabled ? System.nanoTime() : 0;
+            CompiledCode code = compile(source);
+            if (profilingEnabled) {
+                compilationTime += System.nanoTime() - compileStart;
+            }
 
-        long execStart = profilingEnabled ? System.nanoTime() : 0;
-        run(code);
-        if (profilingEnabled) {
-            executionTime += System.nanoTime() - execStart;
+            long execStart = profilingEnabled ? System.nanoTime() : 0;
+            run(code);
+            if (profilingEnabled) {
+                executionTime += System.nanoTime() - execStart;
+            }
+        } finally {
+            ExceptionTypeRegistry.restore(previousTypes);
         }
     }
 

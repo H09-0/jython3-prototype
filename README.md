@@ -5,7 +5,7 @@
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com/H09-0/jython3-prototype)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
-[![Tests](https://img.shields.io/badge/Tests-187%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-200%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
 Jython 3 is an independent re-implementation of Python 3 on the Java Virtual
 Machine, built from the ground up with a layered architecture, an explicit
@@ -66,6 +66,7 @@ Supported has passed T1; `—` marks work that has not started.
 | Tracebacks: `NameError`, `ZeroDivisionError`, `TypeError`, `AttributeError`, `IndexError` | T1 | ✅ Supported |
 | Real bytecode layer (`CompiledCode`: `int[]` + `Object[]` constants pool) | T1 | ✅ Supported |
 | Exception handling (`try` / `except` / `else` / `finally` / `raise`) | T1 | ✅ Supported |
+| Exception values carry real `PyClass` types | T1 | ✅ Supported |
 | Multiple `except` clauses and `except Exception` catch-all | T1 | ✅ Supported |
 | Classes, inheritance, bound methods, decorators | T1 | ✅ Supported |
 | Java bridge (`from java.lang import Math`) | T1 | ✅ Supported |
@@ -78,10 +79,10 @@ Supported has passed T1; `—` marks work that has not started.
 
 - Generators are evaluated eagerly: the function runs to completion on the first
   iteration. `send()`, `throw()`, and `close()` are not implemented.
-- Exception values carry a type, message, arguments, Python cause/context, and
-  the original Java throwable, but exception *types* are still resolved through
-  a name table. User-defined `class E(Exception)` types are not yet first-class;
-  that is the next runtime slice.
+- Exception values carry a real `PyClass` type, arguments, Python cause/context,
+  the original Java throwable, and a traceback snapshot. The `raise` and
+  `except` instructions still pass type names to the active registry; user
+  classes such as `class E(Exception)` become first-class in the next slice.
 - No `with`, `async`/`await`, comprehensions, `lambda`, f-strings, or `match`
   statements yet.
 - Java access is gated per interpreter by `JavaAccessPolicy`. The default
@@ -277,7 +278,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 187 tests pass with zero failures and zero skipped. Test reports are written to:
+All 200 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -317,7 +318,8 @@ jython3-prototype/
     │       └── cli/                             # Repl and RunScript
     └── test/
         └── java/org/example/jython3/
-            ├── Jython3InterpreterTest.java      # 162 JUnit 5 regression tests
+            ├── Jython3InterpreterTest.java      # 166 JUnit 5 regression tests
+            ├── ExceptionTypeRegistryTest.java   # 9 exception-type hierarchy tests
             ├── JavaAccessPolicyTest.java        # 9 bridge and access-policy tests
             └── ErrorFactoryTest.java            # 16 error-model guard tests
 ```

@@ -614,6 +614,62 @@ class Jython3InterpreterTest {
         assertTrue(frames.size() >= 2, "expected the inner and module frames, got " + frames);
     }
 
+    @Test void testExceptionValueUsesTheInterpretersTypeObjects() {
+        py.exec("""
+            try:
+                raise ValueError("boom")
+            except ValueError as e:
+                saved = e
+            """);
+        PyException saved = assertInstanceOf(PyException.class, py.getGlobal("saved"));
+        assertSame(py.exceptionTypes().type("ValueError"), saved.type());
+        assertEquals("ValueError", saved.typeName());
+    }
+
+    @Test void testHandlerMatchingWalksTheRealHierarchy() {
+        py.exec("""
+            try:
+                raise KeyError("k")
+            except LookupError:
+                caught = "lookup"
+            """);
+        assertEquals("lookup", py.getGlobal("caught").toString());
+    }
+
+    @Test void testExceptionHandlerSkipsBaseExceptionOnlyTypes() {
+        py.exec("""
+            try:
+                raise KeyboardInterrupt("stop")
+            except Exception:
+                caught = "wrong"
+            except BaseException:
+                caught = "base"
+            """);
+        assertEquals("base", py.getGlobal("caught").toString());
+    }
+
+    @Test void testEachInterpreterOwnsItsExceptionTypes() {
+        py.exec("""
+            try:
+                raise ValueError("first")
+            except ValueError as e:
+                saved = e
+            """);
+        Jython3Interpreter other = new Jython3Interpreter();
+        other.exec("""
+            try:
+                raise ValueError("second")
+            except ValueError as e:
+                saved = e
+            """);
+
+        PyException first = assertInstanceOf(PyException.class, py.getGlobal("saved"));
+        PyException second = assertInstanceOf(PyException.class, other.getGlobal("saved"));
+        assertEquals(first.typeName(), second.typeName());
+        assertNotSame(first.type(), second.type(),
+                "each interpreter must use its own exception classes");
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  19. Phase 9: Jython 2.7 Replacement Foundations
     // ═══════════════════════════════════════════════════════════════════

@@ -2,6 +2,7 @@ package org.example.jython3.runtime;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * A Python exception value.
@@ -11,17 +12,18 @@ import java.util.List;
  * Java object used to unwind the stack is {@link InterpreterException}, which
  * carries one of these as its payload.
  *
- * <p>{@code cause} and {@code context} are the Python-level links created by
- * {@code raise ... from ...}; {@code javaCause} keeps the original JVM
- * throwable when the error came through the bridge. They are kept apart on
+ * <p>The exception type is a real {@link PyClass}. The name is derived from
+ * that class, never stored separately, so matching always follows the actual
+ * base list. {@code cause} and {@code context} are the Python-level links
+ * created by {@code raise ... from ...}; {@code javaCause} keeps the original
+ * JVM throwable when the error came through the bridge. They are kept apart on
  * purpose: a Java throwable is not a Python exception.
  */
 public final class PyException implements PyObject {
-    private final String typeName;
-    private final String message;
+    private final PyClass type;
     private final List<PyObject> args;
-    private final PyObject cause;
-    private final PyObject context;
+    private final PyException cause;
+    private final PyException context;
     private final Throwable javaCause;
     /**
      * Frames captured when the error was caught. The carrier builds the
@@ -30,14 +32,14 @@ public final class PyException implements PyObject {
      */
     private List<InterpreterException.TraceEntry> traceback = List.of();
 
-    public PyException(String typeName, String message) {
-        this(typeName, message, defaultArgs(message), null, null, null);
+    /** Creates a value of {@code type} with a single string argument. */
+    public PyException(PyClass type, String message) {
+        this(type, defaultArgs(message), null, null, null);
     }
 
-    public PyException(String typeName, String message, List<PyObject> args,
-                       PyObject cause, PyObject context, Throwable javaCause) {
-        this.typeName = typeName;
-        this.message = message == null ? "" : message;
+    public PyException(PyClass type, List<PyObject> args, PyException cause,
+                       PyException context, Throwable javaCause) {
+        this.type = Objects.requireNonNull(type, "type");
         this.args = args == null ? List.of() : List.copyOf(args);
         this.cause = cause;
         this.context = context;
@@ -49,21 +51,62 @@ public final class PyException implements PyObject {
         return List.of(new PyStr(message));
     }
 
-    /** Creates an exception value from a type name and a message. */
+    /**
+     * Creates a value by resolving {@code typeName} in the current runtime's
+     * registry. New code should pass a {@link PyClass} instead.
+     */
     public static PyException of(String typeName, String message) {
-        return new PyException(typeName, message);
+        return new PyException(ExceptionTypeRegistry.current().type(typeName), message);
     }
 
-    /** Creates an exception value that remembers the JVM throwable behind it. */
+    /** Creates a value from a concrete exception class. */
+    public static PyException of(PyClass type, String message) {
+        return new PyException(type, message);
+    }
+
+    /**
+     * Creates a value that remembers the JVM throwable behind it. The Python
+     * type is chosen independently; Java hierarchy does not decide Python
+     * inheritance.
+     */
+    public static PyException withJavaCause(PyClass type, String message, Throwable javaCause) {
+        return new PyException(type, defaultArgs(message), null, null, javaCause);
+    }
+
+    /** Compatibility entry point for callers that still name the type. */
     public static PyException withJavaCause(String typeName, String message, Throwable javaCause) {
-        return new PyException(typeName, message, defaultArgs(message), null, null, javaCause);
+        return withJavaCause(ExceptionTypeRegistry.current().type(typeName), message, javaCause);
     }
 
-    public String typeName() { return typeName; }
-    public String message() { return message; }
+    /** The concrete exception class. */
+    public PyClass type() { return type; }
+
+    /** The type name, derived from the class. */
+    public String typeName() { return type.name(); }
+
+    /** The exception arguments; the message is rendered from them. */
     public List<PyObject> args() { return args; }
-    public PyObject cause() { return cause; }
-    public PyObject context() { return context; }
+
+    /** The message as Python prints it, derived from {@link #args()}. */
+    public String message() {
+        if (args.isEmpty()) return "";
+        if (args.size() == 1) return text(args.get(0));
+        var sb = new StringBuilder("(");
+        for (int i = 0; i < args.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(text(args.get(i)));
+        }
+        return sb.append(')').toString();
+    }
+
+    private static String text(PyObject value) {
+        return value instanceof PyStr s ? s.value() : String.valueOf(value);
+    }
+
+    public PyException cause() { return cause; }
+
+    public PyException context() { return context; }
+
     public Throwable javaCause() { return javaCause; }
 
     /** Frames captured when the handler received this value, oldest first. */
@@ -81,6 +124,7 @@ public final class PyException implements PyObject {
     }
 
     @Override public String toString() {
-        return message.isEmpty() ? typeName : typeName + ": " + message;
+        String message = message();
+        return message.isEmpty() ? typeName() : typeName() + ": " + message;
     }
 }

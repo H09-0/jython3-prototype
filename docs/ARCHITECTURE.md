@@ -120,13 +120,16 @@ behaviour are final classes (`PyFunction`, `PyClass`, `PyInstance`, `PyModule`,
 
 ### Exceptions as types
 
-Exception *values* already exist (see section 5), but exception *types* are
-currently names in a parent table in `PyErrors`. The next slice registers
-`BaseException`, `Exception`, and the built-in hierarchy as `PyClass` objects
-inheriting from `Exception`, with `SecurityError` and `JavaException` as
-runtime-specific subclasses. When that lands, `PyErrors.matches` resolves
-through `PyClass` bases instead of the name table, and `except` binds a real
-`PyInstance`. No call site outside `PyErrors` should need to change.
+Exception values carry a real `PyClass` (see section 5). `ExceptionTypeRegistry`
+builds `BaseException`, `Exception`, and the built-in hierarchy once per
+interpreter, and `PyErrors.matches` walks each class's base list instead of a
+separate parent table. `SecurityError`, `JavaException`, and `JavaError` are
+runtime-specific subclasses of `Exception`.
+
+The remaining name-based boundary is the bytecode interface: `raise` and
+`except` still pass type names, which the active registry resolves to its
+classes. The next slice makes both instructions carry class objects and lets
+`class E(Exception)` produce a usable exception type.
 
 ---
 
@@ -138,8 +141,10 @@ There are two separate concepts, and the separation is intentional:
   Java stack. It holds the Python value, the raise location, and the traceback
   entries collected while frames unwind.
 - **Value**: `PyException implements PyObject`. It can be stored in a variable,
-  passed to a function, compared, and re-raised. It holds `typeName`, `message`,
-  `args`, Python `cause`, Python `context`, and `javaCause`.
+  passed to a function, compared, and re-raised. It holds a non-null `PyClass`
+  `type`, `args`, Python `cause`, Python `context`, and `javaCause`. Its name
+  and message are derived from the type and arguments, never stored as
+  competing facts.
 
 Rules:
 
@@ -148,19 +153,23 @@ Rules:
 2. `PyErrors.error(type, message)` creates Python-level errors.
    `PyErrors.errorValue(value)` wraps an existing value when re-raising.
    `PyErrors.fromJava(throwable)` is the single entry point for JVM throwables;
-   it unwraps reflection wrappers, maps the concrete class upwards, and keeps
-   the original throwable in `javaCause`.
-3. `cause` and `context` are Python-level links created by `raise ... from ...`.
+   it unwraps reflection wrappers, chooses the Python type through the Java
+   table, and keeps the original throwable in `javaCause`. That table never
+   decides Python inheritance.
+3. Each interpreter owns an `ExceptionTypeRegistry`; the active registry is
+   installed while its code runs. String entry points resolve a name to that
+   registry's class once, and `PyException` stores the class itself.
+4. `cause` and `context` are Python-level links created by `raise ... from ...`.
    The Java throwable is never stored there.
-4. The VM pushes the exception value on the operand stack, not its message.
+5. The VM pushes the exception value on the operand stack, not its message.
    `COMPARE_EXC_TYPE` calls `PyErrors.matches`; `RERAISE` throws the same value.
-5. Matching uses real inheritance. `BaseException` catches every exception;
-   `Exception` does not catch `SystemExit`, `KeyboardInterrupt`, or
-   `GeneratorExit`.
-6. Java stack traces are disabled by default because Python raises often
+6. Matching uses class identity and the real base list. `BaseException` catches
+   every exception; `Exception` does not catch `SystemExit`,
+   `KeyboardInterrupt`, or `GeneratorExit`.
+7. Java stack traces are disabled by default because Python raises often
    (`StopIteration` in every exhausted loop). `-Djython3.stacktraces=true`
    enables them for debugging.
-7. The carrier builds the traceback while unwinding. When a handler is
+8. The carrier builds the traceback while unwinding. When a handler is
    entered, the VM copies the frames into the value, so `__traceback__` remains
    available after the carrier is gone and after the `except` block exits. The
    entries are immutable records; a later re-raise appends new frames.
@@ -295,6 +304,7 @@ tests before the next layer is built on top of them.
 | 2026-10-24 | Access policy is injected per interpreter; no global mutable allowlist |
 | 2026-10-24 | Class access does not imply constructor access; each constructor is granted by descriptor |
 | 2026-10-24 | The exception value owns a traceback snapshot so it outlives the carrier |
+| 2026-10-24 | Exception values carry a non-optional `PyClass`; names are derived, and each interpreter owns its type registry |
 | 2026-10-24 | `InterpreterException` is the carrier and `PyObject` is the value |
 | 2026-10-24 | Exception matching uses the type hierarchy, not catch-all names |
 | 2026-10-24 | Java throwables enter through `PyErrors.fromJava` only |

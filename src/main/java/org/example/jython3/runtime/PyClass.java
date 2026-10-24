@@ -1,9 +1,13 @@
 package org.example.jython3.runtime;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 
 public final class PyClass implements PyObject {
@@ -48,6 +52,26 @@ public final class PyClass implements PyObject {
 
     public boolean hasMember(String attr) {
         return lookupMember(attr) != null;
+    }
+
+    /**
+     * Whether this class is {@code ancestor} or derives from it. Traversal uses
+     * class identity over the real base list, so unrelated classes with the
+     * same name do not match.
+     */
+    public boolean isSubclassOf(PyClass ancestor) {
+        if (ancestor == null) return false;
+        if (this == ancestor) return true;
+        Set<PyClass> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        ArrayDeque<PyClass> pending = new ArrayDeque<>();
+        pending.add(this);
+        while (!pending.isEmpty()) {
+            PyClass current = pending.removeFirst();
+            if (!seen.add(current)) continue;
+            if (current == ancestor) return true;
+            pending.addAll(current.bases);
+        }
+        return false;
     }
 
     @Override public String toString() {
