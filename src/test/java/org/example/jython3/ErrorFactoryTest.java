@@ -26,9 +26,7 @@ class ErrorFactoryTest {
 
     /** Files that still use the legacy string constructor, with their current site counts. */
     private static final Map<String, Integer> PENDING = Map.of(
-            "Jython3Interpreter.java", 72,
-            "BuiltinFunctions.java", 35,
-            "BuiltinModules.java", 5);
+            "Jython3Interpreter.java", 72);
 
     @Test
     void legacyConstructionIsConfinedToPendingFiles() throws IOException {

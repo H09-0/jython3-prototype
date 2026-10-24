@@ -17,10 +17,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyDict;
+import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyList;
@@ -109,7 +109,7 @@ public class BuiltinModules {
     public static PyModule io() {
         Map<String, PyObject> attrs = new HashMap<>();
         attrs.put("open", fn("open", args -> {
-            if (args.length == 0) throw new InterpreterException("TypeError: open() missing required argument");
+            if (args.length == 0) throw PyErrors.error("TypeError", "open() missing required argument");
             String filename = args[0].toString();
             String mode = args.length > 1 ? args[1].toString() : "r";
             try {
@@ -124,7 +124,7 @@ public class BuiltinModules {
                     fattrs.put("mode", new PyStr(mode));
                     fattrs.put("read", fn("read", a -> {
                         try { return new PyStr(java.nio.file.Files.readString(p)); }
-                        catch (Exception ex) { throw new InterpreterException("IOError: " + ex.getMessage()); }
+                        catch (Exception ex) { throw PyErrors.error("IOError", ex.getMessage()); }
                     }));
                     fattrs.put("write", fn("write", a -> {
                         try {
@@ -132,7 +132,7 @@ public class BuiltinModules {
                             if (mode.contains("a")) java.nio.file.Files.writeString(p, data, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                             else java.nio.file.Files.writeString(p, data, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
                             return new PyInt(data.length());
-                        } catch (Exception ex) { throw new InterpreterException("IOError: " + ex.getMessage()); }
+                        } catch (Exception ex) { throw PyErrors.error("IOError", ex.getMessage()); }
                     }));
                     fattrs.put("close", fn("close", a -> new PyNull()));
                     return new PyModule("file", fattrs);
@@ -145,7 +145,7 @@ public class BuiltinModules {
                     return new PyModule("file", fattrs);
                 }
             } catch (Exception e) {
-                throw new InterpreterException("IOError: " + e.getMessage());
+                throw PyErrors.error("IOError", e.getMessage());
             }
         }));
         return new PyModule("io", attrs);
@@ -249,8 +249,8 @@ public class BuiltinModules {
         return switch (o) {
             case PyInt i   -> i.value();
             case PyFloat f -> f.value();
-            default -> throw new InterpreterException(
-                    "TypeError: expected number, got " + o.getClass().getSimpleName());
+            default -> throw PyErrors.error("TypeError",
+                    "expected number, got " + org.example.jython3.runtime.PyOps.typeName(o));
         };
     }
 
