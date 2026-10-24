@@ -822,4 +822,326 @@ class Jython3InterpreterTest {
         py.exec(sb.toString());
         assertTrue(err().contains("IndentationError") && err().contains("maximum indentation depth exceeded"));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  JAVA BRIDGE TESTS
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── JB-1: Import and use static methods ──────────────────────────
+    @Test void testJavaBridgeStaticMethod() {
+        py.exec("""
+            from java.lang import Math
+            x = Math.sqrt(144.0)
+            print(x)
+            """);
+        assertEquals("", err());
+        assertEquals("12.0", out());
+    }
+
+    @Test void testJavaBridgeStaticMethodMax() {
+        py.exec("""
+            from java.lang import Math
+            x = Math.max(7, 42)
+            print(x)
+            """);
+        assertEquals("", err());
+        assertEquals("42", out());
+    }
+
+    @Test void testJavaBridgeStaticField() {
+        py.exec("""
+            from java.lang import Integer
+            print(Integer.MAX_VALUE)
+            """);
+        assertEquals("", err());
+        assertEquals("2147483647", out());
+    }
+
+    @Test void testJavaBridgePiConstant() {
+        py.exec("""
+            from java.lang import Math
+            print(Math.PI)
+            """);
+        assertEquals("", err());
+        String result = out();
+        assertTrue(result.startsWith("3.14"), "Expected Pi, got: " + result);
+    }
+
+    // ── JB-2: Instantiate Java objects ──────────────────────────────
+    @Test void testJavaBridgeStringBuilder() {
+        py.exec("""
+            from java.lang import StringBuilder
+            sb = StringBuilder()
+            sb.append("hello")
+            sb.append(" world")
+            print(sb.toString())
+            """);
+        assertEquals("", err());
+        assertEquals("hello world", out());
+    }
+
+    @Test void testJavaBridgeArrayList() {
+        py.exec("""
+            from java.util import ArrayList
+            lst = ArrayList()
+            lst.add("alpha")
+            lst.add("beta")
+            lst.add("gamma")
+            print(lst.size())
+            """);
+        assertEquals("", err());
+        assertEquals("3", out());
+    }
+
+    @Test void testJavaBridgeArrayListGet() {
+        py.exec("""
+            from java.util import ArrayList
+            lst = ArrayList()
+            lst.add("first")
+            lst.add("second")
+            print(lst.get(0))
+            print(lst.get(1))
+            """);
+        assertEquals("", err());
+        assertEquals("first\nsecond", out());
+    }
+
+    @Test void testJavaBridgeArrayListSubscript() {
+        py.exec("""
+            from java.util import ArrayList
+            lst = ArrayList()
+            lst.add("A")
+            lst.add("B")
+            lst.add("C")
+            print(lst[0])
+            print(lst[2])
+            """);
+        assertEquals("", err());
+        assertEquals("A\nC", out());
+    }
+
+    @Test void testJavaBridgeHashMap() {
+        py.exec("""
+            from java.util import HashMap
+            m = HashMap()
+            m.put("key", "value")
+            print(m.get("key"))
+            print(m.size())
+            """);
+        assertEquals("", err());
+        assertEquals("value\n1", out());
+    }
+
+    @Test void testJavaBridgeHashMapSubscript() {
+        py.exec("""
+            from java.util import HashMap
+            m = HashMap()
+            m.put("greeting", "hello")
+            print(m["greeting"])
+            """);
+        assertEquals("", err());
+        assertEquals("hello", out());
+    }
+
+    // ── JB-3: len() on Java collections ─────────────────────────────
+    @Test void testJavaBridgeLenOnList() {
+        py.exec("""
+            from java.util import ArrayList
+            lst = ArrayList()
+            lst.add(1)
+            lst.add(2)
+            lst.add(3)
+            print(len(lst))
+            """);
+        assertEquals("", err());
+        assertEquals("3", out());
+    }
+
+    @Test void testJavaBridgeLenOnMap() {
+        py.exec("""
+            from java.util import HashMap
+            m = HashMap()
+            m.put("a", 1)
+            m.put("b", 2)
+            print(len(m))
+            """);
+        assertEquals("", err());
+        assertEquals("2", out());
+    }
+
+    // ── JB-4: Iterate over Java collections ─────────────────────────
+    @Test void testJavaBridgeIterateArrayList() {
+        py.exec("""
+            from java.util import ArrayList
+            lst = ArrayList()
+            lst.add("x")
+            lst.add("y")
+            lst.add("z")
+            for item in lst:
+                print(item)
+            """);
+        assertEquals("", err());
+        assertEquals("x\ny\nz", out());
+    }
+
+    // ── JB-5: Java string operations ─────────────────────────────────
+    @Test void testJavaBridgeStringMethods() {
+        py.exec("""
+            from java.lang import String
+            s = String("Hello World")
+            print(s.toLowerCase())
+            print(s.length())
+            """);
+        assertEquals("", err());
+        assertEquals("hello world\n11", out());
+    }
+
+    // ── JB-6: Java Math operations ───────────────────────────────────
+    @Test void testJavaBridgeAbsAndFloor() {
+        py.exec("""
+            from java.lang import Math
+            print(Math.abs(-42))
+            print(Math.floor(3.7))
+            """);
+        assertEquals("", err());
+        assertEquals("42\n3.0", out());
+    }
+
+    @Test void testJavaBridgePow() {
+        py.exec("""
+            from java.lang import Math
+            print(Math.pow(2.0, 10.0))
+            """);
+        assertEquals("", err());
+        assertEquals("1024.0", out());
+    }
+
+    // ── JB-7: Import with alias ──────────────────────────────────────
+    @Test void testJavaBridgeImportAlias() {
+        py.exec("""
+            import java.util.ArrayList as AL
+            lst = AL()
+            lst.add("item1")
+            print(lst.size())
+            """);
+        assertEquals("", err());
+        assertEquals("1", out());
+    }
+
+    // ── JB-8: Exception handling for Java exceptions ─────────────────
+    @Test void testJavaBridgeExceptionHandling() {
+        py.exec("""
+            from java.util import ArrayList
+            lst = ArrayList()
+            try:
+                x = lst.get(5)
+            except Exception:
+                print("caught")
+            """);
+        assertEquals("", err());
+        assertEquals("caught", out());
+    }
+
+    // ── JB-9: Security - restricted classes ──────────────────────────
+    @Test void testJavaBridgeSecurityUnsafeBlocked() {
+        py.exec("import sun.misc.Unsafe");
+        assertTrue(err().contains("SecurityError") || err().contains("ImportError"),
+                   "Expected security error, got: " + err());
+    }
+
+    @Test void testJavaBridgeSecurityInternalBlocked() {
+        py.exec("import jdk.internal.misc.Unsafe");
+        assertTrue(err().contains("SecurityError") || err().contains("ImportError"),
+                   "Expected security error, got: " + err());
+    }
+
+    @Test void testJavaBridgeSecurityMethodHandlesBlocked() {
+        py.exec("import java.lang.invoke.MethodHandles");
+        assertTrue(err().contains("SecurityError") || err().contains("ImportError"),
+                   "Expected security error, got: " + err());
+    }
+
+    // ── JB-10: Chained method calls ──────────────────────────────────
+    @Test void testJavaBridgeChainedCalls() {
+        py.exec("""
+            from java.lang import StringBuilder
+            sb = StringBuilder()
+            sb.append("Jython")
+            sb.append(" 3")
+            sb.append(" rocks")
+            result = sb.toString()
+            print(result)
+            """);
+        assertEquals("", err());
+        assertEquals("Jython 3 rocks", out());
+    }
+
+    // ── JB-11: typeof / typeName ─────────────────────────────────────
+    @Test void testJavaBridgeTypeRepresentation() {
+        py.exec("""
+            from java.util import ArrayList
+            lst = ArrayList()
+            print(type(lst))
+            """);
+        assertEquals("", err());
+        String result = out();
+        assertTrue(result.contains("JavaObject"), "Expected JavaObject type, got: " + result);
+    }
+
+    // ── JB-12: Performance – cached reflection speed ──────────────────
+    @Test void testJavaBridgeReflectionCachePerformance() {
+        // Call same method 1000 times – should be fast due to caching
+        py.exec("""
+            from java.lang import Math
+            i = 0
+            while i < 1000:
+                x = Math.abs(i)
+                i = i + 1
+            print(x)
+            """);
+        assertEquals("", err());
+        assertEquals("999", out());
+    }
+
+    // ── JB-13: String conversion ─────────────────────────────────────
+    @Test void testJavaBridgeToStringConversion() {
+        py.exec("""
+            from java.lang import Integer
+            n = Integer.valueOf(42)
+            print(n)
+            """);
+        assertEquals("", err());
+        assertEquals("42", out());
+    }
+
+    // ── JB-14: Nested Java package navigation ────────────────────────
+    @Test void testJavaBridgePackageNavigation() {
+        py.exec("""
+            import java.lang.Math as JMath
+            print(JMath.sqrt(9.0))
+            """);
+        assertEquals("", err());
+        assertEquals("3.0", out());
+    }
+
+    // ── JB-15: Boolean conversion from Java ──────────────────────────
+    @Test void testJavaBridgeBooleanReturn() {
+        py.exec("""
+            from java.lang import String
+            s = String("hello")
+            print(s.isEmpty())
+            """);
+        assertEquals("", err());
+        assertEquals("False", out());
+    }
+
+    @Test void testJavaBridgeBooleanReturnEmpty() {
+        py.exec("""
+            from java.lang import String
+            s = String("")
+            print(s.isEmpty())
+            """);
+        assertEquals("", err());
+        assertEquals("True", out());
+    }
 }

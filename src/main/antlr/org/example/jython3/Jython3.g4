@@ -153,10 +153,13 @@ for_stmt
     : FOR ID IN expr COLON suite
     ;
 
-/** try: suite except [ExcType]: suite */
+/** try: suite except [ExcType [as var]]: suite [finally: suite] */
 try_stmt
-    : TRY COLON suite EXCEPT ID COLON suite
-    | TRY COLON suite EXCEPT COLON suite
+    : TRY COLON suite except_clause+ (ELSE COLON suite)? (FINALLY COLON suite)?
+    ;
+
+except_clause
+    : EXCEPT (expr (AS ID)?)? COLON suite
     ;
 
 /** def name(params): suite */
@@ -239,6 +242,7 @@ IS       : 'is';
 TRY      : 'try';
 EXCEPT   : 'except';
 RAISE    : 'raise';
+FINALLY  : 'finally';
 IMPORT   : 'import';
 FROM     : 'from';
 AS       : 'as';

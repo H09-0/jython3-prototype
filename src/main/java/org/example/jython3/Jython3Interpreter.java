@@ -145,6 +145,11 @@ public class Jython3Interpreter {
                 PyObject lenMethod = inst.getField("__len__");
                 if (lenMethod != null) return callPyCallable(lenMethod, new PyObject[0]);
             }
+            if (o instanceof JavaBridge.PyJavaObject jo) {
+                if (jo.object() instanceof List<?> l) return new PyInt(l.size());
+                if (jo.object() instanceof Map<?, ?> m) return new PyInt(m.size());
+                if (jo.object().getClass().isArray()) return new PyInt(java.lang.reflect.Array.getLength(jo.object()));
+            }
             throw new InterpreterException("TypeError: object of type '" + typeName(o) + "' has no len()");
         }));
 
@@ -639,7 +644,26 @@ public class Jython3Interpreter {
         }
 
         @Override public Void visitImport_stmt(Jython3Parser.Import_stmtContext c) {
-            b.emit(OpCode.IMPORT_MODULE, c.ID().getText());
+            if (c.IMPORT() != null && c.FROM() == null) {
+                // import dotted_as_name, ...
+                for (var d : c.dotted_as_name()) {
+                    String modName = d.dotted_name().getText();
+                    String alias = d.ID() != null ? d.ID().getText() : null;
+                    b.emit(OpCode.IMPORT_MODULE, alias != null ? modName + ":" + alias : modName);
+                }
+            } else if (c.FROM() != null) {
+                // from dotted_name import ...
+                String modName = c.dotted_name().getText();
+                if (c.MUL() != null) {
+                    b.emit(OpCode.IMPORT_MODULE, "from:" + modName + ":*");
+                } else {
+                    for (var it : c.import_as_name()) {
+                        String name = it.ID(0).getText();
+                        String alias = it.ID().size() > 1 ? it.ID(1).getText() : name;
+                        b.emit(OpCode.IMPORT_MODULE, "from:" + modName + ":" + name + ":" + alias);
+                    }
+                }
+            }
             return null;
         }
 
@@ -797,16 +821,48 @@ public class Jython3Interpreter {
         }
 
         @Override public Void visitTry_stmt(Jython3Parser.Try_stmtContext c) {
+            // Supports: try: suite (except [Type [as var]]: suite)+ [else: suite] [finally: suite]
+            var exceptClauses = c.except_clause();
+
             int pushIdx = b.size();
-            b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
-            visit(c.suite(0));              // try body
+            b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);   // placeholder → except handler pc
+            visit(c.suite(0));                            // try body
             b.emit(OpCode.POP_EXCEPT_HANDLER);
-            int jumpIdx = b.size();
-            b.emitRaw(OpCode.JUMP, 0);
-            b.patch(pushIdx, b.size());        // except target
-            b.emit(OpCode.POP_TOP);            // discard exception object from stack
-            visit(c.suite(1));              // except body
-            b.patch(jumpIdx, b.size());        // after except
+            int jumpOverIdx = b.size();
+            b.emitRaw(OpCode.JUMP, 0);                   // jump over all except blocks
+
+            // Patch PUSH_EXCEPT_HANDLER to point here (exception handler start)
+            b.patch(pushIdx, b.size());
+
+            // Handle first except clause (stack machine supports one handler per try block)
+            if (!exceptClauses.isEmpty()) {
+                var clause = exceptClauses.get(0);
+                // Stack top is the exception message string
+                if (clause.AS() != null && clause.ID() != null) {
+                    // except ExcType as varName: — store exception message in var
+                    String varName = clause.ID().getText();
+                    b.emit(OpCode.STORE_FAST, varName);
+                } else {
+                    b.emit(OpCode.POP_TOP);   // discard exception string
+                }
+                visit(clause.suite());  // except body is inside except_clause, not try_stmt
+            }
+
+            // Patch the jump-over to skip past all except bodies
+            b.patch(jumpOverIdx, b.size());
+
+            // Handle finally if present (runs after try+except, always)
+            if (c.FINALLY() != null) {
+                // finally suite is the last suite() in try_stmt (after else if present)
+                var suites = c.suite();
+                visit(suites.get(suites.size() - 1));
+            }
+
+            return null;
+        }
+
+        @Override public Void visitExcept_clause(Jython3Parser.Except_clauseContext c) {
+            // Handled inside visitTry_stmt — must not be called independently
             return null;
         }
 
@@ -1049,6 +1105,8 @@ public class Jython3Interpreter {
                         mod.attrs().put(attr, val);
                     } else if (obj instanceof PyClass cls) {
                         cls.members().put(attr, val);
+                    } else if (obj instanceof JavaBridge.PyJavaObject jo) {
+                        jo.setMember(attr, val);
                     } else {
                         throw new InterpreterException("AttributeError: cannot set attribute on '" + typeName(obj) + "'");
                     }
@@ -1246,6 +1304,10 @@ public class Jython3Interpreter {
                         continue outer;
                     } else if (callable instanceof PyBuiltinFunction bf) {
                         stack.push(bf.fn().apply(args));
+                    } else if (callable instanceof JavaBridge.PyJavaClass jc) {
+                        stack.push(jc.newInstance(args));
+                    } else if (callable instanceof JavaBridge.PyJavaMethod jm) {
+                        stack.push(jm.invoke(args));
                     } else {
                         throw new InterpreterException("TypeError: '" + callable + "' is not callable");
                     }
@@ -1310,6 +1372,38 @@ public class Jython3Interpreter {
                         } else {
                             throw new InterpreterException("TypeError: '" + typeName(ctr) + "' object is not subscriptable");
                         }
+                    } else if (ctr instanceof JavaBridge.PyJavaObject jo) {
+                        Object jObj = jo.object();
+                        if (jObj instanceof java.util.List<?> l) {
+                            if (idx instanceof PyInt ix) {
+                                int i = ix.value();
+                                if (i < 0) i += l.size();
+                                if (i < 0 || i >= l.size())
+                                    throw new InterpreterException("IndexError: Java list index out of range");
+                                stack.push(JavaBridge.toPyObject(l.get(i)));
+                            } else {
+                                throw new InterpreterException("TypeError: Java list indices must be integers");
+                            }
+                        } else if (jObj instanceof java.util.Map<?,?> m) {
+                            Object key = JavaBridge.toJavaObject(idx, Object.class);
+                            Object val = m.get(key);
+                            if (val == null && !m.containsKey(key))
+                                throw new InterpreterException("KeyError: " + idx);
+                            stack.push(JavaBridge.toPyObject(val));
+                        } else if (jObj.getClass().isArray()) {
+                            if (idx instanceof PyInt ix) {
+                                int i = ix.value();
+                                int len = java.lang.reflect.Array.getLength(jObj);
+                                if (i < 0) i += len;
+                                if (i < 0 || i >= len)
+                                    throw new InterpreterException("IndexError: Java array index out of range");
+                                stack.push(JavaBridge.toPyObject(java.lang.reflect.Array.get(jObj, i)));
+                            } else {
+                                throw new InterpreterException("TypeError: Java array indices must be integers");
+                            }
+                        } else {
+                            throw new InterpreterException("TypeError: Java object '" + jObj.getClass().getName() + "' is not subscriptable");
+                        }
                     } else {
                         throw new InterpreterException("TypeError: unsupported subscript types");
                     }
@@ -1323,6 +1417,10 @@ public class Jython3Interpreter {
                         stack.push(new PyIterator(chars, 0));
                     } else if (o instanceof PyDict d) {
                         stack.push(new PyIterator(new ArrayList<>(d.map().keySet()), 0));
+                    } else if (o instanceof JavaBridge.PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
+                        var items = new ArrayList<PyObject>();
+                        for (Object item : iterable) items.add(JavaBridge.toPyObject(item));
+                        stack.push(new PyIterator(items, 0));
                     } else {
                         throw new InterpreterException("TypeError: '" + typeName(o) + "' is not iterable");
                     }
@@ -1357,6 +1455,12 @@ public class Jython3Interpreter {
                         stack.push(listMethod(list, attr));
                     } else if (obj instanceof PyStr s) {
                         stack.push(strMethod(s, attr));
+                    } else if (obj instanceof JavaBridge.PyJavaObject jo) {
+                        stack.push(jo.getMember(attr));
+                    } else if (obj instanceof JavaBridge.PyJavaClass jc) {
+                        stack.push(jc.getMember(attr));
+                    } else if (obj instanceof JavaBridge.PyJavaPackage jp) {
+                        stack.push(jp.getMember(attr));
                     } else {
                         throw new InterpreterException("AttributeError: '" + typeName(obj) + "' object has no attribute '" + attr + "'");
                     }
@@ -1646,6 +1750,10 @@ public class Jython3Interpreter {
             case PyBuiltinFunction bf -> true;
             case PyException e -> true;
             case PyCompiledCodeWrapper cw -> true;
+            case JavaBridge.PyJavaObject jo -> jo.object() != null;
+            case JavaBridge.PyJavaClass jc -> true;
+            case JavaBridge.PyJavaMethod jm -> true;
+            case JavaBridge.PyJavaPackage jp -> true;
         };
     }
 
@@ -1703,6 +1811,10 @@ public class Jython3Interpreter {
             case PyIterator it -> "iterator";
             case PyException e -> "Exception";
             case PyCompiledCodeWrapper cw -> "code";
+            case JavaBridge.PyJavaClass jc -> "JavaClass(" + jc.clazz().getSimpleName() + ")";
+            case JavaBridge.PyJavaObject jo -> "JavaObject(" + (jo.object() == null ? "null" : jo.object().getClass().getSimpleName()) + ")";
+            case JavaBridge.PyJavaMethod jm -> "JavaMethod(" + jm.name() + ")";
+            case JavaBridge.PyJavaPackage jp -> "JavaPackage(" + jp.packageName() + ")";
         };
     }
 
@@ -1784,6 +1896,12 @@ public class Jython3Interpreter {
             System.arraycopy(args, 0, callArgs, 1, args.length);
             return callPyCallable(bm.fn(), callArgs);
         }
+        if (callable instanceof JavaBridge.PyJavaClass jc) {
+            return jc.newInstance(args);
+        }
+        if (callable instanceof JavaBridge.PyJavaMethod jm) {
+            return jm.invoke(args);
+        }
         if (callable instanceof PyFunction fn) {
             var savedStack = stack;
             var savedLocals = currentLocals;
@@ -1807,25 +1925,93 @@ public class Jython3Interpreter {
         throw new InterpreterException("TypeError: '" + callable + "' is not callable");
     }
 
-    private void importModule(String name) {
-        PyModule builtin = switch (name) {
+    private void importModule(String spec) {
+        // ── from:pkg:item:alias  or  from:pkg:*  ──
+        if (spec.startsWith("from:")) {
+            String[] parts = spec.split(":", -1);
+            // parts[0]="from", parts[1]=pkg, parts[2]=item, parts[3]=alias (optional)
+            String pkg = parts[1];
+            String item = parts[2];
+
+            if (item.equals("*")) {
+                // from java.math import *  – not really supported, warn
+                throw new InterpreterException("ImportError: 'import *' from Java package is not supported");
+            }
+
+            String alias = parts.length > 3 ? parts[3] : item;
+            String fullName = pkg + "." + item;
+
+            // Try Java bridge first
+            JavaBridge.checkSecurity(fullName);
+            PyObject resolved = JavaBridge.resolveClassOrPackage(fullName);
+            if (resolved != null) {
+                globals.put(alias, resolved);
+                return;
+            }
+
+            // Try built-in module attribute
+            PyModule builtinMod = resolveBuiltinModule(pkg);
+            if (builtinMod != null) {
+                PyObject attr = builtinMod.attrs().get(item);
+                if (attr != null) { globals.put(alias, attr); return; }
+                throw new InterpreterException("ImportError: cannot import name '" + item + "' from '" + pkg + "'");
+            }
+
+            throw new InterpreterException("ImportError: cannot import '" + item + "' from '" + pkg + "'");
+        }
+
+        // ── pkg:alias  or plain pkg ──
+        String[] parts = spec.split(":", -1);
+        String pkg = parts[0];
+        String alias = parts.length > 1 ? parts[1] : parts[0];
+
+        // Built-in Python modules
+        PyModule builtin = resolveBuiltinModule(pkg);
+        if (builtin != null) {
+            globals.put(alias, builtin);
+            return;
+        }
+
+        // Java class or package (if dotted or known Java root package)
+        if (pkg.contains(".") || isJavaRootPackage(pkg)) {
+            JavaBridge.checkSecurity(pkg);
+            PyObject javaObj = JavaBridge.resolveClassOrPackage(pkg);
+            if (javaObj != null) {
+                globals.put(alias, javaObj);
+                return;
+            }
+        }
+
+        // File-based modules: validate name (no dots, path traversal protection)
+        if (!pkg.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            throw new InterpreterException("ImportError: invalid module name '" + pkg + "'");
+        }
+
+        try (var br = new BufferedReader(new FileReader("modules/" + pkg + ".py"))) {
+            String l;
+            while ((l = br.readLine()) != null) if (!l.isBlank()) exec(l);
+            // After executing, if alias != pkg, also set alias
+            if (!alias.equals(pkg)) {
+                PyObject mod = globals.get(pkg);
+                if (mod != null) globals.put(alias, mod);
+            }
+        } catch (IOException e) {
+            throw new InterpreterException("ImportError: no module named '" + pkg + "'");
+        }
+    }
+
+    private PyModule resolveBuiltinModule(String name) {
+        return switch (name) {
             case "math" -> BuiltinModules.math();
             case "sys"  -> BuiltinModules.sys();
             case "os"   -> BuiltinModules.os();
             default     -> null;
         };
-        if (builtin != null) { globals.put(name, builtin); return; }
+    }
 
-        if (!name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-            throw new InterpreterException("ImportError: invalid module name '" + name + "'");
-        }
-
-        try (var br = new BufferedReader(new FileReader("modules/" + name + ".py"))) {
-            String l;
-            while ((l = br.readLine()) != null) if (!l.isBlank()) exec(l);
-        } catch (IOException e) {
-            throw new InterpreterException("ImportError: no module named '" + name + "'");
-        }
+    private static boolean isJavaRootPackage(String name) {
+        return name.equals("java") || name.equals("javax") || name.equals("org") ||
+               name.equals("com") || name.equals("net") || name.equals("io");
     }
 
     // ─── Bytecode public API ──────────────────────────────────────────────
@@ -1835,7 +2021,10 @@ public class Jython3Interpreter {
     // ─── Runtime object hierarchy ─────────────────────────────────────────
     public sealed interface PyObject permits
             PyInt, PyStr, PyNull, PyBool, PyFunction, PyClass, PyInstance, PyBoundMethod,
-            PyList, PyDict, PyIterator, PyModule, PyBuiltinFunction, PyFloat, PyException, PyCompiledCodeWrapper {}
+            PyList, PyDict, PyIterator, PyModule, PyBuiltinFunction, PyFloat, PyException,
+            PyCompiledCodeWrapper,
+            JavaBridge.PyJavaClass, JavaBridge.PyJavaObject, JavaBridge.PyJavaMethod,
+            JavaBridge.PyJavaPackage {}
 
     public record PyInt(int value) implements PyObject { @Override public String toString() { return Integer.toString(value); } }
     public record PyStr(String value) implements PyObject { @Override public String toString() { return value; } }
