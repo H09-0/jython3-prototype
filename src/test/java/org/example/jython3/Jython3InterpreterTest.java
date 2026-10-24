@@ -537,4 +537,153 @@ class Jython3InterpreterTest {
         py.exec("try: raise ValueError(42) except: print('caught')");
         assertEquals("caught", out());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  19. Phase 9: Jython 2.7 Replacement Foundations
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── Comparisons & Booleans ──
+    @Test void testBooleansAndNone() {
+        py.exec("print(True)");
+        py.exec("print(False)");
+        py.exec("print(None)");
+        assertEquals("True" + System.lineSeparator() + "False" + System.lineSeparator() + "None", outCapture.toString().trim());
+    }
+
+    @Test void testComparisons() {
+        py.exec("print(10 == 10)");
+        py.exec("print(10 != 20)");
+        py.exec("print(5 < 10)");
+        py.exec("print(10 <= 10)");
+        py.exec("print(15 > 5)");
+        py.exec("print(5 >= 5)");
+        String expected = String.join(System.lineSeparator(), "True", "True", "True", "True", "True", "True");
+        assertEquals(expected, outCapture.toString().trim());
+    }
+
+    @Test void testLogicalOperators() {
+        py.exec("print(True and True)");
+        py.exec("print(True and False)");
+        py.exec("print(False or True)");
+        py.exec("print(not False)");
+        String expected = String.join(System.lineSeparator(), "True", "False", "True", "True");
+        assertEquals(expected, outCapture.toString().trim());
+    }
+
+    @Test void testUnaryMinusAndPower() {
+        py.exec("x = -5");
+        py.exec("print(-x)");
+        py.exec("print(2 ** 3)");
+        assertEquals("5" + System.lineSeparator() + "8", outCapture.toString().trim());
+    }
+
+    @Test void testModuloAndFloorDivision() {
+        py.exec("print(17 % 5)");
+        py.exec("print(17 // 5)");
+        assertEquals("2" + System.lineSeparator() + "3", outCapture.toString().trim());
+    }
+
+    @Test void testAugmentedAssignment() {
+        py.exec("x = 10");
+        py.exec("x += 5");
+        py.exec("x *= 2");
+        py.exec("x -= 4");
+        py.exec("x //= 2");
+        py.exec("print(x)");
+        assertEquals("13", out());
+    }
+
+    @Test void testInAndNotIn() {
+        py.exec("print(2 in [1, 2, 3])");
+        py.exec("print(4 not in [1, 2, 3])");
+        py.exec("print('py' in 'python')");
+        String expected = String.join(System.lineSeparator(), "True", "True", "True");
+        assertEquals(expected, outCapture.toString().trim());
+    }
+
+    // ── Dictionaries ──
+    @Test void testDictLiteralAndAccess() {
+        py.exec("d = {'name': 'Jython3', 'ver': 3}");
+        py.exec("print(d['name'])");
+        py.exec("print(d['ver'])");
+        assertEquals("Jython3" + System.lineSeparator() + "3", outCapture.toString().trim());
+    }
+
+    @Test void testDictAssignAndMethods() {
+        py.exec("d = {'a': 1}");
+        py.exec("d['b'] = 2");
+        py.exec("print(d.get('b'))");
+        py.exec("print(d.get('missing', 99))");
+        assertEquals("2" + System.lineSeparator() + "99", outCapture.toString().trim());
+    }
+
+    // ── Strings & Lists Methods ──
+    @Test void testStringMethodsAndConcat() {
+        py.exec("s = 'hello' + ' ' + 'world'");
+        py.exec("print(s.upper())");
+        py.exec("print(s.startswith('hello'))");
+        py.exec("print(s.replace('world', 'jython'))");
+        String expected = String.join(System.lineSeparator(), "HELLO WORLD", "True", "hello jython");
+        assertEquals(expected, outCapture.toString().trim());
+    }
+
+    @Test void testListMethodsAndAssignment() {
+        py.exec("nums = [3, 1, 2]");
+        py.exec("nums.append(4)");
+        py.exec("nums.sort()");
+        py.exec("print(nums)");
+        py.exec("nums[0] = 99");
+        py.exec("print(nums[0])");
+        assertEquals("[1, 2, 3, 4]" + System.lineSeparator() + "99", outCapture.toString().trim());
+    }
+
+    // ── Built-in Functions ──
+    @Test void testBuiltinFunctions() {
+        py.exec("print(len([10, 20, 30]))");
+        py.exec("print(sum([1, 2, 3, 4]))");
+        py.exec("print(min(15, 3, 20))");
+        py.exec("print(max(15, 3, 20))");
+        py.exec("print(abs(-42))");
+        py.exec("print(int('123') + 1)");
+        py.exec("print(str(100) + ' items')");
+        String expected = String.join(System.lineSeparator(), "3", "10", "3", "20", "42", "124", "100 items");
+        assertEquals(expected, outCapture.toString().trim());
+    }
+
+    @Test void testRangeAndEnumerate() {
+        py.exec("r = range(3)");
+        py.exec("print(r)");
+        py.exec("print(list(range(3)))");
+        assertTrue(outCapture.toString().contains("[0, 1, 2]"));
+    }
+
+    // ── Elif & Multi-statement & Comments ──
+    @Test void testIfElifElse() {
+        py.exec("x = 0; if x > 0: print('pos') elif x == 0: print('zero') else: print('neg')");
+        assertEquals("zero", out());
+    }
+
+    @Test void testCommentsAndMultiLineScript() {
+        String script = """
+            # Initialization
+            a = 10
+            # Next variable
+            b = 20
+            # Calculation
+            res = a + b
+            print(res)
+            """;
+        py.exec(script);
+        assertEquals("30", out());
+    }
+
+    @Test void testMultiArgPrint() {
+        py.exec("print('Value:', 42, True)");
+        assertEquals("Value: 42 True", out());
+    }
+
+    @Test void testDelStatement() {
+        py.exec("x = 55; del x; try: print(x) except NameError: print('deleted')");
+        assertEquals("deleted", out());
+    }
 }

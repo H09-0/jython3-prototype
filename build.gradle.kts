@@ -30,7 +30,8 @@ tasks.register<JavaExec>("runScript") {
     description = "Run a Python script file"
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("org.example.jython3.RunScript")
-    args = listOf("test.py")
+    val scriptArg = if (project.hasProperty("args")) project.property("args").toString() else "test.py"
+    args = listOf(scriptArg)
 }
 
 tasks.generateGrammarSource {
