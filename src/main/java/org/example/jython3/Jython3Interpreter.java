@@ -148,9 +148,20 @@ public class Jython3Interpreter {
     private final Deque<Frame> callStack = new ArrayDeque<>();
     /** Per-frame exception handler stack — saved/restored on function call boundaries. */
     private Deque<ExceptHandler> exceptStack = new ArrayDeque<>();
+    /** Non-null while a generator function is being drained; collects yielded values. */
+    private List<PyObject> yieldCollector = null;
+
     // ─── Constructor ──────────────────────────────────────────────────────
     public Jython3Interpreter() {
-        PyCaller.CURRENT.set(this::callPyCallable);
+        PyCaller.CURRENT.set(new PyCaller() {
+            @Override public PyObject call(PyObject callable, PyObject[] args) {
+                return callPyCallable(callable, args);
+            }
+
+            @Override public List<PyObject> collectYields(PyFunction fn, PyObject[] args) {
+                return runGenerator(fn, args);
+            }
+        });
         registerBuiltins();
     }
 
@@ -187,6 +198,8 @@ public class Jython3Interpreter {
         stack = new ArrayDeque<>();
         currentLocals = globals;
         exceptStack = new ArrayDeque<>();
+        callStack.clear();
+        yieldCollector = null;
         execCount++;
 
         long compileStart = profilingEnabled ? System.nanoTime() : 0;
@@ -200,6 +213,64 @@ public class Jython3Interpreter {
         if (profilingEnabled) {
             executionTime += System.nanoTime() - execStart;
         }
+    }
+
+    /**
+     * Runs a generator function to completion and returns every yielded value.
+     * The function executes on an isolated call stack so the caller's frames are
+     * not disturbed by the generator's return instruction.
+     */
+    private List<PyObject> runGenerator(PyFunction fn, PyObject[] args) {
+        var collected = new ArrayList<PyObject>();
+        var savedFrames = new ArrayDeque<>(callStack);
+        var savedStack = stack;
+        var savedLocals = currentLocals;
+        var savedExcept = exceptStack;
+        var savedCollector = yieldCollector;
+        try {
+            var locals = new HashMap<String, PyObject>();
+            if (fn.closure() != null) locals.putAll(fn.closure());
+            for (int i = 0; i < fn.params().size() && i < args.length; i++) {
+                locals.put(fn.params().get(i), args[i]);
+            }
+            callStack.clear();
+            stack = new ArrayDeque<>();
+            currentLocals = locals;
+            exceptStack = new ArrayDeque<>();
+            yieldCollector = collected;
+            run(fn.code());
+        } finally {
+            yieldCollector = savedCollector;
+            callStack.clear();
+            callStack.addAll(savedFrames);
+            stack = savedStack;
+            currentLocals = savedLocals;
+            exceptStack = savedExcept;
+        }
+        return collected;
+    }
+
+    /**
+     * Python-style exception matching for the single-string exception model used
+     * by the VM. {@code Exception} and {@code BaseException} are catch-alls;
+     * Java reflection failures are wrapped as {@code JavaException: <fqcn>: ...}.
+     */
+    private static boolean matchesExceptionType(String typeName, String excMsg) {
+        if (typeName.equals("Exception") || typeName.equals("BaseException")) return true;
+        if (excMsg.equals(typeName) || excMsg.startsWith(typeName + ":") || excMsg.startsWith(typeName + "(")) {
+            return true;
+        }
+        if (excMsg.startsWith("JavaException: ")) {
+            return switch (typeName) {
+                case "IndexError" -> excMsg.contains("IndexOutOfBoundsException");
+                case "KeyError" -> excMsg.contains("NoSuchElementException");
+                case "ValueError" -> excMsg.contains("NumberFormatException")
+                        || excMsg.contains("IllegalArgumentException");
+                case "TypeError" -> excMsg.contains("ClassCastException");
+                default -> false;
+            };
+        }
+        return false;
     }
 
     public PyObject getGlobal(String name) {
@@ -559,18 +630,25 @@ public class Jython3Interpreter {
                 }
                 case YIELD_VALUE -> {
                     PyObject rv = stack.pop();
-                    if (callStack.isEmpty()) { stack.push(rv); return; }
-                    // For generator-like behavior in simple cases, treat yield similar to return value
-                    Frame cf = callStack.pop();
-                    code = cf.code();
-                    bc = code.bytecode();
-                    pool = code.constPool();
-                    pc = cf.returnPc();
-                    currentLocals = cf.locals();
-                    stack = cf.stack();
-                    exceptStack = cf.exceptHandlers();
-                    stack.push(rv);
-                    continue outer;
+                    if (yieldCollector != null) {
+                        // Draining a generator: record the value and keep executing.
+                        yieldCollector.add(rv);
+                    } else if (callStack.isEmpty()) {
+                        stack.push(rv);
+                        return;
+                    } else {
+                        // For generator-like behavior in simple cases, treat yield similar to return value
+                        Frame cf = callStack.pop();
+                        code = cf.code();
+                        bc = code.bytecode();
+                        pool = code.constPool();
+                        pc = cf.returnPc();
+                        currentLocals = cf.locals();
+                        stack = cf.stack();
+                        exceptStack = cf.exceptHandlers();
+                        stack.push(rv);
+                        continue outer;
+                    }
                 }
                 case RETURN_VALUE -> {
                     PyObject rv = stack.pop();
@@ -677,6 +755,17 @@ public class Jython3Interpreter {
                         stack.push(new PyIterator(chars, 0));
                     } else if (o instanceof PyDict d) {
                         stack.push(new PyIterator(new ArrayList<>(d.map().keySet()), 0));
+                    } else if (o instanceof PyGenerator gen) {
+                        // Eagerly drain the generator into a list then wrap as iterator
+                        var items = new ArrayList<PyObject>();
+                        while (!gen.isDone()) {
+                            try { items.add(gen.next()); }
+                            catch (InterpreterException ie) {
+                                if (ie.getMessage().startsWith("StopIteration")) break;
+                                throw ie;
+                            }
+                        }
+                        stack.push(new PyIterator(items, 0));
                     } else if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
                         var items = new ArrayList<PyObject>();
                         for (Object item : iterable) items.add(JavaBridge.toPyObject(item));
@@ -736,6 +825,41 @@ public class Jython3Interpreter {
                     String excType = (String) pool[ai];
                     String msg = (msgObj instanceof PyStr s) ? s.value() : msgObj.toString();
                     throw new InterpreterException(excType + ": " + msg);
+                }
+                case COMPARE_EXC_TYPE -> {
+                    // Stack: [..., excMsg, typeName]
+                    // Pops typeName, keeps excMsg for binding, and pushes the match result.
+                    PyObject typeNameObj = stack.pop();
+                    PyObject excMsgObj = stack.peek();
+                    String typeName2 = typeNameObj instanceof PyStr s ? s.value() : typeNameObj.toString();
+                    String excMsg = excMsgObj instanceof PyStr s ? s.value() : excMsgObj.toString();
+                    stack.push(PyBool.of(matchesExceptionType(typeName2, excMsg)));
+                }
+                case RERAISE -> {
+                    PyObject excObj = stack.pop();
+                    String excMsg = excObj instanceof PyStr s ? s.value() : excObj.toString();
+                    throw new InterpreterException(excMsg);
+                }
+                case EXECFILE -> {
+                    // Stack top = file path string
+                    PyObject pathObj = stack.pop();
+                    String filePath = pathObj instanceof PyStr s ? s.value() : pathObj.toString();
+                    try {
+                        String src2 = java.nio.file.Files.readString(java.nio.file.Path.of(filePath));
+                        CompiledCode fileCode = compile(src2);
+                        // Execute in current scope (globals shared, fresh locals inherit)
+                        var savedStack2 = stack;
+                        var savedLocals2 = currentLocals;
+                        var savedExcept2 = exceptStack;
+                        stack = new ArrayDeque<>();
+                        exceptStack = new ArrayDeque<>();
+                        run(fileCode);
+                        stack = savedStack2;
+                        currentLocals = savedLocals2;
+                        exceptStack = savedExcept2;
+                    } catch (java.io.IOException ioe) {
+                        throw new InterpreterException("IOError: cannot open '" + filePath + "': " + ioe.getMessage());
+                    }
                 }
                 case HALT -> { return; }
             } // end switch

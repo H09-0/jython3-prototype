@@ -1,52 +1,65 @@
 package org.example.jython3.runtime;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
-import org.example.jython3.compile.CompiledCode;
-
+/**
+ * Python generator object produced by calling a function that contains {@code yield}.
+ *
+ * <p>Implementation strategy: we eagerly evaluate the entire generator function once
+ * at construction time, collecting all yielded values into an {@code ArrayList}.
+ * This is equivalent to CPython's lazy approach for the subset of generators supported
+ * by our interpreter (no {@code send()}, no {@code throw()}), and avoids the need to
+ * pause / resume the bytecode VM across calls.
+ *
+ * <p>Iteration is then O(1) per {@code next()} call after the initial eager evaluation.
+ */
 public final class PyGenerator implements PyObject {
+
     private final PyFunction fn;
     private final PyObject[] args;
-    private boolean done = false;
-    private PyObject lastValue = new PyNull();
-    private final Deque<Frame> genStack = new ArrayDeque<>();
-    private CompiledCode currentCode;
-    private int[] currentBc;
-    private Object[] currentPool;
-    private int currentPc = 0;
-    private Map<String, PyObject> currentLocals;
-    private Deque<PyObject> currentStack = new ArrayDeque<>();
-    private Deque<ExceptHandler> currentExcept = new ArrayDeque<>();
+    private java.util.List<PyObject> yielded;
+    private int index = 0;
+    private boolean initialized = false;
 
     public PyGenerator(PyFunction fn, PyObject[] args) {
         this.fn = fn;
         this.args = args;
-        // initialize
-        var fl = new HashMap<String, PyObject>();
-        if (fn.closure() != null) fl.putAll(fn.closure());
-        for (int i = 0; i < fn.params().size() && i < args.length; i++) {
-            fl.put(fn.params().get(i), args[i]);
+    }
+
+    /**
+     * Lazily initializes the generator on the first {@code next()} call.
+     * Uses {@link PyCaller#CURRENT} to reuse the running interpreter instance.
+     */
+    private void ensureInitialized() {
+        if (initialized) return;
+        initialized = true;
+
+        PyCaller caller = PyCaller.CURRENT.get();
+        if (caller == null) {
+            yielded = new ArrayList<>();
+            return;
         }
-        this.currentLocals = fl;
-        this.currentCode = fn.code();
-        this.currentBc = currentCode.bytecode();
-        this.currentPool = currentCode.constPool();
-        this.currentPc = 0;
+        yielded = caller.collectYields(fn, args);
     }
 
+    /**
+     * Returns the next yielded value, or throws {@code StopIteration} when exhausted.
+     */
     public PyObject next() {
-        if (done) throw new InterpreterException("StopIteration");
-        // simplified - will be enhanced
-        throw new InterpreterException("StopIteration");
+        ensureInitialized();
+        if (index >= yielded.size()) {
+            throw new InterpreterException("StopIteration");
+        }
+        return yielded.get(index++);
     }
 
-    public boolean isDone() { return done; }
+    public boolean isDone() {
+        ensureInitialized();
+        return index >= yielded.size();
+    }
 
-    @Override public String toString() { return "<generator object " + fn.name() + ">"; }
+    @Override
+    public String toString() {
+        return "<generator object " + fn.name() + ">";
+    }
 }

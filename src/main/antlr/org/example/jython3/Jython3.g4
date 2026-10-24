@@ -38,6 +38,7 @@ simple_stmt
     | pass_stmt
     | break_stmt
     | continue_stmt
+    | execfile_stmt
     | call_stmt
     | yield_stmt
     ;
@@ -129,6 +130,11 @@ continue_stmt
     : CONTINUE
     ;
 
+/** execfile(path_expr) – execute a Python source file */
+execfile_stmt
+    : EXECFILE LPAREN expr RPAREN
+    ;
+
 /** Standalone function call: name(args) or expr.method(args) */
 call_stmt
     : ID LPAREN arg_list? RPAREN
@@ -177,6 +183,7 @@ for_stmt
 /** try: suite except [ExcType [as var]]: suite [finally: suite] */
 try_stmt
     : TRY COLON suite except_clause+ (ELSE COLON suite)? (FINALLY COLON suite)?
+    | TRY COLON suite FINALLY COLON suite
     ;
 
 except_clause
@@ -275,6 +282,7 @@ DEL      : 'del';
 PASS     : 'pass';
 BREAK    : 'break';
 CONTINUE : 'continue';
+EXECFILE : 'execfile';
 AND      : 'and';
 OR       : 'or';
 NOT      : 'not';

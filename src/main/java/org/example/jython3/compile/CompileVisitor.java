@@ -11,6 +11,13 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     private final CodeBuilder b;
     public CompileVisitor(CodeBuilder b) { this.b = b; }
 
+    // ── Loop context stack for break/continue jump patching ──────────────
+    private static class LoopContext {
+        final java.util.List<Integer> breakPatches = new java.util.ArrayList<>();
+        int continueTarget = -1; // pc of loop-start / FOR_ITER
+    }
+    private final java.util.Deque<LoopContext> loopStack = new java.util.ArrayDeque<>();
+
     @Override public Void visitStat(Jython3Parser.StatContext c) {
         for (var stmt : c.stmt()) {
             visit(stmt);
@@ -164,12 +171,39 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return null;
     }
 
-    @Override public Void visitBreak_stmt(Jython3Parser.Break_stmtContext c) {
-        b.emit(OpCode.HALT);
+    /**
+     * execfile(path) — compile the target .py file and execute it inline.
+     * Emits EXECFILE opcode; the interpreter reads and runs the file at runtime.
+     */
+    @Override public Void visitExecfile_stmt(Jython3Parser.Execfile_stmtContext c) {
+        // Push the path expression onto the stack, then emit EXECFILE
+        visit(c.expr());
+        b.emit(OpCode.EXECFILE);
         return null;
     }
 
+    /**
+     * break — emit a JUMP that will be back-patched to after the enclosing loop.
+     * Collects the patch site into the innermost LoopContext.
+     */
+    @Override public Void visitBreak_stmt(Jython3Parser.Break_stmtContext c) {
+        if (!loopStack.isEmpty()) {
+            int idx = b.size();
+            b.emitRaw(OpCode.JUMP, 0); // target patched after loop ends
+            loopStack.peek().breakPatches.add(idx);
+        }
+        return null;
+    }
+
+    /**
+     * continue — emit a JUMP directly to the loop-start / FOR_ITER pc.
+     * The target is set when the enclosing while/for visitor pushes its LoopContext.
+     */
     @Override public Void visitContinue_stmt(Jython3Parser.Continue_stmtContext c) {
+        if (!loopStack.isEmpty()) {
+            int target = loopStack.peek().continueTarget;
+            if (target >= 0) b.emitRaw(OpCode.JUMP, target);
+        }
         return null;
     }
 
@@ -316,9 +350,19 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         visit(c.expr());
         int jumpFalse = b.size();
         b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+
+        // Push loop context so break/continue know where to jump
+        var ctx = new LoopContext();
+        ctx.continueTarget = loopStart;
+        loopStack.push(ctx);
         visit(c.suite());
+        loopStack.pop();
+
         b.emitRaw(OpCode.JUMP, loopStart);
-        b.patch(jumpFalse, b.size());
+        int afterLoop = b.size();
+        b.patch(jumpFalse, afterLoop);
+        // Patch all break jumps to after the loop
+        for (int bp : ctx.breakPatches) b.patch(bp, afterLoop);
         return null;
     }
 
@@ -329,48 +373,108 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         int forIter = b.size();
         b.emitRaw(OpCode.FOR_ITER, 0);
         b.emit(OpCode.STORE_FAST, c.ID().getText());
+
+        // Push loop context: continue → jump back to FOR_ITER
+        var ctx = new LoopContext();
+        ctx.continueTarget = loopTarget;
+        loopStack.push(ctx);
         visit(c.suite());
+        loopStack.pop();
+
         b.emitRaw(OpCode.JUMP, loopTarget);
-        b.patch(forIter, b.size());
+        int afterLoop = b.size();
+        b.patch(forIter, afterLoop);
+        // Patch all break jumps to after the loop
+        for (int bp : ctx.breakPatches) b.patch(bp, afterLoop);
         return null;
     }
 
     @Override public Void visitTry_stmt(Jython3Parser.Try_stmtContext c) {
-        // Supports: try: suite (except [Type [as var]]: suite)+ [else: suite] [finally: suite]
+        /*
+         * Bytecode layout:
+         *
+         *   PUSH_EXCEPT_HANDLER <handler-pc>
+         *   <try body>
+         *   POP_EXCEPT_HANDLER
+         *   <else body>                    ; normal path only
+         *   JUMP <shared-finally>
+         *
+         *   <handler-pc>:                  ; stack top = exception message
+         *   for each clause:
+         *     LOAD_CONST <type>; COMPARE_EXC_TYPE
+         *     JUMP_IF_FALSE <next clause>
+         *     bind/discard message; <clause body>; JUMP <shared-finally>
+         *   <exceptional-finally>          ; runs before re-raising
+         *   RERAISE
+         *
+         *   <shared-finally>:
+         *   <finally body>                 ; normal path and handled exceptions
+         */
         var exceptClauses = c.except_clause();
+        var suites = c.suite();
+        var finallySuite = c.FINALLY() != null ? suites.get(suites.size() - 1) : null;
 
+        // --- try body ---
         int pushIdx = b.size();
-        b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);   // placeholder → except handler pc
-        visit(c.suite(0));                            // try body
+        b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0); // patched to the handler chain below
+        visit(suites.get(0));
         b.emit(OpCode.POP_EXCEPT_HANDLER);
-        int jumpOverIdx = b.size();
-        b.emitRaw(OpCode.JUMP, 0);                   // jump over all except blocks
 
-        // Patch PUSH_EXCEPT_HANDLER to point here (exception handler start)
-        b.patch(pushIdx, b.size());
-
-        // Handle first except clause (stack machine supports one handler per try block)
-        if (!exceptClauses.isEmpty()) {
-            var clause = exceptClauses.get(0);
-            // Stack top is the exception message string
-            if (clause.AS() != null && clause.ID() != null) {
-                // except ExcType as varName: — store exception message in var
-                String varName = clause.ID().getText();
-                b.emit(OpCode.STORE_FAST, varName);
-            } else {
-                b.emit(OpCode.POP_TOP);   // discard exception string
+        // --- else body (runs only when the try body completed normally) ---
+        if (c.ELSE() != null) {
+            int elseOffset = finallySuite != null ? suites.size() - 2 : suites.size() - 1;
+            if (elseOffset > 0 && elseOffset < suites.size()) {
+                visit(suites.get(elseOffset));
             }
-            visit(clause.suite());  // except body is inside except_clause, not try_stmt
         }
 
-        // Patch the jump-over to skip past all except bodies
-        b.patch(jumpOverIdx, b.size());
+        int jumpOverIdx = b.size();
+        b.emitRaw(OpCode.JUMP, 0); // skip the handler chain
 
-        // Handle finally if present (runs after try+except, always)
-        if (c.FINALLY() != null) {
-            // finally suite is the last suite() in try_stmt (after else if present)
-            var suites = c.suite();
-            visit(suites.get(suites.size() - 1));
+        // --- handler chain ---
+        b.patch(pushIdx, b.size());
+        var clauseEndPatches = new java.util.ArrayList<Integer>();
+        for (var clause : exceptClauses) {
+            boolean hasType = clause.expr() != null;
+            int nextClauseIdx = -1;
+
+            if (hasType) {
+                b.emit(OpCode.LOAD_CONST, clause.expr().getText());
+                b.emit(OpCode.COMPARE_EXC_TYPE);
+                nextClauseIdx = b.size();
+                b.emitRaw(OpCode.JUMP_IF_FALSE, 0); // try the next clause
+            }
+
+            if (clause.AS() != null && clause.ID() != null) {
+                b.emit(OpCode.STORE_FAST, clause.ID().getText());
+            } else {
+                b.emit(OpCode.POP_TOP);
+            }
+
+            visit(clause.suite());
+
+            int jmpEnd = b.size();
+            b.emitRaw(OpCode.JUMP, 0);
+            clauseEndPatches.add(jmpEnd);
+
+            if (hasType) {
+                b.patch(nextClauseIdx, b.size());
+            }
+        }
+
+        // No clause matched: run the finally body, then propagate the exception.
+        if (finallySuite != null) {
+            visit(finallySuite);
+        }
+        b.emit(OpCode.RERAISE);
+
+        // Normal completion and handled exceptions skip the re-raise path.
+        b.patch(jumpOverIdx, b.size());
+        for (int ep : clauseEndPatches) b.patch(ep, b.size());
+
+        // Shared finally body for the normal path and handled exceptions.
+        if (finallySuite != null) {
+            visit(finallySuite);
         }
 
         return null;

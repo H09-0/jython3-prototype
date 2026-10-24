@@ -18,7 +18,10 @@ public enum OpCode {
     DELETE_FAST(44), DELETE_SUBSCR(45),
     LOAD_ATTR(46),
     PUSH_EXCEPT_HANDLER(47), POP_EXCEPT_HANDLER(48), RAISE(49),
-    HALT(50);
+    HALT(50),
+    EXECFILE(51),          // arg: path string on stack
+    COMPARE_EXC_TYPE(52),  // pops (excMsg, typeName), pushes bool (excMsg prefix matches typeName)
+    RERAISE(53);           // pops an exception message and raises it again
 
     private final int code;
 

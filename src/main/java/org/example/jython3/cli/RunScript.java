@@ -1,6 +1,7 @@
 package org.example.jython3.cli;
 
 import org.example.jython3.Jython3Interpreter;
+import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.SystemExit;
 
 import java.io.IOException;
@@ -9,25 +10,59 @@ import java.nio.file.Path;
 
 /**
  * Script runner – executes a Python script file using Jython3Interpreter.
+ *
+ * <p>Exit codes:
+ * <ul>
+ *   <li>0  – script completed successfully.
+ *   <li>1  – Python-level error (InterpreterException printed as traceback).
+ *   <li>2  – usage or I/O error.
+ *   <li>N  – explicit sys.exit(N) from the script.
+ * </ul>
  */
 public class RunScript {
     public static void main(String[] args) {
         if (args.length == 0) {
-            System.out.println("Usage: java RunScript <script.py>");
-            return;
+            System.err.println("Usage: java RunScript <script.py> [arg ...]");
+            System.exit(2);
         }
 
-        var interpreter = new Jython3Interpreter();
         String filename = args[0];
+        var interpreter = new Jython3Interpreter();
+
+        // Forward remaining CLI args as sys.argv
+        var argv = new org.example.jython3.runtime.PyList(new java.util.ArrayList<>());
+        for (String a : args) argv.items().add(new org.example.jython3.runtime.PyStr(a));
+        var sysModule = (org.example.jython3.runtime.PyModule)
+                interpreter.getGlobal("sys");
+        if (sysModule == null) {
+            // import sys so it is available
+            interpreter.eval("import sys");
+            sysModule = (org.example.jython3.runtime.PyModule) interpreter.getGlobal("sys");
+        }
+        if (sysModule != null) sysModule.attrs().put("argv", argv);
 
         try {
             String script = Files.readString(Path.of(filename));
-            interpreter.cacheScript(filename, script);
-            interpreter.exec(script);
+
+            // Execute via eval() so errors propagate as InterpreterException
+            try {
+                interpreter.eval(script);
+            } catch (SystemExit se) {
+                System.exit(se.code);
+            } catch (InterpreterException ie) {
+                // Print traceback with the real filename
+                String[] lines = script.split("\n", -1);
+                System.err.println("Traceback (most recent call last):");
+                System.err.println("  File \"" + filename + "\", in <module>");
+                System.err.println(ie.getMessage());
+                System.exit(1);
+            }
+
         } catch (SystemExit se) {
             System.exit(se.code);
         } catch (IOException e) {
-            System.err.println("Error reading file: " + e.getMessage());
+            System.err.println("Error reading file '" + filename + "': " + e.getMessage());
+            System.exit(2);
         }
     }
 }

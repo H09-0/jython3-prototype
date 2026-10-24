@@ -7,6 +7,16 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.IOException;
 
+/**
+ * Interactive REPL for Jython3.
+ *
+ * <p>Block detection logic:
+ * <ul>
+ *   <li>A compound statement header (ending with {@code :}) keeps the prompt in continuation mode.
+ *   <li>An empty line while in continuation mode flushes and executes the accumulated buffer.
+ *   <li>Unbalanced parentheses / brackets / braces also keep continuation mode.
+ * </ul>
+ */
 public class Repl {
     public static void main(String[] args) throws IOException {
         Jython3Interpreter py = new Jython3Interpreter();
@@ -15,42 +25,61 @@ public class Repl {
         System.out.println("\u001B[36mJython3 3.0.0 REPL\u001B[0m (type exit() to quit)");
         while (true) {
             try {
-                System.out.print(buffer.length() == 0 ? "\u001B[32m>>> \u001B[0m" : "\u001B[32m... \u001B[0m");
+                boolean inContinuation = buffer.length() > 0;
+                System.out.print(inContinuation ? "\u001B[32m... \u001B[0m" : "\u001B[32m>>> \u001B[0m");
                 String line = br.readLine();
                 if (line == null) break;
-                if (buffer.length() == 0 && line.trim().equals("exit()")) break;
-                buffer.append(line).append("\n");
-                String src = buffer.toString();
-                if (line.trim().isEmpty() && buffer.toString().trim().isEmpty()) continue;
-                if (looksComplete(src)) {
+                if (!inContinuation && line.trim().equals("exit()")) break;
+
+                // Empty line in continuation mode → flush buffer
+                if (inContinuation && line.trim().isEmpty()) {
+                    String src = buffer.toString();
+                    buffer.setLength(0);
                     try {
                         py.exec(src);
                     } catch (SystemExit se) {
                         System.exit(se.code);
                     }
-                    buffer.setLength(0);
+                    continue;
                 }
+
+                buffer.append(line).append("\n");
+                String src = buffer.toString();
+
+                // Only execute immediately for simple (non-block) statements
+                if (!inBlock(src)) {
+                    buffer.setLength(0);
+                    try {
+                        py.exec(src);
+                    } catch (SystemExit se) {
+                        System.exit(se.code);
+                    }
+                }
+                // Otherwise stay in continuation mode until empty line
+
             } catch (SystemExit se) {
                 System.exit(se.code);
             }
         }
     }
-    
-    private static boolean looksComplete(String src) {
-        String trimmed = src.trim();
-        if (trimmed.endsWith(":")) return false;
+
+    /**
+     * Returns {@code true} when the accumulated source is a block header or has unbalanced
+     * delimiters, meaning we need more input before executing.
+     */
+    private static boolean inBlock(String src) {
+        // Check last non-empty, non-comment line
         String[] lines = src.replace("\r", "").split("\n");
-        for (String l : lines) {
-            String t = l.trim();
-            if (t.isEmpty() || t.startsWith("#")) continue;
-            if ((t.startsWith("def ") || t.startsWith("class ") || t.startsWith("if ") ||
-                    t.startsWith("elif ") || t.startsWith("else:") || t.startsWith("while ") ||
-                    t.startsWith("for ") || t.startsWith("try:") || t.startsWith("except") ||
-                    t.startsWith("finally:")) && t.endsWith(":")) {
-                return false;
-            }
+        String lastReal = "";
+        for (int i = lines.length - 1; i >= 0; i--) {
+            String t = lines[i].trim();
+            if (!t.isEmpty() && !t.startsWith("#")) { lastReal = t; break; }
         }
-        // simple balance check for parens/brackets/braces
+
+        // Block header: last real line ends with ':'
+        if (lastReal.endsWith(":")) return true;
+
+        // Unbalanced delimiters
         int paren = 0, brack = 0, brace = 0;
         boolean inStr = false;
         char strChar = 0;
@@ -62,14 +91,10 @@ public class Repl {
                 continue;
             }
             if (inStr) continue;
-            if (c == '(') paren++;
-            else if (c == ')') paren--;
-            else if (c == '[') brack++;
-            else if (c == ']') brack--;
-            else if (c == '{') brace++;
-            else if (c == '}') brace--;
+            if (c == '(') paren++; else if (c == ')') paren--;
+            else if (c == '[') brack++; else if (c == ']') brack--;
+            else if (c == '{') brace++; else if (c == '}') brace--;
         }
-        if (paren > 0 || brack > 0 || brace > 0) return false;
-        return true;
+        return paren > 0 || brack > 0 || brace > 0;
     }
 }
