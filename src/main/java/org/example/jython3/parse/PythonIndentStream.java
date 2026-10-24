@@ -1,4 +1,4 @@
-package org.example.jython3;
+package org.example.jython3.parse;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -9,6 +9,9 @@ import org.antlr.v4.runtime.CommonToken;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.TokenFactory;
 import org.antlr.v4.runtime.TokenSource;
+
+import org.example.jython3.Jython3Parser;
+import org.example.jython3.runtime.InterpreterException;
 
 /**
  * TokenSource filter that implements Python 3 indentation rules.
@@ -52,7 +55,7 @@ public class PythonIndentStream implements TokenSource {
             if (isFirstToken) {
                 isFirstToken = false;
                 if (t.getType() != Jython3Parser.EOF && t.getType() != Jython3Parser.NEWLINE && t.getCharPositionInLine() > 0) {
-                    throw new Jython3Interpreter.InterpreterException("IndentationError: unexpected indent at line 1");
+                    throw new InterpreterException("IndentationError: unexpected indent at line 1");
                 }
             }
 
@@ -101,7 +104,7 @@ public class PythonIndentStream implements TokenSource {
                 int currentIndent = indentStack.peek();
                 if (spaces > currentIndent) {
                     if (indentStack.size() >= MAX_INDENT_DEPTH) {
-                        throw new Jython3Interpreter.InterpreterException(
+                        throw new InterpreterException(
                                 "IndentationError: maximum indentation depth exceeded (limit: " + MAX_INDENT_DEPTH + ")");
                     }
                     pendingTokens.add(createToken(Jython3Parser.NEWLINE, "\n", t));
@@ -114,7 +117,7 @@ public class PythonIndentStream implements TokenSource {
                         pendingTokens.add(createToken(Jython3Parser.DEDENT, "", t));
                     }
                     if (indentStack.peek() != spaces) {
-                        throw new Jython3Interpreter.InterpreterException(
+                        throw new InterpreterException(
                                 "IndentationError: unindent does not match any outer indentation level");
                     }
                 } else {

@@ -22,16 +22,24 @@ dependencies {
 }
 
 application {
-    mainClass.set("org.example.jython3.Jython3Interpreter")
+    mainClass.set("org.example.jython3.cli.Repl")
 }
 
 tasks.register<JavaExec>("runScript") {
     group = "application"
     description = "Run a Python script file"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("org.example.jython3.RunScript")
+    mainClass.set("org.example.jython3.cli.RunScript")
     val scriptArg = if (project.hasProperty("args")) project.property("args").toString() else "test.py"
     args = listOf(scriptArg)
+}
+
+tasks.register<JavaExec>("repl") {
+    group = "application"
+    description = "Start Jython3 REPL"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("org.example.jython3.cli.Repl")
+    standardInput = System.`in`
 }
 
 tasks.generateGrammarSource {

@@ -1,4 +1,7 @@
-package org.example.jython3;
+package org.example.jython3.cli;
+
+import org.example.jython3.Jython3Interpreter;
+import org.example.jython3.runtime.SystemExit;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,7 +22,10 @@ public class RunScript {
 
         try {
             String script = Files.readString(Path.of(filename));
+            interpreter.cacheScript(filename, script);
             interpreter.exec(script);
+        } catch (SystemExit se) {
+            System.exit(se.code);
         } catch (IOException e) {
             System.err.println("Error reading file: " + e.getMessage());
         }

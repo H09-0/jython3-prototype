@@ -8,7 +8,7 @@ interpreter targeting Python 3.x on the JVM.**
 [![Version](https://img.shields.io/badge/Version-v0.8.0--alpha-orange)](https://github.com/H09-0/jython3-prototype/releases)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
 [![ANTLR](https://img.shields.io/badge/Parser-ANTLR%204.13.1-purple)](https://www.antlr.org/)
-[![Tests](https://img.shields.io/badge/Tests-74%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-133%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
 ---
 
@@ -62,8 +62,11 @@ The table below summarises the current state of language and runtime support.
 | Tracebacks: `NameError`, `ZeroDivisionError`, `TypeError`, `AttributeError`, `IndexError` | ✅ Supported |
 | Real bytecode layer (`CompiledCode`: `int[]` + `Object[]` constants pool) | ✅ Supported |
 | Exception handling (`try` / `except` / `raise`) | ✅ Supported |
-| Standard library expansion (`re`, `collections`, `io`) | 🔜 Planned |
-| Maven Central packaging and GitHub Actions CI | 🔜 Planned |
+| Classes, inheritance, bound methods, decorators | ✅ Supported |
+| Java bridge (`from java.lang import Math`) | ✅ Supported |
+| `re`, `json`, and `io` modules | ✅ Supported |
+| `collections`, comprehensions, true division `/` | 🔜 Planned |
+| Maven Central packaging | 🔜 Planned |
 
 ---
 
@@ -227,7 +230,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 74 tests pass with zero failures and zero skipped. Test reports are written to:
+All 133 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -249,17 +252,31 @@ jython3-prototype/
 ├── modules/                                     # File-based importable Python modules
 │   └── testmod.py
 │
+├── docs/
+│   └── architecture.md                          # Package map and pipeline
+│
 └── src/
     ├── main/
     │   ├── antlr/org/example/jython3/
     │   │   └── Jython3.g4                       # ANTLR4 grammar — source of truth for syntax
     │   └── java/org/example/jython3/
-    │       ├── Jython3Interpreter.java          # Core: lexer→bytecode→stack machine
-    │       └── BuiltinModules.java              # Java-backed stdlib: math, sys, os
+    │       ├── Jython3Interpreter.java          # VM, imports, and public exec/eval API
+    │       ├── runtime/                         # PyObject hierarchy and value operations
+    │       ├── compile/                         # OpCode, CodeBuilder, CompileVisitor
+    │       ├── bridge/                          # JavaBridge reflection and security checks
+    │       ├── stdlib/                          # Builtins plus math, sys, os, io, json, re
+    │       ├── parse/                           # PythonIndentStream (INDENT / DEDENT)
+    │       └── cli/                             # Repl and RunScript
     └── test/
         └── java/org/example/jython3/
-            └── Jython3InterpreterTest.java      # 74 JUnit 5 regression tests
+            └── Jython3InterpreterTest.java      # 133 JUnit 5 regression tests
 ```
+
+The object types (`PyInt`, `PyFunction`, `PyClass`, and the Java wrappers) live in
+`org.example.jython3.runtime`. `PyObject` does not name `JavaBridge`; the bridge
+types sit beside it and call into `org.example.jython3.bridge`.
+
+See [docs/architecture.md](docs/architecture.md) for the pipeline and package roles.
 
 ---
 
@@ -275,7 +292,8 @@ jython3-prototype/
 | 6 | `v0.6.0-alpha` | `CompiledCode`, constants pool, lists, `for` loops, 49 tests | ✅ Released |
 | 7 | `v0.7.0-alpha` | `math`/`sys`/`os` stdlib, `PyFloat`, `PyModule`, `LOAD_ATTR`, 64 tests | ✅ Released |
 | 8 | `v0.8.0-alpha` | Exception handling (`try`/`except`/`raise`), cross-frame propagation, 74 tests | ✅ Released |
-| 9 | `v1.0.0` | Stable API, Maven Central, GitHub Actions CI, full Javadoc | 🎯 Target |
+| 9–11 | working tree | Indentation, classes, decorators, Java bridge, package split, 133 tests | ✅ In tree |
+| 12 | `v1.0.0` | Stable API, Maven Central, true division, comprehensions | 🎯 Target |
 
 ---
 

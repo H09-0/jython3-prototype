@@ -5,6 +5,8 @@ import java.io.*;
 import java.nio.file.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.example.jython3.runtime.InterpreterException;
+
 /**
  * Comprehensive test suite for Jython3Interpreter (Phase 5 – Functions & Call Stack).
  *
@@ -176,18 +178,18 @@ class Jython3InterpreterTest {
     // ═══════════════════════════════════════════════════════════════════
     //  8. Bytecode generation
     // ═══════════════════════════════════════════════════════════════════
-    @Test void testBytecodeNotNullOrEmpty() throws Jython3Interpreter.InterpreterException {
+    @Test void testBytecodeNotNullOrEmpty() throws InterpreterException {
         int[] bc = py.compileToBytecode("print(1 + 2)");
         assertNotNull(bc);
         assertTrue(bc.length > 0);
     }
 
-    @Test void testBytecodeLength_PrintInt() throws Jython3Interpreter.InterpreterException {
+    @Test void testBytecodeLength_PrintInt() throws InterpreterException {
         int[] bc = py.compileToBytecode("print(5)");
         assertEquals(3, bc.length);
     }
 
-    @Test void testBytecodeLength_Assign() throws Jython3Interpreter.InterpreterException {
+    @Test void testBytecodeLength_Assign() throws InterpreterException {
         int[] bc = py.compileToBytecode("x = 10");
         assertEquals(3, bc.length);
     }
@@ -1143,5 +1145,101 @@ class Jython3InterpreterTest {
             """);
         assertEquals("", err());
         assertEquals("True", out());
+    }
+
+    // ── DEC-01: Simple function decorator ────────────────────────────
+    @Test void testSimpleFunctionDecorator() {
+        py.exec("""
+            def dec(f):
+                def wrapper():
+                    return f() + 1
+                return wrapper
+            
+            @dec
+            def foo():
+                return 10
+            
+            print(foo())
+            """);
+        assertEquals("", err());
+        assertEquals("11", out());
+    }
+
+    // ── DEC-02: Decorator with arguments ─────────────────────────────
+    @Test void testDecoratorReturningFunction() {
+        py.exec("""
+            def bold(f):
+                def inner():
+                    return "***" + f() + "***"
+                return inner
+            
+            @bold
+            def greet():
+                return "hi"
+            
+            print(greet())
+            """);
+        assertEquals("", err());
+        assertEquals("***hi***", out());
+    }
+
+    // ── DEC-03: Multiple decorators ──────────────────────────────────
+    @Test void testMultipleDecorators() {
+        py.exec("""
+            def add_one(f):
+                def wrapper():
+                    return f() + 1
+                return wrapper
+            
+            def double(f):
+                def wrapper():
+                    return f() * 2
+                return wrapper
+            
+            @add_one
+            @double
+            def num():
+                return 5
+            
+            print(num())
+            """);
+        assertEquals("", err());
+        assertEquals("11", out());
+    }
+
+    // ── DEC-04: Decorator preserving function behavior ──────────────
+    @Test void testDecoratorWithLogic() {
+        py.exec("""
+            def logger(f):
+                def wrapped(x):
+                    return f(x) * 2
+                return wrapped
+            
+            @logger
+            def square(x):
+                return x * x
+            
+            print(square(3))
+            """);
+        assertEquals("", err());
+        assertEquals("18", out());
+    }
+
+    // ── DEC-05: Decorator applied to function returning value ───────
+    @Test void testDecoratorChainingBehavior() {
+        py.exec("""
+            def inc(f):
+                def w():
+                    return f() + 10
+                return w
+            
+            @inc
+            def get():
+                return 1
+            
+            print(get())
+            """);
+        assertEquals("", err());
+        assertEquals("11", out());
     }
 }

@@ -1,6 +1,7 @@
 # Gradle build artefacts
 /build/
 /.gradle/
+/bin/
 
 # Gradle wrapper – keep the wrapper itself, ignore only the jar if you want
 !gradlew

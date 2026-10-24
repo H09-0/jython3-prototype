@@ -39,6 +39,7 @@ simple_stmt
     | break_stmt
     | continue_stmt
     | call_stmt
+    | yield_stmt
     ;
 
 /** print() or print(a) or print(a, b, c) */
@@ -102,6 +103,11 @@ return_stmt
     : RETURN expr?
     ;
 
+/** yield [expr] */
+yield_stmt
+    : YIELD expr?
+    ;
+
 /** del variable or del container[key] */
 del_stmt
     : DEL ID
@@ -130,12 +136,27 @@ call_stmt
     ;
 
 compound_stmt
-    : if_stmt
+    : decorated_func_def
+    | decorated_class_def
+    | if_stmt
     | while_stmt
     | for_stmt
     | try_stmt
     | func_def
     | class_def
+    ;
+
+/** Decorator: @ expr NEWLINE */
+decorator
+    : '@' expr NEWLINE
+    ;
+
+decorated_func_def
+    : decorator+ func_def
+    ;
+
+decorated_class_def
+    : decorator+ class_def
     ;
 
 /** if expr : suite (elif expr : suite)* (else : suite)? */
@@ -167,9 +188,9 @@ func_def
     : DEF ID LPAREN param_list? RPAREN COLON suite
     ;
 
-/** class Name[(Base)]: suite */
+/** class Name[(Bases)]: suite */
 class_def
-    : CLASS ID (LPAREN ID RPAREN)? COLON suite
+    : CLASS ID (LPAREN arg_list RPAREN)? COLON suite
     ;
 
 /** Parameter list – comma‑separated identifiers. */
@@ -249,6 +270,7 @@ AS       : 'as';
 DEF      : 'def';
 CLASS    : 'class';
 RETURN   : 'return';
+YIELD    : 'yield';
 DEL      : 'del';
 PASS     : 'pass';
 BREAK    : 'break';
@@ -280,6 +302,7 @@ ASSIGN : '=';
 LT     : '<';
 GT     : '>';
 DOT    : '.';
+
 LPAREN : '(';
 RPAREN : ')';
 LBRACK : '[';
