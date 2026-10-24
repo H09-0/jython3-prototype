@@ -6,6 +6,8 @@ import java.nio.file.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import org.example.jython3.runtime.InterpreterException;
+import org.example.jython3.runtime.PyException;
+import org.example.jython3.runtime.PyObject;
 
 /**
  * Comprehensive test suite for Jython3Interpreter (Phase 5 – Functions & Call Stack).
@@ -594,6 +596,22 @@ class Jython3InterpreterTest {
             """);
         assertEquals("", err());
         assertEquals("java exception", out());
+    }
+
+    @Test void testExceptionValueKeepsTracebackAfterHandlerExits() {
+        py.exec("""
+            def inner():
+                raise ValueError("boom")
+            try:
+                inner()
+            except ValueError as e:
+                saved = e
+            """);
+        PyObject saved = py.getGlobal("saved");
+        assertInstanceOf(PyException.class, saved);
+        var frames = ((PyException) saved).traceback();
+        assertFalse(frames.isEmpty(), "the value must keep its frames after unwinding");
+        assertTrue(frames.size() >= 2, "expected the inner and module frames, got " + frames);
     }
 
     // ═══════════════════════════════════════════════════════════════════

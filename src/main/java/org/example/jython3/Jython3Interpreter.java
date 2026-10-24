@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.antlr.v4.runtime.BaseErrorListener;
@@ -45,6 +46,7 @@ import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyCompiledCodeWrapper;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
+import org.example.jython3.runtime.PyException;
 import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyGenerator;
@@ -63,6 +65,8 @@ import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.SystemExit;
+import org.example.jython3.security.AllowlistPolicy;
+import org.example.jython3.security.JavaAccessPolicy;
 import org.example.jython3.stdlib.BuiltinFunctions;
 import org.example.jython3.stdlib.BuiltinModules;
 
@@ -82,6 +86,8 @@ public class Jython3Interpreter {
     // ─── Bytecode Cache ──────────────────────────────────────────────────
     private static final int MAX_CACHE_SIZE = 2048;
     private final Map<String, CompiledCode> bytecodeCache = new ConcurrentHashMap<>();
+    /** Gate for every Java class, constructor, method, and field access. */
+    private final JavaAccessPolicy javaAccessPolicy;
 
     public void clearCache() {
         bytecodeCache.clear();
@@ -166,6 +172,12 @@ public class Jython3Interpreter {
 
     // ─── Constructor ──────────────────────────────────────────────────────
     public Jython3Interpreter() {
+        this(AllowlistPolicy.trusted());
+    }
+
+    /** Creates an interpreter whose Java access is controlled by {@code javaAccessPolicy}. */
+    public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy) {
+        this.javaAccessPolicy = Objects.requireNonNull(javaAccessPolicy, "javaAccessPolicy");
         PyCaller.CURRENT.set(new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
                 return callPyCallable(callable, args);
@@ -178,9 +190,14 @@ public class Jython3Interpreter {
         registerBuiltins();
     }
 
+    /** The policy this interpreter applies to Java access. */
+    public JavaAccessPolicy javaAccessPolicy() {
+        return javaAccessPolicy;
+    }
+
     /** Install built-in functions into the global namespace. */
     private void registerBuiltins() {
-        BuiltinFunctions.register(this::setGlobal, this::callPyCallable);
+        BuiltinFunctions.register(this::setGlobal, this::callPyCallable, javaAccessPolicy);
     }
 
 
@@ -233,6 +250,11 @@ public class Jython3Interpreter {
         if (line > lines.length) return;
         String text = lines[line - 1].strip();
         if (!text.isEmpty()) sb.append("    ").append(text).append('\n');
+    }
+
+    /** Keeps the frames on the value so they survive after the carrier is dropped. */
+    private static void captureTraceback(InterpreterException ie) {
+        if (ie.value() instanceof PyException pe) pe.attachTraceback(ie.traceback());
     }
 
     /**
@@ -764,7 +786,7 @@ public class Jython3Interpreter {
                                 if (i < 0) i += l.size();
                                 if (i < 0 || i >= l.size())
                                     throw new InterpreterException("IndexError: Java list index out of range");
-                                stack.push(JavaBridge.toPyObject(l.get(i)));
+                                stack.push(JavaBridge.toPyObject(l.get(i), jo.policy()));
                             } else {
                                 throw new InterpreterException("TypeError: Java list indices must be integers");
                             }
@@ -773,7 +795,7 @@ public class Jython3Interpreter {
                             Object val = m.get(key);
                             if (val == null && !m.containsKey(key))
                                 throw new InterpreterException("KeyError: " + idx);
-                            stack.push(JavaBridge.toPyObject(val));
+                            stack.push(JavaBridge.toPyObject(val, jo.policy()));
                         } else if (jObj.getClass().isArray()) {
                             if (idx instanceof PyInt ix) {
                                 int i = ix.value();
@@ -781,7 +803,7 @@ public class Jython3Interpreter {
                                 if (i < 0) i += len;
                                 if (i < 0 || i >= len)
                                     throw new InterpreterException("IndexError: Java array index out of range");
-                                stack.push(JavaBridge.toPyObject(java.lang.reflect.Array.get(jObj, i)));
+                                stack.push(JavaBridge.toPyObject(java.lang.reflect.Array.get(jObj, i), jo.policy()));
                             } else {
                                 throw new InterpreterException("TypeError: Java array indices must be integers");
                             }
@@ -815,7 +837,7 @@ public class Jython3Interpreter {
                         stack.push(new PyIterator(items, 0));
                     } else if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
                         var items = new ArrayList<PyObject>();
-                        for (Object item : iterable) items.add(JavaBridge.toPyObject(item));
+                        for (Object item : iterable) items.add(JavaBridge.toPyObject(item, jo.policy()));
                         stack.push(new PyIterator(items, 0));
                     } else {
                         throw new InterpreterException("TypeError: '" + typeName(o) + "' is not iterable");
@@ -911,6 +933,9 @@ public class Jython3Interpreter {
             } catch (InterpreterException ie) {
                 if (!exceptStack.isEmpty()) {
                     ExceptHandler h = exceptStack.pop();
+                    ie.setLocation(currentFile, currentLine, currentFunc);
+                    ie.addFrame(currentFile, currentLine, currentFunc);
+                    captureTraceback(ie);
                     stack.push(ie.value());
                     pc = h.exceptPc();
                     continue outer;
@@ -932,6 +957,8 @@ public class Jython3Interpreter {
                     currentLine = cf.line();
                     if (!exceptStack.isEmpty()) {
                         ExceptHandler h = exceptStack.pop();
+                        ie.addFrame(currentFile, currentLine, currentFunc);
+                        captureTraceback(ie);
                         stack.push(ie.value());
                         pc = h.exceptPc();
                         continue outer;
@@ -1265,8 +1292,7 @@ public class Jython3Interpreter {
             String fullName = pkg + "." + item;
 
             try {
-                JavaBridge.checkSecurity(fullName);
-                PyObject resolved = JavaBridge.resolveClassOrPackage(fullName);
+                PyObject resolved = JavaBridge.resolveClassOrPackage(fullName, javaAccessPolicy);
                 if (resolved != null) {
                     globals.put(alias, resolved);
                     return;
@@ -1298,8 +1324,7 @@ public class Jython3Interpreter {
 
         if (pkg.contains(".") || isJavaRootPackage(pkg)) {
             try {
-                JavaBridge.checkSecurity(pkg);
-                PyObject javaObj = JavaBridge.resolveClassOrPackage(pkg);
+                PyObject javaObj = JavaBridge.resolveClassOrPackage(pkg, javaAccessPolicy);
                 if (javaObj != null) {
                     globals.put(alias, javaObj);
                     return;

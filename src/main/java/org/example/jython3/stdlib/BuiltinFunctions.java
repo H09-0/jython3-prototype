@@ -41,7 +41,8 @@ import static org.example.jython3.runtime.PyOps.typeName;
 public final class BuiltinFunctions {
     private BuiltinFunctions() {}
 
-    public static void register(BiConsumer<String, PyObject> define, PyCaller caller) {
+    public static void register(BiConsumer<String, PyObject> define, PyCaller caller,
+                                org.example.jython3.security.JavaAccessPolicy javaPolicy) {
         // len(obj)
         define.accept("len", new PyBuiltinFunction("len", args -> {
             checkArgCount("len", args, 1);
@@ -228,7 +229,7 @@ public final class BuiltinFunctions {
         // iter(obj) and next(iterator[, default])
         define.accept("iter", new PyBuiltinFunction("iter", args -> {
             checkArgCount("iter", args, 1);
-            return toIterator(args[0]);
+            return toIterator(args[0], javaPolicy);
         }));
 
         define.accept("next", new PyBuiltinFunction("next", args -> {
@@ -405,7 +406,7 @@ public final class BuiltinFunctions {
     }
 
     /** Converts a supported iterable into a fresh iterator. */
-    private static PyIterator toIterator(PyObject o) {
+    private static PyIterator toIterator(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
         if (o instanceof PyIterator it) return it;
         if (o instanceof PyList list) return new PyIterator(list.items(), 0);
         if (o instanceof PyStr s) {
@@ -421,7 +422,7 @@ public final class BuiltinFunctions {
         }
         if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
             var items = new ArrayList<PyObject>();
-            for (Object item : iterable) items.add(JavaBridge.toPyObject(item));
+            for (Object item : iterable) items.add(JavaBridge.toPyObject(item, policy));
             return new PyIterator(items, 0);
         }
         throw new InterpreterException("TypeError: '" + typeName(o) + "' object is not iterable");

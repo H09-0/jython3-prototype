@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
@@ -23,86 +24,24 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PyStr;
+import org.example.jython3.security.JavaAccessPolicy;
 
 
 /**
- * High-performance, secure Java Bridge for Jython 3.
+ * Java Bridge for Jython 3.
  *
  * Provides bidirectional interoperability between Python 3 and the Java Virtual Machine:
- *   • Direct instantiation of any accessible Java class: {@code f = File("/path")}
+ *   • Direct instantiation of accessible Java classes: {@code f = File("/path")}
  *   • Calling instance and static methods with automatic overload resolution.
  *   • Reading and writing instance and static fields and Java Bean properties (get/set/is).
- *   • Direct package navigation: {@code java.lang.Math.sqrt(100.0)}
  *   • Transparent type conversion (int, float, str, bool, list, dict <-> Java primitives, arrays, collections).
- *   • Blazing-fast cached reflection to achieve near-native dispatch speeds.
- *   • Strict security boundaries preventing access to JVM internals (Unsafe, internal lookups).
+ *   • Cached reflection for repeat dispatch.
+ *
+ * Access is decided by the {@link JavaAccessPolicy} supplied with each
+ * interpreter. The policy gates classes, constructors, methods, and fields;
+ * it is defense in depth, not a sandbox.
  */
 public class JavaBridge {
-
-    /** Allowed packages/classes for sandboxing and security. */
-    private static final Set<String> ALLOWED_PACKAGES = Set.of(
-            "java.lang",
-            "java.util",
-            "java.io",
-            "java.math",
-            "java.text",
-            "java.time",
-            "java.nio",
-            "java.net",
-            "java.awt"
-    );
-
-    private static final Set<String> ALLOWED_CLASSES = Set.of(
-            "java.lang.String",
-            "java.lang.Integer",
-            "java.lang.Double",
-            "java.lang.Float",
-            "java.lang.Boolean",
-            "java.lang.Long",
-            "java.lang.Byte",
-            "java.lang.Short",
-            "java.lang.Character",
-            "java.lang.Math",
-            "java.lang.StringBuilder",
-            "java.lang.StringBuffer",
-            "java.lang.Object",
-            "java.util.ArrayList",
-            "java.util.LinkedList",
-            "java.util.HashMap",
-            "java.util.LinkedHashMap",
-            "java.util.TreeMap",
-            "java.util.HashSet",
-            "java.util.LinkedHashSet",
-            "java.util.TreeSet",
-            "java.util.Arrays",
-            "java.util.Collections",
-            "java.util.Date",
-            "java.util.Scanner",
-            "java.io.File",
-            "java.io.InputStream",
-            "java.io.OutputStream",
-            "java.io.PrintStream",
-            "java.math.BigInteger",
-            "java.math.BigDecimal"
-    );
-
-    private static final Set<String> FORBIDDEN = Set.of(
-            "java.lang.Runtime",
-            "java.lang.ProcessBuilder",
-            "java.lang.System",
-            "java.lang.ClassLoader",
-            "java.lang.invoke.MethodHandles",
-            "java.lang.invoke.MethodHandles$Lookup",
-            "sun.misc.Unsafe",
-            "jdk.internal.misc.Unsafe"
-    );
-
-    private static final List<String> FORBIDDEN_PREFIXES = List.of(
-            "sun.",
-            "jdk.internal.",
-            "com.sun.",
-            "java.lang.reflect."
-    );
 
     /** Method resolution cache: (TargetClass#MethodName#ArgTypes) -> MethodMatch */
     private static final Map<String, MethodMatch> METHOD_CACHE = new ConcurrentHashMap<>();
@@ -112,44 +51,17 @@ public class JavaBridge {
 
     // ─── Class & Package Loading & Resolution ─────────────────────────────
 
-    public static void checkSecurity(String fullName) {
-        if (fullName == null) throw PyErrors.error("SecurityError", "access denied");
-        if (FORBIDDEN.contains(fullName)) {
-            throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
-        }
-        for (String pfx : FORBIDDEN_PREFIXES) {
-            if (fullName.startsWith(pfx)) {
-                throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
-            }
-        }
-        // Allowlist check
-        if (ALLOWED_CLASSES.contains(fullName)) {
-            return;
-        }
-        String pkg = fullName.contains(".") ? fullName.substring(0, fullName.lastIndexOf('.')) : fullName;
-        if (ALLOWED_PACKAGES.contains(pkg)) {
-            // also block specific dangerous classes in allowed packages
-            if (fullName.equals("java.lang.Runtime") || fullName.equals("java.lang.ProcessBuilder") ||
-                    fullName.equals("java.lang.System") || fullName.equals("java.lang.ClassLoader")) {
-                throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
-            }
-            return;
-        }
-        // Not in allowlist
-        throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
+    /** The error raised when a policy rejects an access. */
+    public static InterpreterException denied(String target) {
+        return PyErrors.error("SecurityError", "access to '" + target + "' is restricted");
     }
 
-    public static PyObject resolveClassOrPackage(String fullName) {
-        checkSecurity(fullName);
+    public static PyObject resolveClassOrPackage(String fullName, JavaAccessPolicy policy) {
+        if (!policy.canAccessClass(fullName)) throw denied(fullName);
 
         try {
             Class<?> clazz = Class.forName(fullName);
-            // Additional runtime checks
-            if (clazz == Runtime.class || clazz == ProcessBuilder.class || clazz == System.class ||
-                    clazz.getName().startsWith("java.lang.reflect.")) {
-                throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
-            }
-            return new PyJavaClass(clazz);
+            return new PyJavaClass(clazz, policy);
         } catch (ClassNotFoundException e) {
             throw PyErrors.error("ImportError", "cannot import '" + fullName + "'");
         }
@@ -165,7 +77,7 @@ public class JavaBridge {
     // ─── Type Conversions ────────────────────────────────────────────────
 
     /** Convert an arbitrary Java object into a Jython PyObject. */
-    public static PyObject toPyObject(Object obj) {
+    public static PyObject toPyObject(Object obj, JavaAccessPolicy policy) {
         if (obj == null) return new PyNull();
         if (obj instanceof PyObject pyObj) return pyObj;
 
@@ -181,7 +93,7 @@ public class JavaBridge {
             return new PyStr(obj.toString());
 
         // Wrap arbitrary Java object
-        return new PyJavaObject(obj);
+        return new PyJavaObject(obj, policy);
     }
 
     /** Convert a Python PyObject into a target Java type. */

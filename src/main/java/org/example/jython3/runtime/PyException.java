@@ -1,5 +1,6 @@
 package org.example.jython3.runtime;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -22,6 +23,12 @@ public final class PyException implements PyObject {
     private final PyObject cause;
     private final PyObject context;
     private final Throwable javaCause;
+    /**
+     * Frames captured when the error was caught. The carrier builds the
+     * traceback while unwinding; the value keeps a copy so {@code __traceback__}
+     * survives after the carrier is gone.
+     */
+    private List<InterpreterException.TraceEntry> traceback = List.of();
 
     public PyException(String typeName, String message) {
         this(typeName, message, defaultArgs(message), null, null, null);
@@ -58,6 +65,20 @@ public final class PyException implements PyObject {
     public PyObject cause() { return cause; }
     public PyObject context() { return context; }
     public Throwable javaCause() { return javaCause; }
+
+    /** Frames captured when the handler received this value, oldest first. */
+    public List<InterpreterException.TraceEntry> traceback() { return traceback; }
+
+    /**
+     * Copies carrier frames into the value. Called by the VM when a handler is
+     * entered, so the traceback outlives the throwable that produced it.
+     */
+    public void attachTraceback(List<InterpreterException.TraceEntry> frames) {
+        if (frames == null || frames.isEmpty()) return;
+        var merged = new ArrayList<>(traceback);
+        merged.addAll(frames);
+        traceback = List.copyOf(merged);
+    }
 
     @Override public String toString() {
         return message.isEmpty() ? typeName : typeName + ": " + message;

@@ -45,7 +45,7 @@ only when it appears in the compatibility table with a passing test.
 | Runtime | `org.example.jython3.runtime` | `PyObject`, value types, errors, protocols | JDK only |
 | Standard library | `org.example.jython3.stdlib`, `modules/` | built-in functions and modules | runtime |
 | Java bridge | `org.example.jython3.bridge`, `PyJava*` | reflection, conversion, overloads, access policy | runtime |
-| Security | `org.example.jython3.security` (planned) | access policy, resource limits, execution modes | JDK only |
+| Security | `org.example.jython3.security` | access policy, resource limits, execution modes | JDK only |
 
 Rules:
 
@@ -98,11 +98,14 @@ Virtual machine: frames, operand stack, call stack, handler stack
 
 ## 4. Object and type model
 
-`PyObject` is a sealed interface. Immutable values are records (`PyInt`,
-`PyFloat`, `PyStr`, `PyBool`, `PyNull`, `PyList`, `PyDict`); objects with
-identity or mutable behaviour are final classes (`PyFunction`, `PyClass`,
-`PyInstance`, `PyModule`, `PyGenerator`, `PyException`, and the bridge
-wrappers).
+`PyObject` is a sealed interface. Scalar values are immutable records
+(`PyInt`, `PyFloat`, `PyStr`, `PyBool`, `PyNull`). `PyList` and `PyDict` are
+records that wrap mutable Java containers (`ArrayList`, `LinkedHashMap`); the
+record shape is a Java implementation detail, while Python treats both as
+mutable objects with identity. Mutation through one reference is visible
+through every other reference, as in CPython. Objects with identity or mutable
+behaviour are final classes (`PyFunction`, `PyClass`, `PyInstance`, `PyModule`,
+`PyGenerator`, `PyException`, and the bridge wrappers).
 
 - `PyClass` holds a name, an ordered base list, and members. `PyInstance` holds
   a class and an attribute map. Attribute lookup walks the base list.
@@ -156,8 +159,12 @@ Rules:
 6. Java stack traces are disabled by default because Python raises often
    (`StopIteration` in every exhausted loop). `-Djython3.stacktraces=true`
    enables them for debugging.
-7. The traceback lives on the carrier. When `e.__traceback__` is exposed, the
-   attribute reads from the carrier; the value does not own it.
+7. The carrier builds the traceback while unwinding. When a handler is
+   entered, the VM copies the frames into the value, so `__traceback__` remains
+   available after the carrier is gone and after the `except` block exits. The
+   entries are immutable records; a later re-raise appends new frames.
+   `Jython3InterpreterTest.testExceptionValueKeepsTracebackAfterHandlerExits`
+   covers this lifetime.
 
 Java mapping (specific class first, then superclasses):
 
@@ -184,50 +191,67 @@ The bridge provides class lookup, construction, method and field access,
 overload resolution, and value conversion. It is useful, and it is also the
 largest attack surface in the runtime.
 
-### What the current allowlist is
+### The access policy
 
-`JavaBridge` holds static sets of allowed packages and classes and rejects
-reflection, `Unsafe`, process control, and JVM internals by name. This is
-**defense in depth at the language level**. It is not a sandbox:
-
-- name-based checks can be bypassed by any path that reaches reflection;
-- a permitted class can expose powerful objects through its own API;
-- the JVM security manager is permanently disabled from Java 24 onward, so
-  there is no in-process mechanism to fall back on.
-
-### Two execution modes
-
-| Mode | Use case | Mechanism |
-|---|---|---|
-| **Trusted** | Host application runs its own scripts | Host supplies a `JavaAccessPolicy`; the default policy mirrors today's allowlist; reflection stays denied unless explicitly granted |
-| **Restricted** | Untrusted code | Separate OS process or container, not an in-process sandbox: read-only filesystem, no network by default, CPU/memory/time limits, bridge disabled unless granted, results over IPC |
-
-Restricted mode is a deployment property. The interpreter may support it by
-exposing a minimal runner, but it must never claim that class-name filtering
-makes arbitrary code safe inside the same JVM.
-
-### Planned policy seam
+`JavaBridge` no longer holds allowlists. Every interpreter owns a
+`JavaAccessPolicy`, and every bridge value (`PyJavaClass`, `PyJavaObject`,
+`PyJavaMethod`, `PyJavaPackage`) carries the policy that created it. The
+policy gates four separate decisions:
 
 ```java
 public interface JavaAccessPolicy {
     boolean canAccessClass(String binaryName);
+    boolean canConstructClass(String binaryName, String constructorDescriptor);
     boolean canCallMethod(String owner, String name, String descriptor);
     boolean canReadField(String owner, String name);
     boolean canWriteField(String owner, String name);
 }
 ```
 
-- The policy is supplied per interpreter, not held in a static field.
-- The default is deny-by-default plus the documented allowlist.
-- Denials raise `SecurityError` (or `PermissionError` where the cause is an OS
-  permission) through `PyErrors`.
-- The bridge is testable without the VM: conversion, overload selection, and
-  policy denials are unit tests.
+- Access to a class does **not** imply access to its constructors, methods, or
+  fields. A host can expose a read-only type, or grant a single constructor.
+- Method and constructor descriptors cover parameter types only
+  (`(Ljava/lang/String;I)V`), because Java does not allow two methods with the
+  same name and parameter types. This lets a policy grant one overload while
+  denying another.
+- The policy is supplied per interpreter, never stored in a static field.
+  `new Jython3Interpreter()` uses `AllowlistPolicy.trusted()`;
+  `new Jython3Interpreter(policy)` uses the host's policy, including
+  `DenyAllPolicy.INSTANCE`.
+- Lookup filters overloads through the policy, and invocation checks again.
+  A wrapper obtained through another path, such as reflection in a test, still
+  cannot invoke a denied member.
+- Denials raise `SecurityError` through `PyErrors`; the policy itself has no
+  dependency on the error factory.
+
+The default `AllowlistPolicy` is **defense in depth at the language level**. It
+is not a sandbox:
+
+- name-based checks can be bypassed by any path that reaches reflection;
+- a permitted class can expose powerful objects through its own API;
+- the JVM security manager is permanently disabled from Java 24 onward, so
+  there is no in-process mechanism to fall back on.
+
+The bridge is tested without the VM: class, constructor, method, and field
+grants, overload selection, conversion, and per-interpreter isolation are
+covered by `JavaAccessPolicyTest`.
+
+### Execution modes
+
+| Mode | Use case | Mechanism |
+|---|---|---|
+| **Trusted** | Host application runs its own scripts | Host supplies a `JavaAccessPolicy`; the default mirrors the documented allowlist |
+| **Restricted** | Untrusted code | Separate OS process or container, not an in-process sandbox: read-only filesystem, no network by default, CPU/memory/time limits, bridge disabled unless granted, results over IPC |
+
+Restricted mode is a deployment property. The interpreter may support it by
+exposing a minimal runner, but it must never claim that class-name filtering
+makes arbitrary code safe inside the same JVM.
 
 Resource limits are separate from access policy. An instruction budget and
 cooperative interruption can stop runaway Python code; heap limits cannot be
 enforced reliably in-process. Untrusted workloads therefore require the
 process or container boundary.
+
 
 ---
 
@@ -268,6 +292,8 @@ tests before the next layer is built on top of them.
 | 2026-10-24 | Baseline is CPython 3.14; 3.15 features are deferred |
 | 2026-10-24 | Trusted and restricted execution are separate; name filtering is not a sandbox |
 | 2026-10-24 | Access policy is injected per interpreter; no global mutable allowlist |
+| 2026-10-24 | Class access does not imply constructor access; each constructor is granted by descriptor |
+| 2026-10-24 | The exception value owns a traceback snapshot so it outlives the carrier |
 | 2026-10-24 | `InterpreterException` is the carrier and `PyObject` is the value |
 | 2026-10-24 | Exception matching uses the type hierarchy, not catch-all names |
 | 2026-10-24 | Java throwables enter through `PyErrors.fromJava` only |

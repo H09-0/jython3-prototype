@@ -5,7 +5,7 @@
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com/H09-0/jython3-prototype)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
-[![Tests](https://img.shields.io/badge/Tests-176%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-186%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
 Jython 3 is an independent re-implementation of Python 3 on the Java Virtual
 Machine, built from the ground up with a layered architecture, an explicit
@@ -37,37 +37,42 @@ actually works. A feature is listed as supported only when it has a passing
 test, and newer 3.15-only syntax is out of scope until the 3.14 baseline is
 green.
 
-| Feature | Status |
-|---------|--------|
-| Integer and string literals | ✅ Supported |
-| List literals and subscript access (`xs[i]`) | ✅ Supported |
-| Variable assignment and arithmetic (`+`, `-`, `*`, `/`) | ✅ Supported |
-| Operator precedence and parenthesised expressions | ✅ Supported |
-| `print()` built-in | ✅ Supported |
-| `if` / `else` conditional statements | ✅ Supported |
-| `while` loops | ✅ Supported |
-| `for ... in ...` loops with list iteration | ✅ Supported |
-| `break` and `continue` (including nested loops) | ✅ Supported |
-| `yield` and generator iteration | ✅ Supported (eager, no `send`/`throw`) |
-| `execfile(path)` | ✅ Supported |
-| Function definitions (`def`), parameters, `return` | ✅ Supported |
-| Nested and recursive function calls | ✅ Supported |
-| Local scope isolation per function frame | ✅ Supported |
-| `import` (file-based modules from `modules/`) | ✅ Supported |
-| `import math` — `sqrt`, `sin`, `cos`, `floor`, `ceil`, `pi`, `e` | ✅ Supported |
-| `import sys` — `argv`, `version`, `platform` | ✅ Supported |
-| `import os` — `getcwd()`, `sep`, `name` | ✅ Supported |
-| Module attribute access (`math.sqrt`, `sys.argv`) | ✅ Supported |
-| `PyFloat` runtime type for floating-point results | ✅ Supported |
-| Tracebacks: `NameError`, `ZeroDivisionError`, `TypeError`, `AttributeError`, `IndexError` | ✅ Supported |
-| Real bytecode layer (`CompiledCode`: `int[]` + `Object[]` constants pool) | ✅ Supported |
-| Exception handling (`try` / `except` / `else` / `finally` / `raise`) | ✅ Supported |
-| Multiple `except` clauses and `except Exception` catch-all | ✅ Supported |
-| Classes, inheritance, bound methods, decorators | ✅ Supported |
-| Java bridge (`from java.lang import Math`) | ✅ Supported |
-| `re`, `json`, and `io` modules | ✅ Supported |
-| `collections`, comprehensions, true division `/` | 🔜 Planned |
-| Maven Central packaging | 🔜 Planned |
+Stage definitions: **T0** parsed, **T1** executes under the VM, **T2** matches
+CPython 3.14 output and errors, **T3** library-ready. Every row below that says
+Supported has passed T1; `—` marks work that has not started.
+
+| Feature | Stage | Status |
+|---------|-------|--------|
+| Integer and string literals | T1 | ✅ Supported |
+| List literals and subscript access (`xs[i]`) | T1 | ✅ Supported |
+| Variable assignment and arithmetic (`+`, `-`, `*`, `/`) | T1 | ✅ Supported |
+| Operator precedence and parenthesised expressions | T1 | ✅ Supported |
+| `print()` built-in | T1 | ✅ Supported |
+| `if` / `else` conditional statements | T1 | ✅ Supported |
+| `while` loops | T1 | ✅ Supported |
+| `for ... in ...` loops with list iteration | T1 | ✅ Supported |
+| `break` and `continue` (including nested loops) | T1 | ✅ Supported |
+| `yield` and generator iteration | T1 | ✅ Supported (eager, no `send`/`throw`) |
+| `execfile(path)` | T1 | ✅ Supported |
+| Function definitions (`def`), parameters, `return` | T1 | ✅ Supported |
+| Nested and recursive function calls | T1 | ✅ Supported |
+| Local scope isolation per function frame | T1 | ✅ Supported |
+| `import` (file-based modules from `modules/`) | T1 | ✅ Supported |
+| `import math` — `sqrt`, `sin`, `cos`, `floor`, `ceil`, `pi`, `e` | T1 | ✅ Supported |
+| `import sys` — `argv`, `version`, `platform` | T1 | ✅ Supported |
+| `import os` — `getcwd()`, `sep`, `name` | T1 | ✅ Supported |
+| Module attribute access (`math.sqrt`, `sys.argv`) | T1 | ✅ Supported |
+| `PyFloat` runtime type for floating-point results | T1 | ✅ Supported |
+| Tracebacks: `NameError`, `ZeroDivisionError`, `TypeError`, `AttributeError`, `IndexError` | T1 | ✅ Supported |
+| Real bytecode layer (`CompiledCode`: `int[]` + `Object[]` constants pool) | T1 | ✅ Supported |
+| Exception handling (`try` / `except` / `else` / `finally` / `raise`) | T1 | ✅ Supported |
+| Multiple `except` clauses and `except Exception` catch-all | T1 | ✅ Supported |
+| Classes, inheritance, bound methods, decorators | T1 | ✅ Supported |
+| Java bridge (`from java.lang import Math`) | T1 | ✅ Supported |
+| Per-interpreter Java access policy | T1 | ✅ Supported |
+| `re`, `json`, and `io` modules | T1 | ✅ Supported |
+| `collections`, comprehensions, true division `/` | — | 🔜 Planned |
+| Maven Central packaging | — | 🔜 Planned |
 
 ### Known Limitations
 
@@ -79,9 +84,10 @@ green.
   that is the next runtime slice.
 - No `with`, `async`/`await`, comprehensions, `lambda`, f-strings, or `match`
   statements yet.
-- The Java bridge allowlist rejects known dangerous classes by name. It is
-  defense in depth, not a sandbox; untrusted code must run in a separate
-  process or container.
+- Java access is gated per interpreter by `JavaAccessPolicy`. The default
+  `AllowlistPolicy` rejects known dangerous classes by name; it is defense in
+  depth, not a sandbox, and untrusted code must run in a separate process or
+  container.
 
 ---
 
@@ -271,7 +277,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 176 tests pass with zero failures and zero skipped. Test reports are written to:
+All 186 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -304,13 +310,15 @@ jython3-prototype/
     │       ├── Jython3Interpreter.java          # VM, imports, and public exec/eval API
     │       ├── runtime/                         # PyObject hierarchy and value operations
     │       ├── compile/                         # OpCode, CodeBuilder, CompileVisitor
-    │       ├── bridge/                          # JavaBridge reflection and security checks
+    │       ├── bridge/                          # JavaBridge reflection and conversion
+    │       ├── security/                        # JavaAccessPolicy and shipped policies
     │       ├── stdlib/                          # Builtins plus math, sys, os, io, json, re
     │       ├── parse/                           # PythonIndentStream (INDENT / DEDENT)
     │       └── cli/                             # Repl and RunScript
     └── test/
         └── java/org/example/jython3/
-            ├── Jython3InterpreterTest.java      # 161 JUnit 5 regression tests
+            ├── Jython3InterpreterTest.java      # 162 JUnit 5 regression tests
+            ├── JavaAccessPolicyTest.java        # 9 bridge and access-policy tests
             └── ErrorFactoryTest.java            # 15 error-model guard tests
 ```
 

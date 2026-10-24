@@ -8,38 +8,43 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.example.jython3.bridge.JavaBridge;
+import org.example.jython3.security.JavaAccessPolicy;
+import org.example.jython3.security.JavaDescriptors;
 
 /** Represents an instance of a Java object in the Python runtime. */
-public record PyJavaObject(Object object) implements PyObject {
+public record PyJavaObject(Object object, JavaAccessPolicy policy) implements PyObject {
 
     public PyObject getMember(String name) {
         if (object == null) {
             throw PyErrors.error("AttributeError", "'None' Java object has no attribute '" + name + "'");
         }
         Class<?> clazz = object.getClass();
-        JavaBridge.checkSecurity(clazz.getName());
-        if (name.equals("getClass") || name.equals("forName") || name.equals("getClassLoader") ||
-                name.equals("getMethod") || name.equals("getDeclaredMethod") || name.equals("getField") ||
-                name.equals("getDeclaredField")) {
-            throw PyErrors.error("SecurityError", "access to '" + name + "' is restricted");
-        }
+        if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
 
         // Instance methods
-        List<Method> methods = new ArrayList<>();
+        List<Method> allMethods = new ArrayList<>();
         for (Method m : clazz.getMethods()) {
             if (m.getName().equals(name) && !Modifier.isStatic(m.getModifiers())) {
-                methods.add(m);
+                allMethods.add(m);
             }
         }
+        List<Method> methods = allMethods.stream()
+                .filter(m -> policy.canCallMethod(
+                        clazz.getName(), name, JavaDescriptors.of(m.getParameterTypes())))
+                .toList();
         if (!methods.isEmpty()) {
-            return new PyJavaMethod(object, clazz, name, methods);
+            return new PyJavaMethod(object, clazz, name, methods, policy);
         }
+        if (!allMethods.isEmpty()) throw JavaBridge.denied("method '" + name + "'");
 
         // Instance fields
         try {
             Field f = clazz.getField(name);
             if (!Modifier.isStatic(f.getModifiers())) {
-                return JavaBridge.toPyObject(f.get(object));
+                if (!policy.canReadField(clazz.getName(), name)) {
+                    throw JavaBridge.denied("field '" + name + "'");
+                }
+                return JavaBridge.toPyObject(f.get(object), policy);
             }
         } catch (NoSuchFieldException | IllegalAccessException e) {
             // No public field with this name; fall back to bean accessors.
@@ -49,8 +54,9 @@ public record PyJavaObject(Object object) implements PyObject {
         String cap = Character.toUpperCase(name.charAt(0)) + name.substring(1);
         try {
             Method getter = clazz.getMethod("get" + cap);
+            requireMethodAccess(clazz, getter);
             getter.setAccessible(true);
-            return JavaBridge.toPyObject(getter.invoke(object));
+            return JavaBridge.toPyObject(getter.invoke(object), policy);
         } catch (NoSuchMethodException e) {
             // Try the boolean-style accessor below.
         } catch (ReflectiveOperationException e) {
@@ -58,8 +64,9 @@ public record PyJavaObject(Object object) implements PyObject {
         }
         try {
             Method isser = clazz.getMethod("is" + cap);
+            requireMethodAccess(clazz, isser);
             isser.setAccessible(true);
-            return JavaBridge.toPyObject(isser.invoke(object));
+            return JavaBridge.toPyObject(isser.invoke(object), policy);
         } catch (NoSuchMethodException e) {
             // Neither accessor exists; report a Python AttributeError below.
         } catch (ReflectiveOperationException e) {
@@ -75,11 +82,15 @@ public record PyJavaObject(Object object) implements PyObject {
             throw PyErrors.error("AttributeError", "cannot set attribute on null Java object");
         }
         Class<?> clazz = object.getClass();
+        if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
 
         // Public instance field
         try {
             Field f = clazz.getField(name);
             if (!Modifier.isStatic(f.getModifiers())) {
+                if (!policy.canWriteField(clazz.getName(), name)) {
+                    throw JavaBridge.denied("field '" + name + "'");
+                }
                 Object javaVal = JavaBridge.toJavaObject(val, f.getType());
                 f.set(object, javaVal);
                 return;
@@ -89,8 +100,16 @@ public record PyJavaObject(Object object) implements PyObject {
         // Java Bean setter: setX(val)
         String cap = Character.toUpperCase(name.charAt(0)) + name.substring(1);
         String setterName = "set" + cap;
+        boolean settersExist = false;
+        boolean permittedSetterSeen = false;
         for (Method m : clazz.getMethods()) {
             if (m.getName().equals(setterName) && m.getParameterCount() == 1 && !Modifier.isStatic(m.getModifiers())) {
+                settersExist = true;
+                if (!policy.canCallMethod(clazz.getName(), setterName,
+                        JavaDescriptors.of(m.getParameterTypes()))) {
+                    continue;
+                }
+                permittedSetterSeen = true;
                 try {
                     m.setAccessible(true);
                     Object javaArg = JavaBridge.toJavaObject(val, m.getParameterTypes()[0]);
@@ -103,9 +122,17 @@ public record PyJavaObject(Object object) implements PyObject {
                 }
             }
         }
+        if (settersExist && !permittedSetterSeen) throw JavaBridge.denied("method '" + setterName + "'");
 
         throw PyErrors.error("AttributeError",
                 "cannot set attribute '" + name + "' on Java object '" + clazz.getName() + "'");
+    }
+
+    private void requireMethodAccess(Class<?> clazz, Method method) {
+        if (!policy.canCallMethod(clazz.getName(), method.getName(),
+                JavaDescriptors.of(method.getParameterTypes()))) {
+            throw JavaBridge.denied("method '" + method.getName() + "'");
+        }
     }
 
     @Override public String toString() {
