@@ -5,7 +5,7 @@
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com/H09-0/jython3-prototype)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
-[![Tests](https://img.shields.io/badge/Tests-186%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-187%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
 Jython 3 is an independent re-implementation of Python 3 on the Java Virtual
 Machine, built from the ground up with a layered architecture, an explicit
@@ -277,7 +277,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 186 tests pass with zero failures and zero skipped. Test reports are written to:
+All 187 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -319,7 +319,7 @@ jython3-prototype/
         └── java/org/example/jython3/
             ├── Jython3InterpreterTest.java      # 162 JUnit 5 regression tests
             ├── JavaAccessPolicyTest.java        # 9 bridge and access-policy tests
-            └── ErrorFactoryTest.java            # 15 error-model guard tests
+            └── ErrorFactoryTest.java            # 16 error-model guard tests
 ```
 
 The object types (`PyInt`, `PyFunction`, `PyClass`, and the Java wrappers) live in

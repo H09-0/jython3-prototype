@@ -146,6 +146,7 @@ Rules:
 1. `PyErrors` is the only place that constructs the carrier. `ErrorFactoryTest`
    fails the build if another file does so.
 2. `PyErrors.error(type, message)` creates Python-level errors.
+   `PyErrors.errorValue(value)` wraps an existing value when re-raising.
    `PyErrors.fromJava(throwable)` is the single entry point for JVM throwables;
    it unwraps reflection wrappers, maps the concrete class upwards, and keeps
    the original throwable in `javaCause`.

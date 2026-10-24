@@ -24,6 +24,14 @@ public final class PyErrors {
     }
 
     /**
+     * Wraps an existing Python exception value, such as a user-defined
+     * exception instance, so it can be thrown and later re-raised.
+     */
+    public static InterpreterException errorValue(PyObject value) {
+        return new InterpreterException(value);
+    }
+
+    /**
      * Wraps a JVM throwable as a Python exception value. Returns the original
      * throwable when it already is an {@link InterpreterException}, so Python
      * errors raised inside reflective calls do not turn into

@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyErrors;
@@ -15,21 +14,16 @@ import org.example.jython3.runtime.PyException;
 import org.junit.jupiter.api.Test;
 
 /**
- * Guards the migration to a single error factory.
+ * Guards the single error factory.
  *
- * <p>Files listed in {@link #PENDING} still build errors from formatted
- * strings. Each migration commit lowers their counts and eventually removes
- * them. A new file that constructs {@link InterpreterException} directly, or a
- * file whose count grows, fails the build.
+ * <p>Only {@link PyErrors} may construct {@link InterpreterException}; any other
+ * file that does so fails the build. The legacy string constructor remains for
+ * the tests below, but production code passes a type and message instead.
  */
 class ErrorFactoryTest {
 
-    /** Files that still use the legacy string constructor, with their current site counts. */
-    private static final Map<String, Integer> PENDING = Map.of(
-            "Jython3Interpreter.java", 72);
-
     @Test
-    void legacyConstructionIsConfinedToPendingFiles() throws IOException {
+    void onlyTheFactoryConstructsInterpreterException() throws IOException {
         Path root = Path.of("src/main/java");
         List<String> offenders = new ArrayList<>();
         try (var files = Files.walk(root)) {
@@ -37,8 +31,7 @@ class ErrorFactoryTest {
                 String text = Files.readString(file);
                 if (!text.contains("new InterpreterException(")) continue;
                 String name = file.getFileName().toString();
-                if (name.equals("PyErrors.java")) continue; // the factory itself
-                if (!PENDING.containsKey(name)) offenders.add(name);
+                if (!name.equals("PyErrors.java")) offenders.add(name);
             }
         }
         assertTrue(offenders.isEmpty(),
@@ -46,15 +39,16 @@ class ErrorFactoryTest {
     }
 
     @Test
-    void legacySiteCountsOnlyShrink() throws IOException {
-        for (var entry : PENDING.entrySet()) {
-            Path file = findByName(Path.of("src/main/java"), entry.getKey());
-            assertNotNull(file, entry.getKey() + " is missing");
-            int actual = countOccurrences(Files.readString(file), "new InterpreterException(");
-            assertTrue(actual <= entry.getValue(),
-                    entry.getKey() + " grew from " + entry.getValue() + " to " + actual
-                            + " direct constructions; use PyErrors.error");
-        }
+    void factoryDoesNotUseTheLegacyStringConstructor() throws IOException {
+        String text = Files.readString(Path.of("src/main/java/org/example/jython3/runtime/PyErrors.java"));
+        assertFalse(text.contains("new InterpreterException(\""),
+                "PyErrors must pass values, not formatted strings");
+    }
+
+    @Test
+    void errorValueKeepsTheGivenPythonValue() {
+        PyException value = PyException.of("UserError", "custom");
+        assertSame(value, PyErrors.errorValue(value).value());
     }
 
     @Test
@@ -163,19 +157,5 @@ class ErrorFactoryTest {
     @Test
     void javaStackTracesAreOffByDefault() {
         assertEquals(0, PyErrors.error("ValueError", "x").getStackTrace().length);
-    }
-
-    private static int countOccurrences(String text, String needle) {
-        int count = 0;
-        for (int i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + needle.length())) {
-            count++;
-        }
-        return count;
-    }
-
-    private static Path findByName(Path root, String name) throws IOException {
-        try (var files = Files.walk(root)) {
-            return files.filter(f -> f.getFileName().toString().equals(name)).findFirst().orElse(null);
-        }
     }
 }

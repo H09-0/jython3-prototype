@@ -395,7 +395,7 @@ public class Jython3Interpreter {
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
                     else if (v instanceof PyFunction f) stack.push(f);
                     else if (v instanceof CompiledCode cc) stack.push(new PyCompiledCodeWrapper(cc));
-                    else throw new InterpreterException("Unknown const: " + v);
+                    else throw PyErrors.error("RuntimeError", "unknown constant: " + v);
                 }
                 case LOAD_FAST -> {
                     String n = (String) pool[ai];
@@ -404,13 +404,13 @@ public class Jython3Interpreter {
                         v = currentLocals.get(n);
                     }
                     if (v == null) v = globals.get(n);
-                    if (v == null) throw new InterpreterException("NameError: name '" + n + "' is not defined");
+                    if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     stack.push(v);
                 }
                 case LOAD_GLOBAL -> {
                     String n = (String) pool[ai];
                     PyObject v = globals.get(n);
-                    if (v == null) throw new InterpreterException("NameError: name '" + n + "' is not defined");
+                    if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     stack.push(v);
                 }
                 case STORE_FAST -> currentLocals.put((String) pool[ai], stack.pop());
@@ -422,12 +422,12 @@ public class Jython3Interpreter {
                         int i = ix.value();
                         if (i < 0) i += list.items().size();
                         if (i < 0 || i >= list.items().size())
-                            throw new InterpreterException("IndexError: list assignment index out of range");
+                            throw PyErrors.error("IndexError", "list assignment index out of range");
                         list.items().set(i, val);
                     } else if (container instanceof PyDict dict) {
                         dict.map().put(key, val);
                     } else {
-                        throw new InterpreterException("TypeError: '" + typeName(container) + "' object does not support item assignment");
+                        throw PyErrors.error("TypeError", "'" + typeName(container) + "' object does not support item assignment");
                     }
                 }
                 case STORE_ATTR -> {
@@ -443,13 +443,13 @@ public class Jython3Interpreter {
                     } else if (obj instanceof PyJavaObject jo) {
                         jo.setMember(attr, val);
                     } else {
-                        throw new InterpreterException("AttributeError: cannot set attribute on '" + typeName(obj) + "'");
+                        throw PyErrors.error("AttributeError", "cannot set attribute on '" + typeName(obj) + "'");
                     }
                 }
                 case DELETE_FAST -> {
                     String n = (String) pool[ai];
                     if (currentLocals.remove(n) == null && globals.remove(n) == null) {
-                        throw new InterpreterException("NameError: name '" + n + "' is not defined");
+                        throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     }
                 }
                 case DELETE_SUBSCR -> {
@@ -459,13 +459,13 @@ public class Jython3Interpreter {
                         int i = ix.value();
                         if (i < 0) i += list.items().size();
                         if (i < 0 || i >= list.items().size())
-                            throw new InterpreterException("IndexError: list index out of range");
+                            throw PyErrors.error("IndexError", "list index out of range");
                         list.items().remove(i);
                     } else if (container instanceof PyDict dict) {
                         if (dict.map().remove(key) == null)
-                            throw new InterpreterException("KeyError: " + key);
+                            throw PyErrors.error("KeyError", String.valueOf(key));
                     } else {
-                        throw new InterpreterException("TypeError: '" + typeName(container) + "' object doesn't support item deletion");
+                        throw PyErrors.error("TypeError", "'" + typeName(container) + "' object doesn't support item deletion");
                     }
                 }
 
@@ -476,7 +476,7 @@ public class Jython3Interpreter {
                 case DIVIDE -> {
                     var r = stack.pop(); var l = stack.pop();
                     if (l instanceof PyInt li && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw new InterpreterException("ZeroDivisionError: division by zero");
+                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "division by zero");
                         if (li.value() % ri.value() == 0) {
                             stack.push(new PyInt(li.value() / ri.value()));
                         } else {
@@ -484,23 +484,23 @@ public class Jython3Interpreter {
                         }
                     } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r);
-                        if (rv == 0) throw new InterpreterException("ZeroDivisionError: division by zero");
+                        if (rv == 0) throw PyErrors.error("ZeroDivisionError", "division by zero");
                         stack.push(new PyFloat(toDouble(l) / rv));
                     } else {
-                        throw new InterpreterException("TypeError: unsupported operand types for /");
+                        throw PyErrors.error("TypeError", "unsupported operand types for /");
                     }
                 }
                 case FLOOR_DIVIDE -> {
                     var r = stack.pop(); var l = stack.pop();
                     if (l instanceof PyInt li && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw new InterpreterException("ZeroDivisionError: integer division or modulo by zero");
+                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
                         stack.push(new PyInt(Math.floorDiv(li.value(), ri.value())));
                     } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r);
-                        if (rv == 0) throw new InterpreterException("ZeroDivisionError: float floor division by zero");
+                        if (rv == 0) throw PyErrors.error("ZeroDivisionError", "float floor division by zero");
                         stack.push(new PyFloat(Math.floor(toDouble(l) / rv)));
                     } else {
-                        throw new InterpreterException("TypeError: unsupported operand types for //");
+                        throw PyErrors.error("TypeError", "unsupported operand types for //");
                     }
                 }
                 case MODULO -> {
@@ -508,14 +508,14 @@ public class Jython3Interpreter {
                     if (l instanceof PyStr fmt) {
                         stack.push(new PyStr(pyStringFormat(fmt.value(), r)));
                     } else if (l instanceof PyInt li && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw new InterpreterException("ZeroDivisionError: integer modulo by zero");
+                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
                         stack.push(new PyInt(Math.floorMod(li.value(), ri.value())));
                     } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r), lv = toDouble(l);
-                        if (rv == 0) throw new InterpreterException("ZeroDivisionError: float modulo by zero");
+                        if (rv == 0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
                         stack.push(new PyFloat(lv - Math.floor(lv / rv) * rv));
                     } else {
-                        throw new InterpreterException("TypeError: unsupported operand types for %");
+                        throw PyErrors.error("TypeError", "unsupported operand types for %");
                     }
                 }
                 case POWER -> {
@@ -525,14 +525,14 @@ public class Jython3Interpreter {
                     } else if (isNumeric(l) && isNumeric(r)) {
                         stack.push(new PyFloat(Math.pow(toDouble(l), toDouble(r))));
                     } else {
-                        throw new InterpreterException("TypeError: unsupported operand types for **");
+                        throw PyErrors.error("TypeError", "unsupported operand types for **");
                     }
                 }
                 case UNARY_MINUS -> {
                     var v = stack.pop();
                     if (v instanceof PyInt i) stack.push(new PyInt(-i.value()));
                     else if (v instanceof PyFloat f) stack.push(new PyFloat(-f.value()));
-                    else throw new InterpreterException("TypeError: bad operand type for unary -: '" + typeName(v) + "'");
+                    else throw PyErrors.error("TypeError", "bad operand type for unary -: '" + typeName(v) + "'");
                 }
 
                 // ── Comparison ──
@@ -662,7 +662,7 @@ public class Jython3Interpreter {
                             stack.push(new PyGenerator(fn, args));
                         } else {
                             if (callStack.size() >= MAX_CALL_DEPTH) {
-                                throw new InterpreterException("RecursionError: maximum recursion depth exceeded");
+                                throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
                                     currentFunc, currentFile, currentLine));
@@ -690,7 +690,7 @@ public class Jython3Interpreter {
                     } else if (callable instanceof PyJavaMethod jm) {
                         stack.push(jm.invoke(args));
                     } else {
-                        throw new InterpreterException("TypeError: '" + callable + "' is not callable");
+                        throw PyErrors.error("TypeError", "'" + callable + "' is not callable");
                     }
                 }
                 case YIELD_VALUE -> {
@@ -759,24 +759,24 @@ public class Jython3Interpreter {
                         int i = ix.value();
                         if (i < 0) i += list.items().size();
                         if (i < 0 || i >= list.items().size())
-                            throw new InterpreterException("IndexError: list index out of range");
+                            throw PyErrors.error("IndexError", "list index out of range");
                         stack.push(list.items().get(i));
                     } else if (ctr instanceof PyDict dict) {
                         PyObject val = dict.map().get(idx);
-                        if (val == null) throw new InterpreterException("KeyError: " + idx);
+                        if (val == null) throw PyErrors.error("KeyError", String.valueOf(idx));
                         stack.push(val);
                     } else if (ctr instanceof PyStr s && idx instanceof PyInt ix) {
                         int i = ix.value();
                         if (i < 0) i += s.value().length();
                         if (i < 0 || i >= s.value().length())
-                            throw new InterpreterException("IndexError: string index out of range");
+                            throw PyErrors.error("IndexError", "string index out of range");
                         stack.push(new PyStr(String.valueOf(s.value().charAt(i))));
                     } else if (ctr instanceof PyInstance inst) {
                         PyObject getitem = inst.getField("__getitem__");
                         if (getitem != null) {
                             stack.push(callPyCallable(getitem, new PyObject[]{idx}));
                         } else {
-                            throw new InterpreterException("TypeError: '" + typeName(ctr) + "' object is not subscriptable");
+                            throw PyErrors.error("TypeError", "'" + typeName(ctr) + "' object is not subscriptable");
                         }
                     } else if (ctr instanceof PyJavaObject jo) {
                         Object jObj = jo.object();
@@ -785,16 +785,16 @@ public class Jython3Interpreter {
                                 int i = ix.value();
                                 if (i < 0) i += l.size();
                                 if (i < 0 || i >= l.size())
-                                    throw new InterpreterException("IndexError: Java list index out of range");
+                                    throw PyErrors.error("IndexError", "Java list index out of range");
                                 stack.push(JavaBridge.toPyObject(l.get(i), jo.policy()));
                             } else {
-                                throw new InterpreterException("TypeError: Java list indices must be integers");
+                                throw PyErrors.error("TypeError", "Java list indices must be integers");
                             }
                         } else if (jObj instanceof java.util.Map<?,?> m) {
                             Object key = JavaBridge.toJavaObject(idx, Object.class);
                             Object val = m.get(key);
                             if (val == null && !m.containsKey(key))
-                                throw new InterpreterException("KeyError: " + idx);
+                                throw PyErrors.error("KeyError", String.valueOf(idx));
                             stack.push(JavaBridge.toPyObject(val, jo.policy()));
                         } else if (jObj.getClass().isArray()) {
                             if (idx instanceof PyInt ix) {
@@ -802,16 +802,16 @@ public class Jython3Interpreter {
                                 int len = java.lang.reflect.Array.getLength(jObj);
                                 if (i < 0) i += len;
                                 if (i < 0 || i >= len)
-                                    throw new InterpreterException("IndexError: Java array index out of range");
+                                    throw PyErrors.error("IndexError", "Java array index out of range");
                                 stack.push(JavaBridge.toPyObject(java.lang.reflect.Array.get(jObj, i), jo.policy()));
                             } else {
-                                throw new InterpreterException("TypeError: Java array indices must be integers");
+                                throw PyErrors.error("TypeError", "Java array indices must be integers");
                             }
                         } else {
-                            throw new InterpreterException("TypeError: Java object '" + jObj.getClass().getName() + "' is not subscriptable");
+                            throw PyErrors.error("TypeError", "Java object '" + jObj.getClass().getName() + "' is not subscriptable");
                         }
                     } else {
-                        throw new InterpreterException("TypeError: unsupported subscript types");
+                        throw PyErrors.error("TypeError", "unsupported subscript types");
                     }
                 }
                 case GET_ITER -> {
@@ -840,7 +840,7 @@ public class Jython3Interpreter {
                         for (Object item : iterable) items.add(JavaBridge.toPyObject(item, jo.policy()));
                         stack.push(new PyIterator(items, 0));
                     } else {
-                        throw new InterpreterException("TypeError: '" + typeName(o) + "' is not iterable");
+                        throw PyErrors.error("TypeError", "'" + typeName(o) + "' is not iterable");
                     }
                 }
                 case FOR_ITER -> {
@@ -849,7 +849,7 @@ public class Jython3Interpreter {
                         if (iter.hasNext()) stack.push(iter.next());
                         else { stack.pop(); pc = ai; continue; }
                     } else {
-                        throw new InterpreterException("TypeError: expected iterator");
+                        throw PyErrors.error("TypeError", "expected iterator");
                     }
                 }
 
@@ -861,11 +861,11 @@ public class Jython3Interpreter {
                         stack.push(inst.getField(attr));
                     } else if (obj instanceof PyClass cls) {
                         PyObject val = cls.lookupMember(attr);
-                        if (val == null) throw new InterpreterException("AttributeError: type object '" + cls.name() + "' has no attribute '" + attr + "'");
+                        if (val == null) throw PyErrors.error("AttributeError", "type object '" + cls.name() + "' has no attribute '" + attr + "'");
                         stack.push(val);
                     } else if (obj instanceof PyModule mod) {
                         PyObject val = mod.attrs().get(attr);
-                        if (val == null) throw new InterpreterException("AttributeError: module '" + mod.name() + "' has no attribute '" + attr + "'");
+                        if (val == null) throw PyErrors.error("AttributeError", "module '" + mod.name() + "' has no attribute '" + attr + "'");
                         stack.push(val);
                     } else if (obj instanceof PyDict dict) {
                         stack.push(dictMethod(dict, attr));
@@ -882,7 +882,7 @@ public class Jython3Interpreter {
                     } else if (obj instanceof PySuper sup) {
                         stack.push(sup.getMethod(attr));
                     } else {
-                        throw new InterpreterException("AttributeError: '" + typeName(obj) + "' object has no attribute '" + attr + "'");
+                        throw PyErrors.error("AttributeError", "'" + typeName(obj) + "' object has no attribute '" + attr + "'");
                     }
                 }
 
@@ -893,7 +893,7 @@ public class Jython3Interpreter {
                     PyObject msgObj = stack.pop();
                     String excType = (String) pool[ai];
                     String msg = (msgObj instanceof PyStr s) ? s.value() : msgObj.toString();
-                    throw new InterpreterException(excType + ": " + msg);
+                    throw PyErrors.error(excType, msg);
                 }
                 case COMPARE_EXC_TYPE -> {
                     // Stack: [..., exceptionValue, typeName]
@@ -905,7 +905,7 @@ public class Jython3Interpreter {
                 }
                 case RERAISE -> {
                     PyObject excObj = stack.pop();
-                    throw new InterpreterException(excObj);
+                    throw PyErrors.errorValue(excObj);
                 }
                 case EXECFILE -> {
                     // Stack top = file path string
@@ -925,7 +925,7 @@ public class Jython3Interpreter {
                         currentLocals = savedLocals2;
                         exceptStack = savedExcept2;
                     } catch (java.io.IOException ioe) {
-                        throw new InterpreterException("IOError: cannot open '" + filePath + "': " + ioe.getMessage());
+                        throw PyErrors.error("IOError", "cannot open '" + filePath + "': " + ioe.getMessage());
                     }
                 }
                 case HALT -> { return; }
@@ -1003,7 +1003,7 @@ public class Jython3Interpreter {
         } else if (isNumeric(l) && isNumeric(r)) {
             stack.push(new PyFloat(toDouble(l) + toDouble(r)));
         } else {
-            throw new InterpreterException("TypeError: unsupported operand types for arithmetic");
+            throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
         }
     }
 
@@ -1031,7 +1031,7 @@ public class Jython3Interpreter {
         } else if (isNumeric(l) && isNumeric(r)) {
             stack.push(new PyFloat(toDouble(l) - toDouble(r)));
         } else {
-            throw new InterpreterException("TypeError: unsupported operand types for arithmetic");
+            throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
         }
     }
 
@@ -1072,7 +1072,7 @@ public class Jython3Interpreter {
         } else if (isNumeric(l) && isNumeric(r)) {
             stack.push(new PyFloat(toDouble(l) * toDouble(r)));
         } else {
-            throw new InterpreterException("TypeError: unsupported operand types for arithmetic");
+            throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
         }
     }
 
@@ -1096,7 +1096,7 @@ public class Jython3Interpreter {
             });
             case "join" -> new PyBuiltinFunction("str.join", args -> {
                 checkArgCount("str.join", args, 1);
-                if (!(args[0] instanceof PyList list)) throw new InterpreterException("TypeError: join() argument must be iterable");
+                if (!(args[0] instanceof PyList list)) throw PyErrors.error("TypeError", "join() argument must be iterable");
                 var sb = new StringBuilder();
                 for (int i = 0; i < list.items().size(); i++) {
                     if (i > 0) sb.append(s.value());
@@ -1105,29 +1105,29 @@ public class Jython3Interpreter {
                 return new PyStr(sb.toString());
             });
             case "replace" -> new PyBuiltinFunction("str.replace", args -> {
-                if (args.length < 2) throw new InterpreterException("TypeError: replace() takes at least 2 arguments");
+                if (args.length < 2) throw PyErrors.error("TypeError", "replace() takes at least 2 arguments");
                 if (!(args[0] instanceof PyStr old) || !(args[1] instanceof PyStr rep))
-                    throw new InterpreterException("TypeError: replace() arguments must be strings");
+                    throw PyErrors.error("TypeError", "replace() arguments must be strings");
                 return new PyStr(s.value().replace(old.value(), rep.value()));
             });
             case "startswith" -> new PyBuiltinFunction("str.startswith", args -> {
                 checkArgCount("str.startswith", args, 1);
-                if (!(args[0] instanceof PyStr prefix)) throw new InterpreterException("TypeError: startswith() argument must be str");
+                if (!(args[0] instanceof PyStr prefix)) throw PyErrors.error("TypeError", "startswith() argument must be str");
                 return PyBool.of(s.value().startsWith(prefix.value()));
             });
             case "endswith" -> new PyBuiltinFunction("str.endswith", args -> {
                 checkArgCount("str.endswith", args, 1);
-                if (!(args[0] instanceof PyStr suffix)) throw new InterpreterException("TypeError: endswith() argument must be str");
+                if (!(args[0] instanceof PyStr suffix)) throw PyErrors.error("TypeError", "endswith() argument must be str");
                 return PyBool.of(s.value().endsWith(suffix.value()));
             });
             case "find" -> new PyBuiltinFunction("str.find", args -> {
                 checkArgCount("str.find", args, 1);
-                if (!(args[0] instanceof PyStr sub)) throw new InterpreterException("TypeError: find() argument must be str");
+                if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "find() argument must be str");
                 return new PyInt(s.value().indexOf(sub.value()));
             });
             case "count" -> new PyBuiltinFunction("str.count", args -> {
                 checkArgCount("str.count", args, 1);
-                if (!(args[0] instanceof PyStr sub)) throw new InterpreterException("TypeError: count() argument must be str");
+                if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "count() argument must be str");
                 int count = 0; int idx = 0;
                 while ((idx = s.value().indexOf(sub.value(), idx)) != -1) { count++; idx += sub.value().length(); }
                 return new PyInt(count);
@@ -1135,7 +1135,7 @@ public class Jython3Interpreter {
             case "isdigit" -> new PyBuiltinFunction("str.isdigit", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isDigit)));
             case "isalpha" -> new PyBuiltinFunction("str.isalpha", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isLetter)));
             case "isalnum" -> new PyBuiltinFunction("str.isalnum", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isLetterOrDigit)));
-            default -> throw new InterpreterException("AttributeError: 'str' object has no attribute '" + method + "'");
+            default -> throw PyErrors.error("AttributeError", "'str' object has no attribute '" + method + "'");
         };
     }
 
@@ -1143,18 +1143,18 @@ public class Jython3Interpreter {
         return switch (method) {
             case "append" -> new PyBuiltinFunction("list.append", args -> { checkArgCount("list.append", args, 1); list.items().add(args[0]); return new PyNull(); });
             case "pop" -> new PyBuiltinFunction("list.pop", args -> {
-                if (list.items().isEmpty()) throw new InterpreterException("IndexError: pop from empty list");
+                if (list.items().isEmpty()) throw PyErrors.error("IndexError", "pop from empty list");
                 if (args.length > 0) { int i = toInt(args[0]); if (i < 0) i += list.items().size(); return list.items().remove(i); }
                 return list.items().removeLast();
             });
             case "extend" -> new PyBuiltinFunction("list.extend", args -> {
                 checkArgCount("list.extend", args, 1);
-                if (!(args[0] instanceof PyList other)) throw new InterpreterException("TypeError: extend() argument must be iterable");
+                if (!(args[0] instanceof PyList other)) throw PyErrors.error("TypeError", "extend() argument must be iterable");
                 list.items().addAll(other.items());
                 return new PyNull();
             });
             case "insert" -> new PyBuiltinFunction("list.insert", args -> {
-                if (args.length < 2) throw new InterpreterException("TypeError: insert() takes 2 arguments");
+                if (args.length < 2) throw PyErrors.error("TypeError", "insert() takes 2 arguments");
                 int i = toInt(args[0]); if (i < 0) i += list.items().size(); if (i < 0) i = 0;
                 if (i > list.items().size()) i = list.items().size();
                 list.items().add(i, args[1]);
@@ -1165,14 +1165,14 @@ public class Jython3Interpreter {
                 for (int i = 0; i < list.items().size(); i++) {
                     if (pyEquals(list.items().get(i), args[0])) { list.items().remove(i); return new PyNull(); }
                 }
-                throw new InterpreterException("ValueError: list.remove(x): x not in list");
+                throw PyErrors.error("ValueError", "list.remove(x): x not in list");
             });
             case "index" -> new PyBuiltinFunction("list.index", args -> {
                 checkArgCount("list.index", args, 1);
                 for (int i = 0; i < list.items().size(); i++) {
                     if (pyEquals(list.items().get(i), args[0])) return new PyInt(i);
                 }
-                throw new InterpreterException("ValueError: " + args[0] + " is not in list");
+                throw PyErrors.error("ValueError", args[0] + " is not in list");
             });
             case "count" -> new PyBuiltinFunction("list.count", args -> {
                 checkArgCount("list.count", args, 1);
@@ -1189,7 +1189,7 @@ public class Jython3Interpreter {
             });
             case "copy" -> new PyBuiltinFunction("list.copy", args -> new PyList(new ArrayList<>(list.items())));
             case "clear" -> new PyBuiltinFunction("list.clear", args -> { list.items().clear(); return new PyNull(); });
-            default -> throw new InterpreterException("AttributeError: 'list' object has no attribute '" + method + "'");
+            default -> throw PyErrors.error("AttributeError", "'list' object has no attribute '" + method + "'");
         };
     }
 
@@ -1203,27 +1203,27 @@ public class Jython3Interpreter {
                 return new PyList(items);
             });
             case "get" -> new PyBuiltinFunction("dict.get", args -> {
-                if (args.length < 1) throw new InterpreterException("TypeError: get() takes at least 1 argument");
+                if (args.length < 1) throw PyErrors.error("TypeError", "get() takes at least 1 argument");
                 PyObject val = dict.map().get(args[0]);
                 if (val != null) return val;
                 return (args.length > 1) ? args[1] : new PyNull();
             });
             case "update" -> new PyBuiltinFunction("dict.update", args -> {
                 checkArgCount("dict.update", args, 1);
-                if (!(args[0] instanceof PyDict other)) throw new InterpreterException("TypeError: update() argument must be a dict");
+                if (!(args[0] instanceof PyDict other)) throw PyErrors.error("TypeError", "update() argument must be a dict");
                 dict.map().putAll(other.map());
                 return new PyNull();
             });
             case "pop" -> new PyBuiltinFunction("dict.pop", args -> {
-                if (args.length < 1) throw new InterpreterException("TypeError: pop() takes at least 1 argument");
+                if (args.length < 1) throw PyErrors.error("TypeError", "pop() takes at least 1 argument");
                 PyObject val = dict.map().remove(args[0]);
                 if (val != null) return val;
                 if (args.length > 1) return args[1];
-                throw new InterpreterException("KeyError: " + args[0]);
+                throw PyErrors.error("KeyError", String.valueOf(args[0]));
             });
             case "clear" -> new PyBuiltinFunction("dict.clear", args -> { dict.map().clear(); return new PyNull(); });
             case "copy" -> new PyBuiltinFunction("dict.copy", args -> new PyDict(new LinkedHashMap<>(dict.map())));
-            default -> throw new InterpreterException("AttributeError: 'dict' object has no attribute '" + method + "'");
+            default -> throw PyErrors.error("AttributeError", "'dict' object has no attribute '" + method + "'");
         };
     }
 
@@ -1274,7 +1274,7 @@ public class Jython3Interpreter {
             currentLine = savedLine;
             return result;
         }
-        throw new InterpreterException("TypeError: '" + callable + "' is not callable");
+        throw PyErrors.error("TypeError", "'" + callable + "' is not callable");
     }
 
     private void importModule(String spec) {
@@ -1285,7 +1285,7 @@ public class Jython3Interpreter {
             String item = parts[2];
 
             if (item.equals("*")) {
-                throw new InterpreterException("ImportError: 'import *' from Java package is not supported");
+                throw PyErrors.error("ImportError", "'import *' from Java package is not supported");
             }
 
             String alias = parts.length > 3 ? parts[3] : item;
@@ -1305,10 +1305,10 @@ public class Jython3Interpreter {
             if (builtinMod != null) {
                 PyObject attr = builtinMod.attrs().get(item);
                 if (attr != null) { globals.put(alias, attr); return; }
-                throw new InterpreterException("ImportError: cannot import name '" + item + "' from '" + pkg + "'");
+                throw PyErrors.error("ImportError", "cannot import name '" + item + "' from '" + pkg + "'");
             }
 
-            throw new InterpreterException("ImportError: cannot import '" + item + "' from '" + pkg + "'");
+            throw PyErrors.error("ImportError", "cannot import '" + item + "' from '" + pkg + "'");
         }
 
         // ── pkg:alias  or plain pkg ──
@@ -1335,13 +1335,13 @@ public class Jython3Interpreter {
         }
 
         if (!pkg.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-            throw new InterpreterException("ImportError: invalid module name '" + pkg + "'");
+            throw PyErrors.error("ImportError", "invalid module name '" + pkg + "'");
         }
 
         try {
             java.nio.file.Path p = java.nio.file.Path.of("modules", pkg + ".py").normalize();
             if (!p.startsWith(java.nio.file.Path.of("modules").normalize())) {
-                throw new InterpreterException("ImportError: no module named '" + pkg + "'");
+                throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
             }
             String content = java.nio.file.Files.readString(p);
             exec(content);
@@ -1350,7 +1350,7 @@ public class Jython3Interpreter {
                 if (mod != null) globals.put(alias, mod);
             }
         } catch (java.io.IOException e) {
-            throw new InterpreterException("ImportError: no module named '" + pkg + "'");
+            throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
         }
     }
 
@@ -1390,7 +1390,7 @@ public class Jython3Interpreter {
     private static final class ThrowingErrorListener extends BaseErrorListener {
         static final ThrowingErrorListener INSTANCE = new ThrowingErrorListener();
         @Override public void syntaxError(Recognizer<?,?> r, Object s, int l, int c, String m, RecognitionException e) {
-            throw new InterpreterException("SyntaxError at " + l + ":" + c + " – " + m);
+            throw PyErrors.error("SyntaxError", "at " + l + ":" + c + " – " + m);
         }
     }
 }
