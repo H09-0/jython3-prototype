@@ -1523,4 +1523,25 @@ class Jython3InterpreterTest {
         assertEquals("ok 2", out());
         assertEquals("", err());
     }
+
+    /**
+     * Locks down the exact traceback layout before the exception model is
+     * reworked. If this test changes, the change is intentional.
+     */
+    @Test void testTracebackFormatGolden() {
+        py.exec("""
+            def divide(a, b):
+                return a / b
+
+            divide(1, 0)
+            """);
+        String expected = """
+            Traceback (most recent call last):
+              File "<stdin>", line 4, in <module>
+                divide(1, 0)
+              File "<stdin>", line 2, in divide
+                return a / b
+            ZeroDivisionError: division by zero""";
+        assertEquals(expected, err());
+    }
 }
