@@ -1,4 +1,4 @@
-# ملف تجريبي بسيط
+# Simple smoke-test script
 print("hello there!")
 x = 10
 y = 20

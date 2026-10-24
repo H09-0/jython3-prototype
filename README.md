@@ -5,10 +5,10 @@ interpreter targeting Python 3.x on the JVM.**
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com/H09-0/jython3-prototype)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.8.0--alpha-orange)](https://github.com/H09-0/jython3-prototype/releases)
+[![Version](https://img.shields.io/badge/Version-v0.10.0--alpha-orange)](https://github.com/H09-0/jython3-prototype/releases)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
 [![ANTLR](https://img.shields.io/badge/Parser-ANTLR%204.13.1-purple)](https://www.antlr.org/)
-[![Tests](https://img.shields.io/badge/Tests-133%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-144%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
 ---
 
@@ -50,6 +50,9 @@ The table below summarises the current state of language and runtime support.
 | `if` / `else` conditional statements | ✅ Supported |
 | `while` loops | ✅ Supported |
 | `for ... in ...` loops with list iteration | ✅ Supported |
+| `break` and `continue` (including nested loops) | ✅ Supported |
+| `yield` and generator iteration | ✅ Supported (eager, no `send`/`throw`) |
+| `execfile(path)` | ✅ Supported |
 | Function definitions (`def`), parameters, `return` | ✅ Supported |
 | Nested and recursive function calls | ✅ Supported |
 | Local scope isolation per function frame | ✅ Supported |
@@ -61,12 +64,24 @@ The table below summarises the current state of language and runtime support.
 | `PyFloat` runtime type for floating-point results | ✅ Supported |
 | Tracebacks: `NameError`, `ZeroDivisionError`, `TypeError`, `AttributeError`, `IndexError` | ✅ Supported |
 | Real bytecode layer (`CompiledCode`: `int[]` + `Object[]` constants pool) | ✅ Supported |
-| Exception handling (`try` / `except` / `raise`) | ✅ Supported |
+| Exception handling (`try` / `except` / `else` / `finally` / `raise`) | ✅ Supported |
+| Multiple `except` clauses and `except Exception` catch-all | ✅ Supported |
 | Classes, inheritance, bound methods, decorators | ✅ Supported |
 | Java bridge (`from java.lang import Math`) | ✅ Supported |
 | `re`, `json`, and `io` modules | ✅ Supported |
 | `collections`, comprehensions, true division `/` | 🔜 Planned |
 | Maven Central packaging | 🔜 Planned |
+
+### Known Limitations
+
+- Generators are evaluated eagerly: the function runs to completion on the first
+  iteration. `send()`, `throw()`, and `close()` are not implemented.
+- `break` and `continue` inside a `try`/`finally` block skip the `finally` body.
+- Exception types are carried as a single message string. Built-in errors and a
+  small set of Java exceptions can be matched by name; custom exception classes
+  are not supported.
+- Tracebacks include the script/file name but not source line numbers.
+- No `with`, `async`/`await`, comprehensions, or lambda expressions yet.
 
 ---
 
@@ -118,26 +133,29 @@ Each instruction occupies a single 32-bit integer:
 
 ### Runtime Object Model
 
-The Python object hierarchy is encoded as a Java 21 **sealed interface** with **record**
-implementations, enabling exhaustive pattern-matching switches throughout the runtime:
+The Python object hierarchy is encoded as a Java 21 **sealed interface**. Simple values
+are records; objects with mutable state are final classes. The permit list lives in
+`runtime/PyObject.java` and includes the core types plus the Java bridge wrappers:
 
 ```java
 public sealed interface PyObject
-        permits PyInt, PyStr, PyNull, PyFloat,
-                PyFunction, PyBuiltinFunction,
-                PyList, PyIterator, PyModule {}
+        permits PyInt, BigInt, PyStr, PyNull, PyBool, PyFloat,
+                PyFunction, PyBuiltinFunction, PyList, PyDict, PyIterator,
+                PyModule, PyClass, PyInstance, PyBoundMethod, PySuper,
+                PyException, PyGenerator, PyCompiledCodeWrapper,
+                PyJavaClass, PyJavaObject, PyJavaMethod, PyJavaPackage {}
 
-public record PyInt(int value)                                      implements PyObject {}
-public record PyStr(String value)                                   implements PyObject {}
-public record PyNull()                                              implements PyObject {}
-public record PyFloat(double value)                                 implements PyObject {}
-public record PyFunction(String name, List<String> params,
-                         CompiledCode code)                         implements PyObject {}
-public record PyBuiltinFunction(String name,
-                         Function<PyObject[], PyObject> fn)         implements PyObject {}
-public record PyList(List<PyObject> items)                          implements PyObject {}
-public record PyModule(String name, Map<String, PyObject> attrs)    implements PyObject {}
-public final  class PyIterator                                      implements PyObject {}
+public record PyInt(int value)                       implements PyObject {}
+public record PyStr(String value)                    implements PyObject {}
+public record PyNull()                               implements PyObject {}
+public record PyBool(boolean value)                  implements PyObject {}
+public record PyFloat(double value)                  implements PyObject {}
+public record PyList(List<PyObject> items)           implements PyObject {}
+public record PyDict(Map<PyObject, PyObject> map)    implements PyObject {}
+
+public final class PyFunction implements PyObject { /* name, params, code, closure */ }
+public final class PyClass    implements PyObject { /* name, bases, members */ }
+public final class PyGenerator implements PyObject { /* eagerly collected yields */ }
 ```
 
 ### Standard Library
@@ -176,7 +194,11 @@ import foo   ──▶  modules/foo.py         ──▶  file-based fallback
 | `FOR_ITER` | exit pc | Advance iterator; jump when exhausted |
 | `PUSH_EXCEPT_HANDLER` | except pc | Register an exception handler for a `try` block |
 | `POP_EXCEPT_HANDLER` | — | Deregister handler on normal exit from `try` |
+| `COMPARE_EXC_TYPE` | — | Pop type name; push whether the current exception matches |
 | `RAISE` | constPool idx | Raise an exception (type name from pool) |
+| `RERAISE` | — | Propagate an unmatched exception |
+| `YIELD_VALUE` | — | Emit a value from a generator function |
+| `EXECFILE` | — | Execute a script file in the current scope |
 | `HALT` | — | Terminate execution |
 
 ---
@@ -188,7 +210,7 @@ import foo   ──▶  modules/foo.py         ──▶  file-based fallback
 | Tool | Minimum Version | Notes |
 |------|----------------|-------|
 | Java JDK | **21** | OpenJDK or Oracle JDK |
-| Gradle | **8.x** | Wrapper included — no separate installation required |
+| Gradle | **9.x** | Wrapper included — no separate installation required |
 | Git | any | For cloning the repository |
 
 ### Cloning the Repository
@@ -230,7 +252,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 133 tests pass with zero failures and zero skipped. Test reports are written to:
+All 144 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -269,7 +291,7 @@ jython3-prototype/
     │       └── cli/                             # Repl and RunScript
     └── test/
         └── java/org/example/jython3/
-            └── Jython3InterpreterTest.java      # 133 JUnit 5 regression tests
+            └── Jython3InterpreterTest.java      # 144 JUnit 5 regression tests
 ```
 
 The object types (`PyInt`, `PyFunction`, `PyClass`, and the Java wrappers) live in
@@ -292,8 +314,9 @@ See [docs/architecture.md](docs/architecture.md) for the pipeline and package ro
 | 6 | `v0.6.0-alpha` | `CompiledCode`, constants pool, lists, `for` loops, 49 tests | ✅ Released |
 | 7 | `v0.7.0-alpha` | `math`/`sys`/`os` stdlib, `PyFloat`, `PyModule`, `LOAD_ATTR`, 64 tests | ✅ Released |
 | 8 | `v0.8.0-alpha` | Exception handling (`try`/`except`/`raise`), cross-frame propagation, 74 tests | ✅ Released |
-| 9–11 | working tree | Indentation, classes, decorators, Java bridge, package split, 133 tests | ✅ In tree |
-| 12 | `v1.0.0` | Stable API, Maven Central, true division, comprehensions | 🎯 Target |
+| 9–11 | `v0.9.0-alpha` | Indentation, classes, decorators, Java bridge, package split, 133 tests | ✅ Released |
+| 12 | `v0.10.0-alpha` | Loop control, exception clauses, generators, REPL blocks, `execfile`, 144 tests | ✅ Released |
+| 13 | `v1.0.0` | Stable API, Maven Central, true division, comprehensions | 🎯 Target |
 
 ---
 

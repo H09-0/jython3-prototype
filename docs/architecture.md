@@ -39,6 +39,17 @@ running interpreter, used when `__str__` or `__repr__` runs.
 `exec` prints a traceback and swallows `InterpreterException`. `eval` runs the
 same pipeline and lets that exception propagate. `SystemExit` is rethrown by both.
 
+## Control flow, exceptions, and generators
+
+- `break` and `continue` are compiled as `JUMP` instructions. `CompileVisitor`
+  keeps a loop-context stack so the jump targets are patched when the loop ends.
+- A `try` statement installs one handler. The handler chain evaluates
+  `COMPARE_EXC_TYPE` for each clause; if nothing matches, the interpreter runs
+  the `finally` body and executes `RERAISE`.
+- Generator functions are detected by scanning their bytecode for `YIELD_VALUE`.
+  Calling one returns a `PyGenerator`. On first iteration the interpreter runs
+  the body with a yield collector, so all values are produced eagerly.
+
 ## Entry points
 
 | Gradle task | Class |
