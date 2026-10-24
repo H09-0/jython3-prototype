@@ -1450,4 +1450,77 @@ class Jython3InterpreterTest {
             Files.deleteIfExists(script);
         }
     }
+
+    // ── Sprint 2: jumps must run pending finally bodies ──────────────
+
+    @Test void testBreakRunsFinally() {
+        py.exec("""
+            i = 0
+            while i < 5:
+                i = i + 1
+                try:
+                    if i == 3:
+                        break
+                finally:
+                    print("fin", i)
+            print("after", i)
+            """);
+        assertEquals("fin 1\nfin 2\nfin 3\nafter 3", out());
+        assertEquals("", err());
+    }
+
+    @Test void testContinueRunsFinally() {
+        py.exec("""
+            for i in [1, 2, 3]:
+                try:
+                    if i == 2:
+                        continue
+                    print("body", i)
+                finally:
+                    print("fin", i)
+            """);
+        assertEquals("body 1\nfin 1\nfin 2\nbody 3\nfin 3", out());
+    }
+
+    @Test void testReturnRunsFinally() {
+        py.exec("""
+            def f():
+                try:
+                    return 7
+                finally:
+                    print("cleanup")
+
+            print(f())
+            """);
+        assertEquals("cleanup\n7", out());
+    }
+
+    @Test void testNestedFinallyOnBreak() {
+        py.exec("""
+            while True:
+                try:
+                    try:
+                        break
+                    finally:
+                        print("inner")
+                finally:
+                    print("outer")
+            print("done")
+            """);
+        assertEquals("inner\nouter\ndone", out());
+    }
+
+    @Test void testBreakInsideTryExceptLeavesNoStaleHandler() {
+        py.exec("""
+            for i in [1, 2, 3]:
+                try:
+                    if i == 2:
+                        break
+                except ValueError:
+                    print("never")
+            print("ok", i)
+            """);
+        assertEquals("ok 2", out());
+        assertEquals("", err());
+    }
 }

@@ -15,8 +15,65 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     private static class LoopContext {
         final java.util.List<Integer> breakPatches = new java.util.ArrayList<>();
         int continueTarget = -1; // pc of loop-start / FOR_ITER
+        int depth;               // loopStack.size() while this loop is active
     }
     private final java.util.Deque<LoopContext> loopStack = new java.util.ArrayDeque<>();
+
+    /**
+     * Tracks a {@code try} statement while its parts are compiled, so that
+     * {@code break}, {@code continue}, and {@code return} can run any pending
+     * {@code finally} bodies and deregister the exception handler.
+     */
+    private static class TryScope {
+        final Jython3Parser.SuiteContext finallySuite;
+        final int loopDepth;
+        boolean handlerActive = true;
+        boolean insideFinally = false;
+
+        TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth) {
+            this.finallySuite = finallySuite;
+            this.loopDepth = loopDepth;
+        }
+    }
+    private final java.util.Deque<TryScope> tryStack = new java.util.ArrayDeque<>();
+
+    /**
+     * Emits the exit path for scopes crossed by a jump. Scopes are visited
+     * innermost first: deregister the handler, then run the {@code finally}
+     * body. {@code all} is used by {@code return}, which crosses every scope.
+     */
+    private void emitScopeExits(int targetLoopDepth, boolean all) {
+        for (TryScope scope : tryStack) {
+            if (!all && scope.loopDepth < targetLoopDepth) break;
+            if (scope.handlerActive) {
+                b.emit(OpCode.POP_EXCEPT_HANDLER);
+            }
+            if (scope.finallySuite != null && !scope.insideFinally) {
+                boolean prevInside = scope.insideFinally;
+                boolean prevActive = scope.handlerActive;
+                scope.insideFinally = true;
+                scope.handlerActive = false;
+                try {
+                    visit(scope.finallySuite);
+                } finally {
+                    scope.insideFinally = prevInside;
+                    scope.handlerActive = prevActive;
+                }
+            }
+        }
+    }
+
+    /** Compiles a finally suite without letting it re-run itself on exit. */
+    private void visitFinally(TryScope scope) {
+        if (scope.finallySuite == null) return;
+        boolean prevInside = scope.insideFinally;
+        scope.insideFinally = true;
+        try {
+            visit(scope.finallySuite);
+        } finally {
+            scope.insideFinally = prevInside;
+        }
+    }
 
     @Override public Void visitStat(Jython3Parser.StatContext c) {
         for (var stmt : c.stmt()) {
@@ -144,6 +201,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         } else {
             b.emit(OpCode.LOAD_CONST, null);
         }
+        // A return leaves every enclosing try block, so run their finally bodies.
+        emitScopeExits(0, true);
         b.emit(OpCode.RETURN_VALUE);
         return null;
     }
@@ -190,9 +249,11 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      */
     @Override public Void visitBreak_stmt(Jython3Parser.Break_stmtContext c) {
         if (!loopStack.isEmpty()) {
+            LoopContext target = loopStack.peek();
+            emitScopeExits(target.depth, false);
             int idx = b.size();
             b.emitRaw(OpCode.JUMP, 0); // target patched after loop ends
-            loopStack.peek().breakPatches.add(idx);
+            target.breakPatches.add(idx);
         }
         return null;
     }
@@ -203,8 +264,10 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      */
     @Override public Void visitContinue_stmt(Jython3Parser.Continue_stmtContext c) {
         if (!loopStack.isEmpty()) {
-            int target = loopStack.peek().continueTarget;
-            if (target >= 0) b.emitRaw(OpCode.JUMP, target);
+            LoopContext target = loopStack.peek();
+            emitScopeExits(target.depth, false);
+            int t = target.continueTarget;
+            if (t >= 0) b.emitRaw(OpCode.JUMP, t);
         }
         return null;
     }
@@ -357,6 +420,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         var ctx = new LoopContext();
         ctx.continueTarget = loopStart;
         loopStack.push(ctx);
+        ctx.depth = loopStack.size();
         visit(c.suite());
         loopStack.pop();
 
@@ -380,6 +444,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         var ctx = new LoopContext();
         ctx.continueTarget = loopTarget;
         loopStack.push(ctx);
+        ctx.depth = loopStack.size();
         visit(c.suite());
         loopStack.pop();
 
@@ -416,11 +481,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         var suites = c.suite();
         var finallySuite = c.FINALLY() != null ? suites.get(suites.size() - 1) : null;
 
+        var scope = new TryScope(finallySuite, loopStack.size());
+        tryStack.push(scope);
+
         // --- try body ---
         int pushIdx = b.size();
         b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0); // patched to the handler chain below
         visit(suites.get(0));
         b.emit(OpCode.POP_EXCEPT_HANDLER);
+        scope.handlerActive = false;
 
         // --- else body (runs only when the try body completed normally) ---
         if (c.ELSE() != null) {
@@ -465,9 +534,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         }
 
         // No clause matched: run the finally body, then propagate the exception.
-        if (finallySuite != null) {
-            visit(finallySuite);
-        }
+        visitFinally(scope);
         b.emit(OpCode.RERAISE);
 
         // Normal completion and handled exceptions skip the re-raise path.
@@ -475,10 +542,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         for (int ep : clauseEndPatches) b.patch(ep, b.size());
 
         // Shared finally body for the normal path and handled exceptions.
-        if (finallySuite != null) {
-            visit(finallySuite);
-        }
+        visitFinally(scope);
 
+        tryStack.pop();
         return null;
     }
 
