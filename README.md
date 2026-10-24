@@ -1,32 +1,26 @@
-# Jython 3 Prototype
+# Jython 3
 
-**Python 3 for the Java Platform — a modern, iterative re-implementation of the Jython
-interpreter targeting Python 3.x on the JVM.**
+**A modern Python runtime for the JVM.**
 
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com/H09-0/jython3-prototype)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.10.0--alpha-orange)](https://github.com/H09-0/jython3-prototype/releases)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
-[![ANTLR](https://img.shields.io/badge/Parser-ANTLR%204.13.1-purple)](https://www.antlr.org/)
-[![Tests](https://img.shields.io/badge/Tests-144%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-176%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
----
+Jython 3 is an independent re-implementation of Python 3 on the Java Virtual
+Machine, built from the ground up with a layered architecture, an explicit
+Java bridge, and security treated as a design input rather than an afterthought.
+It follows the goals of the [official Jython 3 Roadmap](https://www.jython.org/jython-3-roadmap.html)
+but is not an official Jython release and is not endorsed by the upstream project.
 
-## Overview
-
-Jython 3 Prototype is an open-source, experimental implementation of a Python 3 interpreter
-running on the Java Virtual Machine (JVM). The project is inspired by and follows the
-architectural direction of the [official Jython 3 Roadmap](https://www.jython.org/jython-3-roadmap.html),
-with the goal of delivering full Python 3 compatibility on a modern Java runtime.
-
-Unlike the production Jython 2.7 release, which targets Python 2.7, this project exclusively
-targets **Python 3.x syntax and semantics**. It is built from the ground up using Java 21
-language features, an ANTLR4-driven grammar, and a compact stack-machine bytecode runtime —
-a foundation designed to scale toward a full, production-grade Python 3 runtime on the JVM.
+The project targets **CPython 3.14** as its compatibility baseline, implemented
+with Java 21, an ANTLR4 grammar, and a compact stack-machine bytecode runtime.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the layer boundaries, the
+exception model, and the trusted vs. restricted execution modes.
 
 > **This is pre-production software.** It is intended for research, education, and iterative
-> development of the Jython 3 architecture. It is not a drop-in replacement for CPython or
-> Jython 2.7.
+> development of a Python 3 runtime for the JVM. It is not a drop-in replacement for CPython
+> or Jython 2.7, and it is not a sandbox for untrusted code.
 
 For background on the long-term vision, see:
 - [Jython Official Website](https://www.jython.org/)
@@ -37,8 +31,11 @@ For background on the long-term vision, see:
 
 ## Compatibility
 
-Jython 3 Prototype provides support for a growing subset of the Python 3 language.
-The table below summarises the current state of language and runtime support.
+The compatibility target is CPython 3.14. The current interpreter implements a
+growing subset of that baseline; the table below is the source of truth for what
+actually works. A feature is listed as supported only when it has a passing
+test, and newer 3.15-only syntax is out of scope until the 3.14 baseline is
+green.
 
 | Feature | Status |
 |---------|--------|
@@ -76,18 +73,24 @@ The table below summarises the current state of language and runtime support.
 
 - Generators are evaluated eagerly: the function runs to completion on the first
   iteration. `send()`, `throw()`, and `close()` are not implemented.
-- `break` and `continue` inside a `try`/`finally` block skip the `finally` body.
-- Exception types are carried as a single message string. Built-in errors and a
-  small set of Java exceptions can be matched by name; custom exception classes
-  are not supported.
-- Tracebacks include the script/file name but not source line numbers.
-- No `with`, `async`/`await`, comprehensions, or lambda expressions yet.
+- Exception values carry a type, message, arguments, Python cause/context, and
+  the original Java throwable, but exception *types* are still resolved through
+  a name table. User-defined `class E(Exception)` types are not yet first-class;
+  that is the next runtime slice.
+- No `with`, `async`/`await`, comprehensions, `lambda`, f-strings, or `match`
+  statements yet.
+- The Java bridge allowlist rejects known dangerous classes by name. It is
+  defense in depth, not a sandbox; untrusted code must run in a separate
+  process or container.
 
 ---
 
 ## Architecture
 
-The interpreter pipeline is composed of four distinct layers:
+The runtime is split into layers with explicit dependency rules — entry points,
+parser, compiler, VM, runtime, standard library, Java bridge, and security.
+The full contract lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the
+diagram below shows the execution pipeline.
 
 ```
 Python 3 Source (string)
@@ -157,6 +160,22 @@ public final class PyFunction implements PyObject { /* name, params, code, closu
 public final class PyClass    implements PyObject { /* name, bases, members */ }
 public final class PyGenerator implements PyObject { /* eagerly collected yields */ }
 ```
+
+### Security model
+
+The Java bridge is useful and is also the largest attack surface in the
+runtime. Access is deny-by-default behind a policy that the host application
+supplies per interpreter. Two modes are supported by design:
+
+- **Trusted execution** for scripts owned by the host, with an explicit grant
+  of Java classes and members.
+- **Restricted execution** for untrusted code, which must run in a separate
+  process or container with OS-level filesystem, network, memory, and time
+  limits. The JVM security manager is permanently disabled from Java 24
+  onward, so class-name filtering inside one JVM is not a sandbox.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#6-java-bridge-and-security-boundary)
+for the policy interface and the bridge test plan.
 
 ### Standard Library
 
@@ -252,7 +271,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 144 tests pass with zero failures and zero skipped. Test reports are written to:
+All 176 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -275,7 +294,7 @@ jython3-prototype/
 │   └── testmod.py
 │
 ├── docs/
-│   └── architecture.md                          # Package map and pipeline
+│   └── ARCHITECTURE.md                         # Layer contract, exceptions, security
 │
 └── src/
     ├── main/
@@ -291,14 +310,16 @@ jython3-prototype/
     │       └── cli/                             # Repl and RunScript
     └── test/
         └── java/org/example/jython3/
-            └── Jython3InterpreterTest.java      # 144 JUnit 5 regression tests
+            ├── Jython3InterpreterTest.java      # 161 JUnit 5 regression tests
+            └── ErrorFactoryTest.java            # 15 error-model guard tests
 ```
 
 The object types (`PyInt`, `PyFunction`, `PyClass`, and the Java wrappers) live in
 `org.example.jython3.runtime`. `PyObject` does not name `JavaBridge`; the bridge
 types sit beside it and call into `org.example.jython3.bridge`.
 
-See [docs/architecture.md](docs/architecture.md) for the pipeline and package roles.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the layer contract,
+exception model, and security boundary.
 
 ---
 
