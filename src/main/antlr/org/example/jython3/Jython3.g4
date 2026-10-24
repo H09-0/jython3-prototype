@@ -1,43 +1,18 @@
 /**
- * Jython3.g4 – ANTLR4 grammar for Python 3.
- *
- * Supported features (Jython 3 foundation for Jython 2.7 replacement):
- *   • Multi-statement scripts & lines (semicolon or newline separated)
- *   • Full comment support (#)
- *   • Data types: int, float, str (single, double, triple-quoted), bool (True/False), None, list, dict
- *   • Operators:
- *       - Arithmetic: +, -, *, /, //, %, **
- *       - Unary: -, not
- *       - Comparison: ==, !=, <, >, <=, >=, in, not in, is, is not
- *       - Logical: and, or
- *   • Assignments:
- *       - Regular: x = expr
- *       - Subscript: arr[idx] = expr, dict[key] = expr
- *       - Augmented: +=, -=, *=, /=, %=, //=, **=
- *   • Control Flow:
- *       - if / elif / else
- *       - while
- *       - for ... in ...
- *       - try / except [ExcType [as e]] / raise
- *       - pass, break, continue
- *   • Functions:
- *       - def name(p1, p2, ...): suite
- *       - return [expr]
- *       - Function calls: func(a1, a2, ...)
- *   • Modules:
- *       - import module
- *       - module.attr, module.func(args)
- *   • Builtins:
- *       - print() with 0, 1, or multiple arguments
- *       - del statement
+ * Jython3.g4 – ANTLR4 grammar for Python 3 with true indentation blocks.
  */
 grammar Jython3;
 
+tokens {
+    INDENT,
+    DEDENT
+}
+
 // ─── Parser rules ────────────────────────────────────────────────────────────
 
-/** Top‑level entry point – one or more statements until EOF. */
+/** Top‑level entry point – statements separated by newlines or semicolons. */
 stat
-    : (stmt (SEMI)?)* EOF
+    : (stmt (SEMI)? | NEWLINE)* EOF
     ;
 
 stmt
@@ -45,8 +20,10 @@ stmt
     | compound_stmt
     ;
 
+/** A suite is either a single line or an indented block of statements. */
 suite
-    : simple_stmt (SEMI simple_stmt)*
+    : simple_stmt (SEMI simple_stmt)* (NEWLINE | EOF)?
+    | NEWLINE INDENT (stmt (SEMI)? | NEWLINE)+ DEDENT
     ;
 
 simple_stmt
@@ -74,9 +51,10 @@ assign_stmt
     : ID ASSIGN expr
     ;
 
-/** container[key] = expr */
+/** container[key] = expr or obj.attr = expr */
 subscript_assign_stmt
     : expr LBRACK expr RBRACK ASSIGN expr
+    | expr DOT ID ASSIGN expr
     ;
 
 /** Augmented assignment: x += expr, x -= expr, etc. */
@@ -144,6 +122,7 @@ compound_stmt
     | for_stmt
     | try_stmt
     | func_def
+    | class_def
     ;
 
 /** if expr : suite (elif expr : suite)* (else : suite)? */
@@ -167,14 +146,14 @@ try_stmt
     | TRY COLON suite EXCEPT COLON suite
     ;
 
-/** def name(params): func_body */
+/** def name(params): suite */
 func_def
-    : DEF ID LPAREN param_list? RPAREN COLON func_body
+    : DEF ID LPAREN param_list? RPAREN COLON suite
     ;
 
-/** Function body – one or more semicolon‑separated simple statements. */
-func_body
-    : simple_stmt (SEMI simple_stmt)*
+/** class Name[(Base)]: suite */
+class_def
+    : CLASS ID (LPAREN ID RPAREN)? COLON suite
     ;
 
 /** Parameter list – comma‑separated identifiers. */
@@ -189,7 +168,6 @@ arg_list
 
 /**
  * Expression grammar with precedence.
- * Highest precedence first (ANTLR4 resolves ambiguity by rule order).
  */
 expr
     : expr LBRACK expr RBRACK                         # Subscript
@@ -236,7 +214,7 @@ dict_entry
 
 // ─── Lexer rules ──────────────────────────────────────────────────────────────
 
-// Keywords (must appear before ID rule)
+// Keywords
 PRINT    : 'print';
 IF       : 'if';
 ELIF     : 'elif';
@@ -250,6 +228,7 @@ EXCEPT   : 'except';
 RAISE    : 'raise';
 IMPORT   : 'import';
 DEF      : 'def';
+CLASS    : 'class';
 RETURN   : 'return';
 DEL      : 'del';
 PASS     : 'pass';
@@ -308,8 +287,11 @@ STRING
     | '"""' ( ~["\\] | '\\' . | '"' ~["] | '""' ~["] )* '"""'
     ;
 
-// Whitespace ignored
-WS : [ \t\r\n]+ -> skip;
+// Newline with following line's leading whitespace
+NEWLINE : ( '\r'? '\n' | '\r' ) [ \t]* ;
+
+// Horizontal whitespace ignored
+WS : [ \t]+ -> skip;
 
 // Comments (# ...) ignored
 LINE_COMMENT : '#' ~[\r\n]* -> skip;

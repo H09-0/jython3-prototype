@@ -686,4 +686,140 @@ class Jython3InterpreterTest {
         py.exec("x = 55; del x; try: print(x) except NameError: print('deleted')");
         assertEquals("deleted", out());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  20. Phase 10: Indentation Blocks & Object-Oriented Programming
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testMultiLineIndentedFunction() {
+        String script = """
+            def compute(x):
+                total = 0
+                for n in [1, 2, 3]:
+                    total += n * x
+                return total
+
+            print(compute(10))
+            """;
+        py.exec(script);
+        assertEquals("60", out());
+    }
+
+    @Test void testNestedIfInIndentedBlock() {
+        String script = """
+            def classify(val):
+                if val > 0:
+                    if val > 100:
+                        return 'huge'
+                    else:
+                        return 'positive'
+                else:
+                    return 'negative or zero'
+
+            print(classify(150))
+            print(classify(50))
+            print(classify(-5))
+            """;
+        py.exec(script);
+        String expected = String.join(System.lineSeparator(), "huge", "positive", "negative or zero");
+        assertEquals(expected, outCapture.toString().trim());
+    }
+
+    @Test void testSimpleClassAndInstance() {
+        String script = """
+            class Person:
+                def __init__(self, name, age):
+                    self.name = name
+                    self.age = age
+
+                def describe(self):
+                    return self.name + " is " + str(self.age)
+
+            p = Person("Alice", 25)
+            print(p.name)
+            print(p.describe())
+            """;
+        py.exec(script);
+        assertEquals("Alice" + System.lineSeparator() + "Alice is 25", outCapture.toString().trim());
+    }
+
+    @Test void testClassInheritance() {
+        String script = """
+            class Animal:
+                def __init__(self, kind):
+                    self.kind = kind
+
+                def speak(self):
+                    return "Some sound"
+
+            class Dog(Animal):
+                def speak(self):
+                    return "Woof"
+
+            d = Dog("Canine")
+            print(d.kind)
+            print(d.speak())
+            print(isinstance(d, Dog))
+            print(isinstance(d, Animal))
+            """;
+        py.exec(script);
+        String expected = String.join(System.lineSeparator(), "Canine", "Woof", "True", "True");
+        assertEquals(expected, outCapture.toString().trim());
+    }
+
+    @Test void testInstanceDynamicAttributes() {
+        String script = """
+            class Box:
+                pass
+
+            b = Box()
+            b.width = 10
+            b.height = 20
+            print(b.width * b.height)
+            """;
+        py.exec(script);
+        assertEquals("200", out());
+    }
+
+    @Test void testImplicitLineContinuationInBrackets() {
+        String script = """
+            matrix = [
+                10,
+                20,
+                30
+            ]
+            print(sum(matrix))
+            """;
+        py.exec(script);
+        assertEquals("60", out());
+    }
+
+    // ── Vulnerability & Out-of-the-Box Edge Cases ──
+
+    @Test void testBadUnindentError() {
+        String script = """
+            def bad():
+                x = 10
+              y = 20
+            """;
+        py.exec(script);
+        assertTrue(err().contains("IndentationError") || err().contains("unindent does not match"));
+    }
+
+    @Test void testUnexpectedIndentAtLine1() {
+        String script = "    x = 10\n";
+        py.exec(script);
+        assertTrue(err().contains("IndentationError") || err().contains("unexpected indent"));
+    }
+
+    @Test void testIndentationBombProtection() {
+        // Generate an indentation deeper than MAX_INDENT_DEPTH (100)
+        var sb = new StringBuilder();
+        for (int i = 0; i < 110; i++) {
+            sb.append(" ".repeat(i * 4)).append("if True:\n");
+        }
+        sb.append(" ".repeat(110 * 4)).append("print('bomb')\n");
+        py.exec(sb.toString());
+        assertTrue(err().contains("IndentationError") && err().contains("maximum indentation depth exceeded"));
+    }
 }
