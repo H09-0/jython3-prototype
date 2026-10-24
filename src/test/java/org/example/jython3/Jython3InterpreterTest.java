@@ -1242,4 +1242,144 @@ class Jython3InterpreterTest {
         assertEquals("", err());
         assertEquals("11", out());
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Phase 11: loop control, exception clauses, generators, execfile
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testBreakAndContinueInWhile() {
+        py.exec("""
+            i = 0
+            while i < 5:
+                i = i + 1
+                if i == 2:
+                    continue
+                if i == 4:
+                    break
+                print(i)
+            print("after", i)
+            """);
+        assertEquals("1\n3\nafter 4", out());
+    }
+
+    @Test void testBreakAndContinueInFor() {
+        py.exec("""
+            for i in [1, 2, 3, 4, 5]:
+                if i == 2:
+                    continue
+                if i == 4:
+                    break
+                print(i)
+            print("done")
+            """);
+        assertEquals("1\n3\ndone", out());
+    }
+
+    @Test void testNestedLoopBreakContinue() {
+        py.exec("""
+            i = 0
+            while i < 3:
+                j = 0
+                while j < 3:
+                    j = j + 1
+                    if j == 2:
+                        continue
+                    if j == 3:
+                        break
+                    print(i, j)
+                i = i + 1
+            """);
+        assertEquals("0 1\n1 1\n2 1", out());
+    }
+
+    @Test void testMultipleExceptClauses() {
+        py.exec("""
+            try:
+                print(1 / 0)
+            except TypeError:
+                print("type")
+            except ZeroDivisionError:
+                print("zero")
+            """);
+        assertEquals("zero", out());
+        assertEquals("", err());
+    }
+
+    @Test void testExceptElseRunsOnlyOnSuccess() {
+        py.exec("""
+            try:
+                print("ok")
+            except Exception:
+                print("err")
+            else:
+                print("else-branch")
+            finally:
+                print("finally")
+            """);
+        assertEquals("ok\nelse-branch\nfinally", out());
+    }
+
+    @Test void testExceptExceptionIsCatchAll() {
+        py.exec("""
+            try:
+                print(1 / 0)
+            except Exception:
+                print("caught")
+            """);
+        assertEquals("caught", out());
+    }
+
+    @Test void testUnmatchedExceptionPropagates() {
+        assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                print(1 / 0)
+            except ValueError:
+                print("value")
+            """));
+    }
+
+    @Test void testTryFinallyWithoutExcept() {
+        py.exec("""
+            try:
+                print("body")
+            finally:
+                print("finally")
+            """);
+        assertEquals("body\nfinally", out());
+    }
+
+    @Test void testTryFinallyRunsOnException() {
+        assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                print(1 / 0)
+            finally:
+                print("finally")
+            """));
+        assertEquals("finally", out());
+    }
+
+    @Test void testGeneratorYieldsValues() {
+        py.exec("""
+            def gen():
+                yield 1
+                yield 2
+
+            for v in gen():
+                print(v)
+            """);
+        assertEquals("1\n2", out());
+        assertEquals("", err());
+    }
+
+    @Test void testExecfileRunsScriptInCurrentScope() throws IOException {
+        Path script = Files.createTempFile("jython3-execfile-", ".py");
+        try {
+            Files.writeString(script, "print(\"from child\")\nx = 7\n");
+            String path = script.toString().replace("\\", "\\\\").replace("'", "\\'");
+            py.exec("execfile('" + path + "')\nprint(\"x is\", x)");
+            assertEquals("from child\nx is 7", out());
+        } finally {
+            Files.deleteIfExists(script);
+        }
+    }
 }
