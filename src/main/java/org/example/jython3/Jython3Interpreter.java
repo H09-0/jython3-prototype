@@ -149,6 +149,12 @@ public class Jython3Interpreter {
     private Deque<ExceptHandler> exceptStack = new ArrayDeque<>();
     /** Non-null while a generator function is being drained; collects yielded values. */
     private List<PyObject> yieldCollector = null;
+    /** Source location of the instruction being executed, for tracebacks. */
+    private String currentFile = "<stdin>";
+    private String currentFunc = "<module>";
+    private int currentLine = 0;
+    /** Source text of the current script, used to quote lines in a traceback. */
+    private String currentSource = "";
 
     // ─── Constructor ──────────────────────────────────────────────────────
     public Jython3Interpreter() {
@@ -182,11 +188,43 @@ public class Jython3Interpreter {
         } catch (SystemExit e) {
             throw e;
         } catch (InterpreterException e) {
-            System.err.println("Traceback (most recent call last):");
-            System.err.println("  File \"<stdin>\", line 1, in <module>");
-            System.err.println("    " + source.strip());
-            System.err.println(e.getMessage());
+            System.err.println(formatTraceback(e, "<stdin>", source));
         }
+    }
+
+    /**
+     * Renders a Python-style traceback for {@code e}. Frames are stored
+     * innermost-first while unwinding and are printed outermost-first, matching
+     * CPython's "most recent call last" ordering.
+     */
+    public String formatTraceback(InterpreterException e, String filename, String source) {
+        var sb = new StringBuilder("Traceback (most recent call last):\n");
+        var frames = e.traceback();
+        if (frames.isEmpty()) {
+            int line = e.line() > 0 ? e.line() : 1;
+            sb.append("  File \"").append(filename).append("\", line ").append(line)
+              .append(", in ").append(e.function() != null ? e.function() : "<module>").append('\n');
+            appendSnippet(sb, source, line);
+        } else {
+            for (int i = frames.size() - 1; i >= 0; i--) {
+                var t = frames.get(i);
+                String file = t.file() != null ? t.file() : filename;
+                String func = t.function() != null ? t.function() : "<module>";
+                sb.append("  File \"").append(file).append("\", line ").append(t.line())
+                  .append(", in ").append(func).append('\n');
+                appendSnippet(sb, source, t.line());
+            }
+        }
+        sb.append(e.getMessage());
+        return sb.toString();
+    }
+
+    private static void appendSnippet(StringBuilder sb, String source, int line) {
+        if (source == null || source.isEmpty() || line <= 0) return;
+        String[] lines = source.split("\n", -1);
+        if (line > lines.length) return;
+        String text = lines[line - 1].strip();
+        if (!text.isEmpty()) sb.append("    ").append(text).append('\n');
     }
 
     /**
@@ -194,11 +232,23 @@ public class Jython3Interpreter {
      * {@link InterpreterException} instead of being printed.
      */
     public void eval(String source) {
+        eval(source, "<stdin>");
+    }
+
+    /**
+     * Compile and run {@code source}, attributing any traceback frames to
+     * {@code filename}.
+     */
+    public void eval(String source, String filename) {
         stack = new ArrayDeque<>();
         currentLocals = globals;
         exceptStack = new ArrayDeque<>();
         callStack.clear();
         yieldCollector = null;
+        currentFile = filename;
+        currentFunc = "<module>";
+        currentLine = 0;
+        currentSource = source;
         execCount++;
 
         long compileStart = profilingEnabled ? System.nanoTime() : 0;
@@ -226,6 +276,8 @@ public class Jython3Interpreter {
         var savedLocals = currentLocals;
         var savedExcept = exceptStack;
         var savedCollector = yieldCollector;
+        var savedFunc = currentFunc;
+        var savedLine = currentLine;
         try {
             var locals = new HashMap<String, PyObject>();
             if (fn.closure() != null) locals.putAll(fn.closure());
@@ -236,6 +288,7 @@ public class Jython3Interpreter {
             stack = new ArrayDeque<>();
             currentLocals = locals;
             exceptStack = new ArrayDeque<>();
+            currentFunc = fn.name();
             yieldCollector = collected;
             run(fn.code());
         } finally {
@@ -245,6 +298,8 @@ public class Jython3Interpreter {
             stack = savedStack;
             currentLocals = savedLocals;
             exceptStack = savedExcept;
+            currentFunc = savedFunc;
+            currentLine = savedLine;
         }
         return collected;
     }
@@ -319,6 +374,8 @@ public class Jython3Interpreter {
             int instr = bc[pc];
             OpCode op = OP_VALUES[instr >>> 16];
             int ai = instr & 0xFFFF;
+            int line = code.lineAt(pc);
+            if (line > 0) currentLine = line;
 
             try { switch (op) {
                 case LOAD_CONST -> {
@@ -600,7 +657,8 @@ public class Jython3Interpreter {
                             if (callStack.size() >= MAX_CALL_DEPTH) {
                                 throw new InterpreterException("RecursionError: maximum recursion depth exceeded");
                             }
-                            callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack));
+                            callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                    currentFunc, currentFile, currentLine));
                             var fl = new HashMap<String, PyObject>();
                             if (fn.closure() != null) {
                                 fl.putAll(fn.closure());
@@ -611,6 +669,7 @@ public class Jython3Interpreter {
                             currentLocals = fl;
                             stack = new ArrayDeque<>();
                             exceptStack = new ArrayDeque<>();
+                            currentFunc = fn.name();
                             code = fn.code();
                             bc = code.bytecode();
                             pool = code.constPool();
@@ -645,6 +704,9 @@ public class Jython3Interpreter {
                         currentLocals = cf.locals();
                         stack = cf.stack();
                         exceptStack = cf.exceptHandlers();
+                        currentFunc = cf.funcName();
+                        currentFile = cf.file();
+                        currentLine = cf.line();
                         stack.push(rv);
                         continue outer;
                     }
@@ -869,6 +931,9 @@ public class Jython3Interpreter {
                     pc = h.exceptPc();
                     continue outer;
                 }
+                // No handler in this frame: record it and unwind one level.
+                ie.setLocation(currentFile, currentLine, currentFunc);
+                ie.addFrame(currentFile, currentLine, currentFunc);
                 while (!callStack.isEmpty()) {
                     Frame cf = callStack.pop();
                     code = cf.code();
@@ -878,12 +943,16 @@ public class Jython3Interpreter {
                     currentLocals = cf.locals();
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
+                    currentFunc = cf.funcName();
+                    currentFile = cf.file();
+                    currentLine = cf.line();
                     if (!exceptStack.isEmpty()) {
                         ExceptHandler h = exceptStack.pop();
                         stack.push(new PyStr(ie.getMessage()));
                         pc = h.exceptPc();
                         continue outer;
                     }
+                    ie.addFrame(currentFile, currentLine, currentFunc);
                 }
                 throw ie;
             }
@@ -1170,6 +1239,8 @@ public class Jython3Interpreter {
             var savedStack = stack;
             var savedLocals = currentLocals;
             var savedExcept = exceptStack;
+            var savedFunc = currentFunc;
+            var savedLine = currentLine;
 
             var fl = new HashMap<String, PyObject>();
             if (fn.closure() != null) {
@@ -1181,12 +1252,15 @@ public class Jython3Interpreter {
             currentLocals = fl;
             stack = new ArrayDeque<>();
             exceptStack = new ArrayDeque<>();
+            currentFunc = fn.name();
             run(fn.code());
             PyObject result = stack.isEmpty() ? new PyNull() : stack.pop();
 
             stack = savedStack;
             currentLocals = savedLocals;
             exceptStack = savedExcept;
+            currentFunc = savedFunc;
+            currentLine = savedLine;
             return result;
         }
         throw new InterpreterException("TypeError: '" + callable + "' is not callable");

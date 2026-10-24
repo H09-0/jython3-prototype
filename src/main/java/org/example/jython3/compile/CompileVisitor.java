@@ -44,10 +44,12 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitSimple_stmt(Jython3Parser.Simple_stmtContext c) {
+        b.setLine(c.getStart().getLine());
         return visitChildren(c);
     }
 
     @Override public Void visitCompound_stmt(Jython3Parser.Compound_stmtContext c) {
+        b.setLine(c.getStart().getLine());
         return visitChildren(c);
     }
 

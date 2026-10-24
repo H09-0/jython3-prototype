@@ -46,15 +46,11 @@ public class RunScript {
 
             // Execute via eval() so errors propagate as InterpreterException
             try {
-                interpreter.eval(script);
+                interpreter.eval(script, filename);
             } catch (SystemExit se) {
                 System.exit(se.code);
             } catch (InterpreterException ie) {
-                // Print traceback with the real filename
-                String[] lines = script.split("\n", -1);
-                System.err.println("Traceback (most recent call last):");
-                System.err.println("  File \"" + filename + "\", in <module>");
-                System.err.println(ie.getMessage());
+                System.err.println(interpreter.formatTraceback(ie, filename, script));
                 System.exit(1);
             }
 

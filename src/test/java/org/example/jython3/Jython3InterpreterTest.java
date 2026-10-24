@@ -1338,6 +1338,41 @@ class Jython3InterpreterTest {
             """));
     }
 
+    @Test void testTracebackReportsFailingLine() {
+        py.exec("""
+            x = 1
+            y = 0
+            print(x / y)
+            """);
+        assertTrue(err().contains("line 3"), err());
+        assertTrue(err().contains("ZeroDivisionError"), err());
+    }
+
+    @Test void testTracebackIncludesFunctionFrames() {
+        py.exec("""
+            def inner():
+                return 1 / 0
+
+            def outer():
+                return inner()
+
+            outer()
+            """);
+        assertTrue(err().contains("in inner"), err());
+        assertTrue(err().contains("in outer"), err());
+        assertTrue(err().contains("line 2"), err());
+        assertTrue(err().contains("line 5"), err());
+        assertTrue(err().contains("line 7"), err());
+    }
+
+    @Test void testTracebackQuotesSourceLine() {
+        py.exec("""
+            a = 1
+            b = a / 0
+            """);
+        assertTrue(err().contains("b = a / 0"), err());
+    }
+
     @Test void testTryFinallyWithoutExcept() {
         py.exec("""
             try:
