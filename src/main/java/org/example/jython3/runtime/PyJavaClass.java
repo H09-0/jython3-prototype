@@ -54,7 +54,9 @@ public record PyJavaClass(Class<?> clazz) implements PyObject {
             if (Modifier.isStatic(f.getModifiers())) {
                 return JavaBridge.toPyObject(f.get(null));
             }
-        } catch (Exception ignored) {}
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            // Not a static field; look for a nested class instead.
+        }
 
         // Inner / Nested classes
         for (Class<?> inner : clazz.getClasses()) {

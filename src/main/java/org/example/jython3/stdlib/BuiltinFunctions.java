@@ -50,10 +50,10 @@ public final class BuiltinFunctions {
             if (o instanceof PyList l) return new PyInt(l.items().size());
             if (o instanceof PyDict d) return new PyInt(d.map().size());
             if (o instanceof PyInstance inst) {
-                try {
+                if (inst.hasField("__len__")) {
                     PyObject lenMethod = inst.getField("__len__");
-                    if (lenMethod != null) return caller.call(lenMethod, new PyObject[0]);
-                } catch (Exception ignored) {}
+                    return caller.call(lenMethod, new PyObject[0]);
+                }
             }
             if (o instanceof PyJavaObject jo) {
                 if (jo.object() instanceof List<?> l) return new PyInt(l.size());

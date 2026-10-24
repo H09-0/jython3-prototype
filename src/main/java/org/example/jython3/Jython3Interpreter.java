@@ -90,6 +90,11 @@ public class Jython3Interpreter {
         return bytecodeCache.size();
     }
 
+    /**
+     * Pre-compiles a script into the bytecode cache. A script that does not
+     * parse is skipped: the cache is an optimization, and the real error is
+     * reported when the script is executed.
+     */
     public void cacheScript(String key, String source) {
         if (source == null) return;
         try {
@@ -97,7 +102,9 @@ public class Jython3Interpreter {
             if (bytecodeCache.size() < MAX_CACHE_SIZE) {
                 bytecodeCache.put(key, code);
             }
-        } catch (Exception ignored) {}
+        } catch (InterpreterException e) {
+            // Invalid source is not cached; it will fail again with a traceback on execution.
+        }
     }
 
     // ─── Performance Profiling ─────────────────────────────────────────────

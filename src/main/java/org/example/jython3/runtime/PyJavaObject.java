@@ -1,6 +1,7 @@
 package org.example.jython3.runtime;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -40,7 +41,9 @@ public record PyJavaObject(Object object) implements PyObject {
             if (!Modifier.isStatic(f.getModifiers())) {
                 return JavaBridge.toPyObject(f.get(object));
             }
-        } catch (Exception ignored) {}
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            // No public field with this name; fall back to bean accessors.
+        }
 
         // Java Bean getter: getX() or isX()
         String cap = Character.toUpperCase(name.charAt(0)) + name.substring(1);
@@ -48,12 +51,20 @@ public record PyJavaObject(Object object) implements PyObject {
             Method getter = clazz.getMethod("get" + cap);
             getter.setAccessible(true);
             return JavaBridge.toPyObject(getter.invoke(object));
-        } catch (Exception ignored) {}
+        } catch (NoSuchMethodException e) {
+            // Try the boolean-style accessor below.
+        } catch (ReflectiveOperationException e) {
+            throw new InterpreterException("JavaException: " + e.getClass().getName() + ": " + e.getMessage());
+        }
         try {
             Method isser = clazz.getMethod("is" + cap);
             isser.setAccessible(true);
             return JavaBridge.toPyObject(isser.invoke(object));
-        } catch (Exception ignored) {}
+        } catch (NoSuchMethodException e) {
+            // Neither accessor exists; report a Python AttributeError below.
+        } catch (ReflectiveOperationException e) {
+            throw new InterpreterException("JavaException: " + e.getClass().getName() + ": " + e.getMessage());
+        }
 
         throw new InterpreterException(
                 "AttributeError: Java object of type '" + clazz.getName() + "' has no attribute '" + name + "'");
@@ -85,7 +96,12 @@ public record PyJavaObject(Object object) implements PyObject {
                     Object javaArg = JavaBridge.toJavaObject(val, m.getParameterTypes()[0]);
                     m.invoke(object, javaArg);
                     return;
-                } catch (Exception ignored) {}
+                } catch (InvocationTargetException e) {
+                    throw new InterpreterException(
+                            "JavaException: " + e.getCause().getClass().getName() + ": " + e.getCause().getMessage());
+                } catch (IllegalAccessException | IllegalArgumentException e) {
+                    // Try the next overload with a compatible parameter type.
+                }
             }
         }
 

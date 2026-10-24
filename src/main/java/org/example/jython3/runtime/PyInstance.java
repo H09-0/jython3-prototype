@@ -49,35 +49,24 @@ public final class PyInstance implements PyObject {
 
     @Override
     public String toString() {
-        try {
-            PyCaller interp = PyCaller.current();
-            if (interp != null) {
-                PyObject strMethod = pyClass.lookupMember("__str__");
-                if (strMethod != null) {
-                    try {
-                        if (strMethod instanceof PyFunction fn) {
-                            PyObject res = interp.call(fn, new PyObject[]{this});
-                            return res.toString();
-                        } else if (strMethod instanceof PyBoundMethod bm) {
-                            PyObject res = interp.call(bm.fn(), new PyObject[]{this});
-                            return res.toString();
-                        }
-                    } catch (Exception ignored) {}
-                }
-                PyObject reprMethod = pyClass.lookupMember("__repr__");
-                if (reprMethod != null) {
-                    try {
-                        if (reprMethod instanceof PyFunction fn) {
-                            PyObject res = interp.call(fn, new PyObject[]{this});
-                            return res.toString();
-                        } else if (reprMethod instanceof PyBoundMethod bm) {
-                            PyObject res = interp.call(bm.fn(), new PyObject[]{this});
-                            return res.toString();
-                        }
-                    } catch (Exception ignored) {}
-                }
+        PyCaller interp = PyCaller.current();
+        if (interp != null) {
+            PyObject strMethod = pyClass.lookupMember("__str__");
+            if (strMethod instanceof PyFunction fn) {
+                return interp.call(fn, new PyObject[]{this}).toString();
             }
-        } catch (Exception ignored) {}
+            if (strMethod instanceof PyBoundMethod bm) {
+                return interp.call(bm.fn(), new PyObject[]{this}).toString();
+            }
+
+            PyObject reprMethod = pyClass.lookupMember("__repr__");
+            if (reprMethod instanceof PyFunction fn) {
+                return interp.call(fn, new PyObject[]{this}).toString();
+            }
+            if (reprMethod instanceof PyBoundMethod bm) {
+                return interp.call(bm.fn(), new PyObject[]{this}).toString();
+            }
+        }
         return "<" + pyClass.name() + " instance>";
     }
 }

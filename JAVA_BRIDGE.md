@@ -1,7 +1,14 @@
 # Jython 3 Improvements & Foundations (Phase 11 – Java Bridge)
 
 ## Overview
-This milestone establishes the **complete Java Bridge**, enabling Jython 3 to serve as a production-quality replacement for Jython 2.7, with full bidirectional interoperability between Python 3 code and the JVM at near-native speeds.
+This milestone describes the **Java Bridge**, which provides bidirectional
+interoperability between Python 3 code and the JVM: constructing Java objects,
+calling methods with overload resolution, and reading and writing fields and
+bean properties.
+
+Performance is not benchmarked yet. The bridge uses cached reflection to avoid
+repeated method lookup, but no claim is made about comparison with native Java
+dispatch speed.
 
 ---
 
