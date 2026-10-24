@@ -19,9 +19,9 @@ public final class PyOps {
             case PyBool b -> b.value() ? 1.0 : 0.0;
             case PyStr s -> {
                 try { yield Double.parseDouble(s.value()); }
-                catch (NumberFormatException e) { throw new InterpreterException("ValueError: could not convert string to float: '" + s.value() + "'"); }
+                catch (NumberFormatException e) { throw PyErrors.error("ValueError", "could not convert string to float: '" + s.value() + "'"); }
             }
-            default -> throw new InterpreterException("TypeError: expected number, got " + typeName(o));
+            default -> throw PyErrors.error("TypeError", "expected number, got " + typeName(o));
         };
     }
 
@@ -29,7 +29,7 @@ public final class PyOps {
         if (o instanceof PyInt i) return i.value();
         if (o instanceof PyBool b) return b.value() ? 1 : 0;
         if (o instanceof PyFloat f) return (int) f.value();
-        throw new InterpreterException("TypeError: expected int, got " + typeName(o));
+        throw PyErrors.error("TypeError", "expected int, got " + typeName(o));
     }
 
     public static boolean isTruthy(PyObject v) {
@@ -83,7 +83,7 @@ public final class PyOps {
     public static int compareObjects(PyObject a, PyObject b) {
         if (isNumeric(a) && isNumeric(b)) return Double.compare(toDouble(a), toDouble(b));
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().compareTo(bs.value());
-        throw new InterpreterException("TypeError: '<' not supported between instances of '" + typeName(a) + "' and '" + typeName(b) + "'");
+        throw PyErrors.error("TypeError", "'<' not supported between instances of '" + typeName(a) + "' and '" + typeName(b) + "'");
     }
 
     public static boolean pyContains(PyObject container, PyObject item) {
@@ -93,7 +93,7 @@ public final class PyOps {
         }
         if (container instanceof PyStr s && item instanceof PyStr sub) return s.value().contains(sub.value());
         if (container instanceof PyDict dict) return dict.map().containsKey(item);
-        throw new InterpreterException("TypeError: argument of type '" + typeName(container) + "' is not iterable");
+        throw PyErrors.error("TypeError", "argument of type '" + typeName(container) + "' is not iterable");
     }
 
     public static String typeName(PyObject o) {
@@ -125,13 +125,13 @@ public final class PyOps {
     }
 
     public static void checkArgCount(String name, PyObject[] args, int expected) {
-        if (args.length != expected) throw new InterpreterException("TypeError: " + name + "() takes exactly " + expected + " argument" + (expected != 1 ? "s" : "") + " (" + args.length + " given)");
+        if (args.length != expected) throw PyErrors.error("TypeError", name + "() takes exactly " + expected + " argument" + (expected != 1 ? "s" : "") + " (" + args.length + " given)");
     }
 
     public static List<PyObject> flattenArgs(String name, PyObject[] args) {
         if (args.length == 1 && args[0] instanceof PyList list) return new ArrayList<>(list.items());
         if (args.length > 1) { var items = new ArrayList<PyObject>(); Collections.addAll(items, args); return items; }
-        throw new InterpreterException("TypeError: " + name + "() requires at least 1 argument");
+        throw PyErrors.error("TypeError", name + "() requires at least 1 argument");
     }
 
     public static String pyStringFormat(String fmt, PyObject args) {

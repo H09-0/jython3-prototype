@@ -36,7 +36,7 @@ public final class PyInstance implements PyObject {
         if (member != null) {
             return member;
         }
-        throw new InterpreterException("AttributeError: '" + pyClass.name() + "' object has no attribute '" + name + "'");
+        throw PyErrors.error("AttributeError", "'" + pyClass.name() + "' object has no attribute '" + name + "'");
     }
 
     public void setField(String name, PyObject val) {

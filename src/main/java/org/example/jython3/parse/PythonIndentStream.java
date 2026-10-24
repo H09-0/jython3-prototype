@@ -11,7 +11,7 @@ import org.antlr.v4.runtime.TokenFactory;
 import org.antlr.v4.runtime.TokenSource;
 
 import org.example.jython3.Jython3Parser;
-import org.example.jython3.runtime.InterpreterException;
+import org.example.jython3.runtime.PyErrors;
 
 /**
  * TokenSource filter that implements Python 3 indentation rules.
@@ -55,7 +55,7 @@ public class PythonIndentStream implements TokenSource {
             if (isFirstToken) {
                 isFirstToken = false;
                 if (t.getType() != Jython3Parser.EOF && t.getType() != Jython3Parser.NEWLINE && t.getCharPositionInLine() > 0) {
-                    throw new InterpreterException("IndentationError: unexpected indent at line 1");
+                    throw PyErrors.error("IndentationError", "unexpected indent at line 1");
                 }
             }
 
@@ -104,8 +104,8 @@ public class PythonIndentStream implements TokenSource {
                 int currentIndent = indentStack.peek();
                 if (spaces > currentIndent) {
                     if (indentStack.size() >= MAX_INDENT_DEPTH) {
-                        throw new InterpreterException(
-                                "IndentationError: maximum indentation depth exceeded (limit: " + MAX_INDENT_DEPTH + ")");
+                        throw PyErrors.error("IndentationError",
+                                "maximum indentation depth exceeded (limit: " + MAX_INDENT_DEPTH + ")");
                     }
                     pendingTokens.add(createToken(Jython3Parser.NEWLINE, "\n", t));
                     pendingTokens.add(createToken(Jython3Parser.INDENT, "", t));
@@ -117,8 +117,8 @@ public class PythonIndentStream implements TokenSource {
                         pendingTokens.add(createToken(Jython3Parser.DEDENT, "", t));
                     }
                     if (indentStack.peek() != spaces) {
-                        throw new InterpreterException(
-                                "IndentationError: unindent does not match any outer indentation level");
+                        throw PyErrors.error("IndentationError",
+                                "unindent does not match any outer indentation level");
                     }
                 } else {
                     if (lastToken != null && lastToken.getType() != Jython3Parser.NEWLINE && lastToken.getType() != Jython3Parser.DEDENT) {

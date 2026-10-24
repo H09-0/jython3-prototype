@@ -26,7 +26,7 @@ public final class PySuper implements PyObject {
                 if (m != null) return m;
             }
         }
-        throw new InterpreterException("AttributeError: 'super' object has no attribute '" + name + "'");
+        throw PyErrors.error("AttributeError", "'super' object has no attribute '" + name + "'");
     }
     @Override public String toString() { return "<super: ...>"; }
 }

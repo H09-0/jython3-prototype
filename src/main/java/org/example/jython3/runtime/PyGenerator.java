@@ -48,7 +48,7 @@ public final class PyGenerator implements PyObject {
     public PyObject next() {
         ensureInitialized();
         if (index >= yielded.size()) {
-            throw new InterpreterException("StopIteration");
+            throw PyErrors.error("StopIteration", "");
         }
         return yielded.get(index++);
     }
