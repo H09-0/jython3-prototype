@@ -1,6 +1,5 @@
 package org.example.jython3.runtime;
 
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 
@@ -14,19 +13,15 @@ public record PyJavaMethod(Object target, Class<?> clazz, String name, List<Meth
         JavaBridge.checkSecurity(clazz.getName());
         if (name.equals("getClass") || name.equals("forName") || name.equals("getClassLoader") ||
                 name.equals("getMethod") || name.equals("getDeclaredMethod") || name.equals("exec")) {
-            throw new InterpreterException("SecurityError: access to '" + name + "' is restricted");
+            throw PyErrors.error("SecurityError", "access to '" + name + "' is restricted");
         }
         JavaBridge.MethodMatch match = JavaBridge.findBestMethod(clazz, name, methods, args);
         try {
             Object[] javaArgs = JavaBridge.convertArgs(args, match.paramTypes());
             Object result = match.method().invoke(target, javaArgs);
             return JavaBridge.toPyObject(result);
-        } catch (InvocationTargetException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            throw new InterpreterException(
-                    "JavaException: " + cause.getClass().getName() + ": " + cause.getMessage());
         } catch (Exception e) {
-            throw new InterpreterException("JavaError: " + e.getMessage());
+            throw PyErrors.fromJava(e);
         }
     }
 

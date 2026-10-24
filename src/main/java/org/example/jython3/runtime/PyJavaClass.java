@@ -1,7 +1,6 @@
 package org.example.jython3.runtime;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -15,18 +14,15 @@ public record PyJavaClass(Class<?> clazz) implements PyObject {
     public PyObject newInstance(PyObject[] args) {
         JavaBridge.checkSecurity(clazz.getName());
         if (clazz.getName().equals("java.lang.Class") || clazz == Class.class) {
-            throw new InterpreterException("SecurityError: access to '" + clazz.getName() + "' is restricted");
+            throw PyErrors.error("SecurityError", "access to '" + clazz.getName() + "' is restricted");
         }
         JavaBridge.ConstructorMatch match = JavaBridge.findBestConstructor(clazz, args);
         try {
             Object[] javaArgs = JavaBridge.convertArgs(args, match.paramTypes());
             Object instance = match.constructor().newInstance(javaArgs);
             return new PyJavaObject(instance);
-        } catch (InvocationTargetException e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            throw new InterpreterException("JavaException: " + cause.getClass().getName() + ": " + cause.getMessage());
         } catch (Exception e) {
-            throw new InterpreterException("JavaError: " + e.getMessage());
+            throw PyErrors.fromJava(e);
         }
     }
 
@@ -35,7 +31,7 @@ public record PyJavaClass(Class<?> clazz) implements PyObject {
         if (name.equals("getClass") || name.equals("forName") || name.equals("getClassLoader") ||
                 name.equals("getMethod") || name.equals("getDeclaredMethod") || name.equals("getField") ||
                 name.equals("getDeclaredField")) {
-            throw new InterpreterException("SecurityError: access to '" + name + "' is restricted");
+            throw PyErrors.error("SecurityError", "access to '" + name + "' is restricted");
         }
         // Static methods
         List<Method> staticMethods = new ArrayList<>();
@@ -70,8 +66,8 @@ public record PyJavaClass(Class<?> clazz) implements PyObject {
             }
         }
 
-        throw new InterpreterException(
-                "AttributeError: Java class '" + clazz.getName() + "' has no attribute '" + name + "'");
+        throw PyErrors.error("AttributeError",
+                "Java class '" + clazz.getName() + "' has no attribute '" + name + "'");
     }
 
     @Override public String toString() {

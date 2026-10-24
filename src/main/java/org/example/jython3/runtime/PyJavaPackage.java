@@ -8,13 +8,9 @@ public record PyJavaPackage(String packageName) implements PyObject {
     public PyObject getMember(String name) {
         String fullName = packageName.isEmpty() ? name : packageName + "." + name;
         JavaBridge.checkSecurity(fullName);
-        try {
-            PyObject resolved = JavaBridge.resolveClassOrPackage(fullName);
-            if (resolved != null) return resolved;
-        } catch (Exception e) {
-            throw e;
-        }
-        throw new InterpreterException("SecurityError: access to '" + fullName + "' is restricted");
+        PyObject resolved = JavaBridge.resolveClassOrPackage(fullName);
+        if (resolved != null) return resolved;
+        throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
     }
 
     @Override public String toString() {

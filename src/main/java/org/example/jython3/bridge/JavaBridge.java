@@ -11,9 +11,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyDict;
+import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyJavaClass;
@@ -113,13 +113,13 @@ public class JavaBridge {
     // ─── Class & Package Loading & Resolution ─────────────────────────────
 
     public static void checkSecurity(String fullName) {
-        if (fullName == null) throw new InterpreterException("SecurityError: access denied");
+        if (fullName == null) throw PyErrors.error("SecurityError", "access denied");
         if (FORBIDDEN.contains(fullName)) {
-            throw new InterpreterException("SecurityError: access to '" + fullName + "' is restricted");
+            throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
         }
         for (String pfx : FORBIDDEN_PREFIXES) {
             if (fullName.startsWith(pfx)) {
-                throw new InterpreterException("SecurityError: access to '" + fullName + "' is restricted");
+                throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
             }
         }
         // Allowlist check
@@ -131,12 +131,12 @@ public class JavaBridge {
             // also block specific dangerous classes in allowed packages
             if (fullName.equals("java.lang.Runtime") || fullName.equals("java.lang.ProcessBuilder") ||
                     fullName.equals("java.lang.System") || fullName.equals("java.lang.ClassLoader")) {
-                throw new InterpreterException("SecurityError: access to '" + fullName + "' is restricted");
+                throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
             }
             return;
         }
         // Not in allowlist
-        throw new InterpreterException("SecurityError: access to '" + fullName + "' is restricted");
+        throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
     }
 
     public static PyObject resolveClassOrPackage(String fullName) {
@@ -147,11 +147,11 @@ public class JavaBridge {
             // Additional runtime checks
             if (clazz == Runtime.class || clazz == ProcessBuilder.class || clazz == System.class ||
                     clazz.getName().startsWith("java.lang.reflect.")) {
-                throw new InterpreterException("SecurityError: access to '" + fullName + "' is restricted");
+                throw PyErrors.error("SecurityError", "access to '" + fullName + "' is restricted");
             }
             return new PyJavaClass(clazz);
         } catch (ClassNotFoundException e) {
-            throw new InterpreterException("ImportError: cannot import '" + fullName + "'");
+            throw PyErrors.error("ImportError", "cannot import '" + fullName + "'");
         }
     }
 
@@ -292,8 +292,8 @@ public class JavaBridge {
             return pyObj;
         }
 
-        throw new InterpreterException(
-                "TypeError: cannot convert " + PyOps.typeName(pyObj) + " to Java " + targetType.getName());
+        throw PyErrors.error("TypeError",
+                "cannot convert " + PyOps.typeName(pyObj) + " to Java " + targetType.getName());
     }
 
     // ─── Fast Method / Constructor Resolution Engine ─────────────────────
@@ -321,8 +321,8 @@ public class JavaBridge {
         }
 
         if (best == null || bestScore < 0) {
-            throw new InterpreterException(
-                    "TypeError: no matching Java method '" + name + "' for argument types (" + signature(args) + ")");
+            throw PyErrors.error("TypeError",
+                    "no matching Java method '" + name + "' for argument types (" + signature(args) + ")");
         }
 
         best.setAccessible(true);
@@ -351,8 +351,8 @@ public class JavaBridge {
         }
 
         if (best == null || bestScore < 0) {
-            throw new InterpreterException(
-                    "TypeError: no matching Java constructor for class '" + clazz.getName() + "' with (" + signature(args) + ")");
+            throw PyErrors.error("TypeError",
+                    "no matching Java constructor for class '" + clazz.getName() + "' with (" + signature(args) + ")");
         }
 
         best.setAccessible(true);

@@ -28,12 +28,7 @@ class ErrorFactoryTest {
     private static final Map<String, Integer> PENDING = Map.of(
             "Jython3Interpreter.java", 72,
             "BuiltinFunctions.java", 35,
-            "JavaBridge.java", 10,
-            "PyJavaObject.java", 8,
-            "BuiltinModules.java", 5,
-            "PyJavaClass.java", 5,
-            "PyJavaMethod.java", 3,
-            "PyJavaPackage.java", 1);
+            "BuiltinModules.java", 5);
 
     @Test
     void legacyConstructionIsConfinedToPendingFiles() throws IOException {
@@ -98,7 +93,63 @@ class ErrorFactoryTest {
         var value = PyException.of("ValueError", "bad");
         assertTrue(PyErrors.matches(value, "ValueError"));
         assertTrue(PyErrors.matches(value, "Exception"));
+        assertTrue(PyErrors.matches(value, "BaseException"));
         assertFalse(PyErrors.matches(value, "TypeError"));
+    }
+
+    @Test
+    void exceptionDoesNotCatchTheBaseExceptionOnlyTypes() {
+        for (String type : List.of("SystemExit", "KeyboardInterrupt", "GeneratorExit")) {
+            var value = PyException.of(type, "");
+            assertFalse(PyErrors.matches(value, "Exception"), type + " must not be caught by Exception");
+            assertTrue(PyErrors.matches(value, "BaseException"), type + " must be caught by BaseException");
+        }
+    }
+
+    @Test
+    void runtimeTypesInheritFromException() {
+        for (String type : List.of("SecurityError", "JavaException", "JavaError", "CustomError")) {
+            assertTrue(PyErrors.matches(PyException.of(type, ""), "Exception"), type);
+        }
+        assertFalse(PyErrors.matches(PyException.of("CustomError", ""), "ValueError"));
+    }
+
+    @Test
+    void builtinHierarchyIsUsedForMatching() {
+        assertTrue(PyErrors.matches(PyException.of("ZeroDivisionError", ""), "ArithmeticError"));
+        assertTrue(PyErrors.matches(PyException.of("IndexError", ""), "LookupError"));
+        assertTrue(PyErrors.matches(PyException.of("FileNotFoundError", ""), "OSError"));
+        assertTrue(PyErrors.matches(PyException.of("IndentationError", ""), "SyntaxError"));
+        assertFalse(PyErrors.matches(PyException.of("ValueError", ""), "ArithmeticError"));
+        assertFalse(PyErrors.matches(PyException.of("BaseException", ""), "Exception"));
+    }
+
+    @Test
+    void fromJavaKeepsTheOriginalThrowable() {
+        Throwable original = new IllegalStateException("boom");
+        InterpreterException e = PyErrors.fromJava(new java.lang.reflect.InvocationTargetException(original));
+        PyException value = (PyException) e.value();
+        assertEquals("JavaException", value.typeName());
+        assertSame(original, value.javaCause());
+        assertEquals("java.lang.IllegalStateException: boom", value.message());
+        assertTrue(PyErrors.matches(value, "JavaException"));
+        assertTrue(PyErrors.matches(value, "Exception"));
+        assertFalse(PyErrors.matches(value, "ValueError"));
+    }
+
+    @Test
+    void fromJavaMapsKnownThrowablesToPythonTypes() {
+        var e = PyErrors.fromJava(new NumberFormatException("bad number"));
+        assertEquals("ValueError", e.typeName());
+        assertTrue(PyErrors.matches(e.value(), "ValueError"));
+        assertTrue(PyErrors.matches(e.value(), "Exception"));
+        assertFalse(PyErrors.matches(e.value(), "JavaException"));
+    }
+
+    @Test
+    void fromJavaDoesNotDoubleWrapPythonErrors() {
+        InterpreterException original = PyErrors.error("TypeError", "from python");
+        assertSame(original, PyErrors.fromJava(original));
     }
 
     @Test

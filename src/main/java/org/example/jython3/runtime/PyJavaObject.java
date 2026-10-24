@@ -14,14 +14,14 @@ public record PyJavaObject(Object object) implements PyObject {
 
     public PyObject getMember(String name) {
         if (object == null) {
-            throw new InterpreterException("AttributeError: 'None' Java object has no attribute '" + name + "'");
+            throw PyErrors.error("AttributeError", "'None' Java object has no attribute '" + name + "'");
         }
         Class<?> clazz = object.getClass();
         JavaBridge.checkSecurity(clazz.getName());
         if (name.equals("getClass") || name.equals("forName") || name.equals("getClassLoader") ||
                 name.equals("getMethod") || name.equals("getDeclaredMethod") || name.equals("getField") ||
                 name.equals("getDeclaredField")) {
-            throw new InterpreterException("SecurityError: access to '" + name + "' is restricted");
+            throw PyErrors.error("SecurityError", "access to '" + name + "' is restricted");
         }
 
         // Instance methods
@@ -54,7 +54,7 @@ public record PyJavaObject(Object object) implements PyObject {
         } catch (NoSuchMethodException e) {
             // Try the boolean-style accessor below.
         } catch (ReflectiveOperationException e) {
-            throw new InterpreterException("JavaException: " + e.getClass().getName() + ": " + e.getMessage());
+            throw PyErrors.fromJava(e);
         }
         try {
             Method isser = clazz.getMethod("is" + cap);
@@ -63,16 +63,16 @@ public record PyJavaObject(Object object) implements PyObject {
         } catch (NoSuchMethodException e) {
             // Neither accessor exists; report a Python AttributeError below.
         } catch (ReflectiveOperationException e) {
-            throw new InterpreterException("JavaException: " + e.getClass().getName() + ": " + e.getMessage());
+            throw PyErrors.fromJava(e);
         }
 
-        throw new InterpreterException(
-                "AttributeError: Java object of type '" + clazz.getName() + "' has no attribute '" + name + "'");
+        throw PyErrors.error("AttributeError",
+                "Java object of type '" + clazz.getName() + "' has no attribute '" + name + "'");
     }
 
     public void setMember(String name, PyObject val) {
         if (object == null) {
-            throw new InterpreterException("AttributeError: cannot set attribute on null Java object");
+            throw PyErrors.error("AttributeError", "cannot set attribute on null Java object");
         }
         Class<?> clazz = object.getClass();
 
@@ -97,16 +97,15 @@ public record PyJavaObject(Object object) implements PyObject {
                     m.invoke(object, javaArg);
                     return;
                 } catch (InvocationTargetException e) {
-                    throw new InterpreterException(
-                            "JavaException: " + e.getCause().getClass().getName() + ": " + e.getCause().getMessage());
+                    throw PyErrors.fromJava(e);
                 } catch (IllegalAccessException | IllegalArgumentException e) {
                     // Try the next overload with a compatible parameter type.
                 }
             }
         }
 
-        throw new InterpreterException(
-                "AttributeError: cannot set attribute '" + name + "' on Java object '" + clazz.getName() + "'");
+        throw PyErrors.error("AttributeError",
+                "cannot set attribute '" + name + "' on Java object '" + clazz.getName() + "'");
     }
 
     @Override public String toString() {

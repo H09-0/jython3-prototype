@@ -540,6 +540,62 @@ class Jython3InterpreterTest {
         assertEquals("caught", out());
     }
 
+    @Test void testExceptExceptionDoesNotCatchSystemExit() {
+        py.exec("""
+            try:
+                raise SystemExit
+            except Exception:
+                print("wrong")
+            """);
+        assertFalse(out().contains("wrong"), "Exception must not catch SystemExit");
+    }
+
+    @Test void testExceptBaseExceptionCatchesSystemExit() {
+        py.exec("""
+            try:
+                raise SystemExit
+            except BaseException:
+                print("caught")
+            """);
+        assertEquals("caught", out());
+        assertEquals("", err());
+    }
+
+    @Test void testExceptExceptionCatchesSecurityError() {
+        py.exec("""
+            try:
+                import sun.misc.Unsafe
+            except Exception:
+                print("blocked")
+            """);
+        assertEquals("blocked", out());
+    }
+
+    @Test void testJavaErrorsMapToPythonTypes() {
+        py.exec("""
+            from java.lang import Integer
+            try:
+                Integer.parseInt("abc")
+            except ValueError:
+                print("value error")
+            """);
+        assertEquals("", err());
+        assertEquals("value error", out());
+    }
+
+    @Test void testUnknownJavaErrorsAreJavaException() {
+        py.exec("""
+            from java.lang import String
+            s = String("abc")
+            try:
+                s.getBytes("no-such-encoding")
+            except JavaException:
+                print("java exception")
+            """);
+        assertEquals("", err());
+        assertEquals("java exception", out());
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  19. Phase 9: Jython 2.7 Replacement Foundations
     // ═══════════════════════════════════════════════════════════════════
