@@ -113,7 +113,7 @@ public final class PyOps {
             case PyBuiltinFunction bf -> "builtin_function_or_method";
             case PyModule m -> "module";
             case PyIterator it -> "iterator";
-            case PyException e -> "Exception";
+            case PyException e -> e.typeName();
             case PyCompiledCodeWrapper cw -> "code";
             case PyJavaClass jc -> "JavaClass(" + jc.clazz().getSimpleName() + ")";
             case PyJavaObject jo -> "JavaObject(" + (jo.object() == null ? "null" : jo.object().getClass().getSimpleName()) + ")";

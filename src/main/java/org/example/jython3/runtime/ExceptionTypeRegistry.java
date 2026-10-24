@@ -27,6 +27,7 @@ public final class ExceptionTypeRegistry {
 
     private ExceptionTypeRegistry() {
         baseException = define("BaseException", null);
+        baseException.markExceptionRoot();
         exception = define("Exception", baseException);
         define("SystemExit", baseException);
         define("KeyboardInterrupt", baseException);
@@ -140,7 +141,7 @@ public final class ExceptionTypeRegistry {
 
     /** Whether {@code type} is {@code BaseException} or derives from it. */
     public boolean isExceptionClass(PyClass type) {
-        return type != null && type.isSubclassOf(baseException);
+        return type != null && type.isExceptionType();
     }
 
     /** An unmodifiable view of the registered types, keyed by name. */

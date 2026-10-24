@@ -92,11 +92,9 @@ dotted_name
     : ID (DOT ID)*
     ;
 
-/** raise [ExcType[(msg)]] */
+/** raise [expr] — bare raise re-raises the active exception */
 raise_stmt
-    : RAISE ID LPAREN arg_list? RPAREN
-    | RAISE ID
-    | RAISE
+    : RAISE expr?
     ;
 
 /** return [expr] */

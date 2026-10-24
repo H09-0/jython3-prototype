@@ -8,8 +8,8 @@ import java.util.List;
  * as the VM unwinds, one entry per frame that the error passed through.
  *
  * <p>The throwable is only the transport. The Python value is available from
- * {@link #value()}: today that is a {@link PyException}, and later it can also
- * be a user-defined exception instance.
+ * {@link #value()}: it is a {@link PyException}, including for user-defined
+ * exception classes.
  */
 public class InterpreterException extends RuntimeException {
     /**

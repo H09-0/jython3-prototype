@@ -20,8 +20,11 @@ public enum OpCode {
     PUSH_EXCEPT_HANDLER(47), POP_EXCEPT_HANDLER(48), RAISE(49),
     HALT(50),
     EXECFILE(51),          // arg: path string on stack
-    COMPARE_EXC_TYPE(52),  // pops (excMsg, typeName), pushes bool (excMsg prefix matches typeName)
-    RERAISE(53);           // pops an exception message and raises it again
+    COMPARE_EXC_TYPE(52),  // pops a class, keeps the exception value, pushes whether it matches
+    RERAISE(53),           // pops an exception value and raises it again
+    RAISE_ACTIVE(54),      // bare raise: re-raises the active exception
+    BEGIN_EXCEPT_HANDLER(55), // marks the caught value as the active exception
+    END_EXCEPT_HANDLER(56);   // restores the previously active exception
 
     private final int code;
 

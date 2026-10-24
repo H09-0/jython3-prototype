@@ -1654,6 +1654,308 @@ class Jython3InterpreterTest {
         assertEquals("", err());
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //  24. Raise, except, and custom exception classes (Commit B)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testBareRaiseUsesTheOutermostActiveHandler() {
+        InterpreterException e = assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                raise ValueError("outer")
+            except ValueError:
+                try:
+                    raise TypeError("inner")
+                except TypeError:
+                    pass
+                raise
+            """));
+        PyException value = assertInstanceOf(PyException.class, e.value());
+        assertEquals("ValueError", value.typeName());
+        assertEquals("outer", value.message());
+    }
+
+    @Test void testBareRaiseInsideNestedHandlerUsesTheInnerValue() {
+        py.exec("""
+            try:
+                try:
+                    raise ValueError("outer")
+                except ValueError:
+                    try:
+                        raise TypeError("inner")
+                    except TypeError:
+                        raise
+            except TypeError as caught:
+                saved = caught
+            """);
+        PyException saved = assertInstanceOf(PyException.class, py.getGlobal("saved"));
+        assertEquals("TypeError", saved.typeName());
+        assertEquals("inner", saved.message());
+        assertNotNull(saved.context(), "the inner exception still records the outer as context");
+        assertEquals("ValueError", saved.context().typeName());
+    }
+
+    @Test void testNewExceptionWhileHandlingRecordsContext() {
+        InterpreterException e = assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                raise ValueError("original")
+            except ValueError:
+                raise TypeError("replacement")
+            """));
+        PyException value = assertInstanceOf(PyException.class, e.value());
+        assertEquals("TypeError", value.typeName());
+        assertEquals("replacement", value.message());
+        assertNotNull(value.context(), "a replacement exception keeps the handled one as context");
+        assertEquals("ValueError", value.context().typeName());
+        assertEquals("original", value.context().message());
+    }
+
+    @Test void testBareRaiseOutsideHandlerIsAnError() {
+        InterpreterException e = assertThrows(InterpreterException.class, () -> py.eval("raise"));
+        assertEquals("RuntimeError", e.typeName());
+        assertTrue(((PyException) e.value()).message().contains("No active exception"),
+                ((PyException) e.value()).message());
+    }
+
+    @Test void testBareRaiseDoesNotLeakIntoACalledFunction() {
+        py.exec("""
+            def probe():
+                raise
+            try:
+                raise ValueError("outer")
+            except ValueError:
+                try:
+                    probe()
+                except RuntimeError:
+                    result = "isolated"
+            """);
+        assertEquals("isolated", py.getGlobal("result").toString());
+    }
+
+    @Test void testBreakInsideNestedHandlerRestoresOuterException() {
+        InterpreterException e = assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                raise ValueError("outer")
+            except ValueError:
+                while True:
+                    try:
+                        raise TypeError("inner")
+                    except TypeError:
+                        break
+                raise
+            """));
+        PyException value = assertInstanceOf(PyException.class, e.value());
+        assertEquals("ValueError", value.typeName());
+        assertEquals("outer", value.message());
+    }
+
+    @Test void testExceptionFromHandlerDoesNotLeaveStaleActiveValue() {
+        InterpreterException e = assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                raise ValueError("outer")
+            except ValueError:
+                try:
+                    try:
+                        raise TypeError("inner")
+                    except TypeError:
+                        raise KeyError("third")
+                except KeyError:
+                    pass
+                raise
+            """));
+        PyException value = assertInstanceOf(PyException.class, e.value());
+        assertEquals("ValueError", value.typeName());
+        assertEquals("outer", value.message());
+    }
+
+    @Test void testContinueInsideNestedHandlerRestoresOuterException() {
+        InterpreterException e = assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                raise ValueError("outer")
+            except ValueError:
+                for i in [1]:
+                    try:
+                        raise TypeError("inner")
+                    except TypeError:
+                        continue
+                raise
+            """));
+        PyException value = assertInstanceOf(PyException.class, e.value());
+        assertEquals("ValueError", value.typeName());
+        assertEquals("outer", value.message());
+    }
+
+    @Test void testReturnFromHandlerRunsFinallyCleanly() {
+        py.exec("""
+            def f():
+                try:
+                    try:
+                        raise ValueError("inner")
+                    except ValueError:
+                        return "early"
+                finally:
+                    pass
+            result = f()
+            """);
+        assertEquals("early", py.getGlobal("result").toString());
+        assertEquals("", err());
+    }
+
+    @Test void testExceptNonExceptionClassIsTypeError() {
+        py.exec("""
+            class Plain:
+                pass
+            try:
+                try:
+                    raise ValueError("x")
+                except Plain:
+                    pass
+            except TypeError:
+                result = "rejected"
+            """);
+        assertEquals("rejected", py.getGlobal("result").toString());
+    }
+
+    @Test void testExceptNonClassValueIsTypeError() {
+        py.exec("""
+            try:
+                try:
+                    raise ValueError("x")
+                except 42:
+                    pass
+            except TypeError:
+                result = "rejected"
+            """);
+        assertEquals("rejected", py.getGlobal("result").toString());
+    }
+
+    @Test void testRaiseNonExceptionValueIsTypeError() {
+        py.exec("""
+            try:
+                raise "boom"
+            except TypeError:
+                result = "rejected"
+            """);
+        assertEquals("rejected", py.getGlobal("result").toString());
+    }
+
+    @Test void testRaiseOfANonExceptionRecordsContext() {
+        py.exec("""
+            try:
+                raise ValueError("outer")
+            except ValueError:
+                try:
+                    raise "boom"
+                except TypeError as bad:
+                    saved = bad
+            """);
+        PyException saved = assertInstanceOf(PyException.class, py.getGlobal("saved"));
+        assertEquals("TypeError", saved.typeName());
+        assertNotNull(saved.context());
+        assertEquals("ValueError", saved.context().typeName());
+    }
+
+    @Test void testCustomExceptionClassIsCaughtByItsParent() {
+        py.exec("""
+            class MyError(ValueError):
+                pass
+            try:
+                raise MyError("custom")
+            except ValueError as e:
+                saved = e
+            """);
+        PyException saved = assertInstanceOf(PyException.class, py.getGlobal("saved"));
+        assertEquals("MyError", saved.typeName());
+        assertEquals("custom", saved.message());
+        assertTrue(saved.type().isSubclassOf(py.exceptionTypes().type("ValueError")),
+                "the custom class must inherit the real ValueError class");
+    }
+
+    @Test void testExceptionClassCallProducesExceptionValue() {
+        py.exec("""
+            class MyError(Exception):
+                pass
+            value = MyError("boom")
+            """);
+        PyException value = assertInstanceOf(PyException.class, py.getGlobal("value"));
+        assertEquals("MyError", value.typeName());
+        assertEquals("boom", value.message());
+    }
+
+    @Test void testRaiseClassWithAndWithoutArguments() {
+        py.exec("""
+            class E(Exception):
+                pass
+            try:
+                raise E
+            except E as first:
+                a = first
+            try:
+                raise E("boom")
+            except E as second:
+                b = second
+            try:
+                try:
+                    raise E("again")
+                except E as original:
+                    raise original
+            except E as reraised:
+                c = reraised
+            """);
+        assertEquals("", ((PyException) py.getGlobal("a")).message());
+        assertEquals("boom", ((PyException) py.getGlobal("b")).message());
+        assertEquals("again", ((PyException) py.getGlobal("c")).message());
+    }
+
+    @Test void testRaiseValueReraisesTheSameObject() {
+        py.exec("""
+            try:
+                try:
+                    raise ValueError("once")
+                except ValueError as original:
+                    raise original
+            except ValueError as again:
+                same = original is again
+            """);
+        assertEquals("True", py.getGlobal("same").toString());
+    }
+
+    @Test void testRaiseValueKeepsIdentityWhenGainingContext() {
+        py.exec("""
+            try:
+                try:
+                    raise ValueError("outer")
+                except ValueError as original:
+                    try:
+                        raise TypeError("inner")
+                    except TypeError:
+                        raise original
+            except ValueError as caught:
+                same = original is caught
+            """);
+        assertEquals("True", py.getGlobal("same").toString());
+        PyException caught = assertInstanceOf(PyException.class, py.getGlobal("caught"));
+        assertNotNull(caught.context(), "the re-raise sets the handled TypeError as context");
+        assertEquals("TypeError", caught.context().typeName());
+    }
+
+    @Test void testIsInstanceAndTypeSeeTheExceptionClass() {
+        py.exec("""
+            class MyError(ValueError):
+                pass
+            try:
+                raise MyError("x")
+            except ValueError as e:
+                by_parent = isinstance(e, ValueError)
+                by_other = isinstance(e, KeyError)
+                name = type(e)
+                saved = e
+            """);
+        assertEquals("True", py.getGlobal("by_parent").toString());
+        assertEquals("False", py.getGlobal("by_other").toString());
+        assertEquals("<class 'MyError'>", py.getGlobal("name").toString());
+        assertInstanceOf(PyException.class, py.getGlobal("saved"));
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

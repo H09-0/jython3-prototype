@@ -87,9 +87,12 @@ Virtual machine: frames, operand stack, call stack, handler stack
 - One instruction is one `int`: high 16 bits are an explicit `OpCode` number,
   low 16 bits are a constant-pool index or a raw operand. Opcode numbers never
   change when a new opcode is added.
-- A frame owns an operand stack, a local scope, a reference to globals, and a
-  handler stack. `try` pushes a handler; normal exit pops it; an unmatched
-  error runs `finally` and re-raises the same value.
+- A frame owns an operand stack, a local scope, a reference to globals, a
+  handler stack, and an active-exception stack. `try` pushes a handler; normal
+  exit pops it; an unmatched error runs `finally` and re-raises the same value.
+- The active-exception stack starts empty in each call: entering a handler
+  pushes the caught value, and `END_EXCEPT_HANDLER` restores the previous one,
+  so a bare `raise` only sees handlers of the current frame.
 - `break`, `continue`, and `return` that leave a `try` still execute `finally`.
 - Generators are currently collected eagerly. Lazy frame suspension is a
   separate change and will not alter the public `PyGenerator` API.
@@ -126,10 +129,18 @@ interpreter, and `PyErrors.matches` walks each class's base list instead of a
 separate parent table. `SecurityError`, `JavaException`, and `JavaError` are
 runtime-specific subclasses of `Exception`.
 
-The remaining name-based boundary is the bytecode interface: `raise` and
-`except` still pass type names, which the active registry resolves to its
-classes. The next slice makes both instructions carry class objects and lets
-`class E(Exception)` produce a usable exception type.
+`BaseException` is marked as the exception root, and the marker is inherited
+through the base list. There is no second table of exception names: a class is
+an exception type if a real base is. Built-in exception classes are registered
+in interpreter globals, so `except ValueError` and `class E(ValueError)` both
+resolve to the same objects the registry created. Calling a class with that
+marker produces a `PyException` value rather than a `PyInstance`.
+
+The bytecode interface matches this. `except` evaluates its clause expression
+and `COMPARE_EXC_TYPE` requires a `PyClass` marked as an exception type;
+anything else raises `TypeError`. `raise` accepts a class (instantiated with no
+arguments), a call (which already produced a value), or an existing exception
+value, and the VM decides which at run time.
 
 ---
 
@@ -159,17 +170,33 @@ Rules:
 3. Each interpreter owns an `ExceptionTypeRegistry`; the active registry is
    installed while its code runs. String entry points resolve a name to that
    registry's class once, and `PyException` stores the class itself.
-4. `cause` and `context` are Python-level links created by `raise ... from ...`.
-   The Java throwable is never stored there.
+4. `cause` and `context` are Python-level links. `cause` comes from
+   `raise ... from ...`, which the grammar does not parse yet, so it is null in
+   current scripts. `context` is attached when a new exception is raised while
+   another one is active, and the VM never stores a Java throwable there.
 5. The VM pushes the exception value on the operand stack, not its message.
-   `COMPARE_EXC_TYPE` calls `PyErrors.matches`; `RERAISE` throws the same value.
+   `COMPARE_EXC_TYPE` pops the clause class, keeps the value for binding, and
+   calls `PyErrors.matches`. `RERAISE` throws the same value again.
 6. Matching uses class identity and the real base list. `BaseException` catches
    every exception; `Exception` does not catch `SystemExit`,
    `KeyboardInterrupt`, or `GeneratorExit`.
-7. Java stack traces are disabled by default because Python raises often
+7. Each frame keeps its own active-exception stack. Entering a handler pushes
+   the caught value (`BEGIN_EXCEPT_HANDLER`); leaving it restores the previous
+   one (`END_EXCEPT_HANDLER`). A callee starts empty, so a bare `raise` never
+   borrows the caller's handler.
+8. The compiler emits `END_EXCEPT_HANDLER` at the natural end of a handler and
+   on every `return`, `break`, or `continue` that leaves one. The handler
+   records the active-stack depth at registration; when the VM catches, it
+   first truncates back to that depth, which drops state from handlers that the
+   unwind abandoned. A new exception does not clear the active one by itself.
+9. Bare `raise` re-raises the active exception, or raises `RuntimeError` when
+   none is active. `raise E` instantiates `E`, `raise E(...)` uses the value the
+   call produced, and `raise e` re-raises `e`; a non-exception value is a
+   `TypeError`.
+10. Java stack traces are disabled by default because Python raises often
    (`StopIteration` in every exhausted loop). `-Djython3.stacktraces=true`
    enables them for debugging.
-8. The carrier builds the traceback while unwinding. When a handler is
+11. The carrier builds the traceback while unwinding. When a handler is
    entered, the VM copies the frames into the value, so `__traceback__` remains
    available after the carrier is gone and after the `except` block exits. The
    entries are immutable records; a later re-raise appends new frames.
@@ -190,8 +217,7 @@ Java mapping (specific class first, then superclasses):
 | anything else | `JavaException` |
 
 `SecurityError` and `JavaException` are not CPython built-ins. They are runtime
-types that inherit from `Exception`, and they will be registered as `PyClass`
-objects in the same slice that makes the built-in hierarchy first-class.
+types that inherit from `Exception` as ordinary registered classes.
 
 ---
 
@@ -305,6 +331,9 @@ tests before the next layer is built on top of them.
 | 2026-10-24 | Class access does not imply constructor access; each constructor is granted by descriptor |
 | 2026-10-24 | The exception value owns a traceback snapshot so it outlives the carrier |
 | 2026-10-24 | Exception values carry a non-optional `PyClass`; names are derived, and each interpreter owns its type registry |
+| 2026-10-24 | `except` evaluates its clause to a class; a non-exception type is a `TypeError` |
+| 2026-10-24 | Custom classes inherit exception status from their bases, and calling one produces a value, not an instance |
+| 2026-10-24 | The active exception is a per-frame stack; handler entry pushes, `END_EXCEPT_HANDLER` and handler exit restore |
 | 2026-10-24 | `InterpreterException` is the carrier and `PyObject` is the value |
 | 2026-10-24 | Exception matching uses the type hierarchy, not catch-all names |
 | 2026-10-24 | Java throwables enter through `PyErrors.fromJava` only |

@@ -29,6 +29,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         final int loopDepth;
         boolean handlerActive = true;
         boolean insideFinally = false;
+        /** True while compiling an {@code except} suite of this statement. */
+        boolean inHandler = false;
 
         TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth) {
             this.finallySuite = finallySuite;
@@ -39,25 +41,36 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     /**
      * Emits the exit path for scopes crossed by a jump. Scopes are visited
-     * innermost first: deregister the handler, then run the {@code finally}
-     * body. {@code all} is used by {@code return}, which crosses every scope.
+     * innermost first: end the active-exception lifetime, deregister the
+     * handler, then run the {@code finally} body. {@code all} is used by
+     * {@code return}, which crosses every scope.
+     *
+     * <p>The {@code END_EXCEPT_HANDLER} instruction also has to be emitted
+     * here, not only at the natural end of a suite: {@code return},
+     * {@code break}, and {@code continue} jump over it.
      */
     private void emitScopeExits(int targetLoopDepth, boolean all) {
         for (TryScope scope : tryStack) {
             if (!all && scope.loopDepth < targetLoopDepth) break;
+            if (scope.inHandler) {
+                b.emit(OpCode.END_EXCEPT_HANDLER);
+            }
             if (scope.handlerActive) {
                 b.emit(OpCode.POP_EXCEPT_HANDLER);
             }
             if (scope.finallySuite != null && !scope.insideFinally) {
                 boolean prevInside = scope.insideFinally;
                 boolean prevActive = scope.handlerActive;
+                boolean prevInHandler = scope.inHandler;
                 scope.insideFinally = true;
                 scope.handlerActive = false;
+                scope.inHandler = false;
                 try {
                     visit(scope.finallySuite);
                 } finally {
                     scope.insideFinally = prevInside;
                     scope.handlerActive = prevActive;
+                    scope.inHandler = prevInHandler;
                 }
             }
         }
@@ -466,11 +479,13 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
          *   <else body>                    ; normal path only
          *   JUMP <shared-finally>
          *
-         *   <handler-pc>:                  ; stack top = exception message
+         *   <handler-pc>:                  ; stack top = exception value
          *   for each clause:
-         *     LOAD_CONST <type>; COMPARE_EXC_TYPE
+         *     <clause type expr>; COMPARE_EXC_TYPE
          *     JUMP_IF_FALSE <next clause>
-         *     bind/discard message; <clause body>; JUMP <shared-finally>
+         *     BEGIN_EXCEPT_HANDLER     ; caught value becomes active
+         *     bind/discard value; <clause body>; END_EXCEPT_HANDLER
+         *     JUMP <shared-finally>
          *   <exceptional-finally>          ; runs before re-raising
          *   RERAISE
          *
@@ -510,11 +525,17 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             int nextClauseIdx = -1;
 
             if (hasType) {
-                b.emit(OpCode.LOAD_CONST, clause.expr().getText());
+                // Resolve the clause expression to a real class object. A name
+                // that is not an exception type is rejected by the VM.
+                visit(clause.expr());
                 b.emit(OpCode.COMPARE_EXC_TYPE);
                 nextClauseIdx = b.size();
                 b.emitRaw(OpCode.JUMP_IF_FALSE, 0); // try the next clause
             }
+
+            // The caught value becomes the active exception for bare raise.
+            // The VM records the previously active one so it can be restored.
+            b.emit(OpCode.BEGIN_EXCEPT_HANDLER);
 
             if (clause.AS() != null && clause.ID() != null) {
                 b.emit(OpCode.STORE_FAST, clause.ID().getText());
@@ -522,7 +543,20 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
                 b.emit(OpCode.POP_TOP);
             }
 
-            visit(clause.suite());
+            boolean prevActiveScope = scope.handlerActive;
+            boolean prevInHandler = scope.inHandler;
+            scope.handlerActive = false;
+            scope.inHandler = true;
+            try {
+                visit(clause.suite());
+            } finally {
+                scope.handlerActive = prevActiveScope;
+                scope.inHandler = prevInHandler;
+            }
+
+            // Natural end of the handler: restore the outer active exception.
+            // Jumps out of the suite emit the same instruction themselves.
+            b.emit(OpCode.END_EXCEPT_HANDLER);
 
             int jmpEnd = b.size();
             b.emitRaw(OpCode.JUMP, 0);
@@ -712,17 +746,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitRaise_stmt(Jython3Parser.Raise_stmtContext c) {
-        if (c.ID() == null) {
-            b.emit(OpCode.LOAD_CONST, "");
-            b.emit(OpCode.RAISE, "RuntimeError");
+        if (c.expr() == null) {
+            // Bare raise: re-raise whatever handler is active.
+            b.emit(OpCode.RAISE_ACTIVE);
             return null;
         }
-        if (c.arg_list() != null && !c.arg_list().expr().isEmpty()) {
-            visit(c.arg_list().expr().get(0));
-        } else {
-            b.emit(OpCode.LOAD_CONST, "");
-        }
-        b.emit(OpCode.RAISE, c.ID().getText());
+        // The expression may be a class (raise E), a call (raise E("msg")), or
+        // an existing exception value (raise e). The VM decides which.
+        visit(c.expr());
+        b.emit(OpCode.RAISE);
         return null;
     }
 }

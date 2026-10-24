@@ -15,6 +15,12 @@ public final class PyClass implements PyObject {
     private final PyClass baseClass;
     private final Map<String, PyObject> members;
     private final java.util.List<PyClass> bases = new java.util.ArrayList<>();
+    /**
+     * Marks the root of the exception hierarchy. Every class that has this
+     * class in its base list is an exception type; the flag is inherited, not
+     * copied, so a custom {@code class E(ValueError)} is one automatically.
+     */
+    private boolean exceptionRoot;
 
     public PyClass(String name, PyClass baseClass, Map<String, PyObject> members) {
         this.name = name;
@@ -52,6 +58,24 @@ public final class PyClass implements PyObject {
 
     public boolean hasMember(String attr) {
         return lookupMember(attr) != null;
+    }
+
+    /** Marks this class as the root of the exception hierarchy. */
+    public void markExceptionRoot() {
+        this.exceptionRoot = true;
+    }
+
+    /**
+     * Whether this class may be used as an exception type. This follows the
+     * real base list, so user subclasses of a built-in exception are exception
+     * types without any extra registration.
+     */
+    public boolean isExceptionType() {
+        if (exceptionRoot) return true;
+        for (PyClass base : bases) {
+            if (base.isExceptionType()) return true;
+        }
+        return false;
     }
 
     /**

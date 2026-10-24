@@ -5,7 +5,7 @@
 [![Build](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com/H09-0/jython3-prototype)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-red?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
-[![Tests](https://img.shields.io/badge/Tests-200%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
+[![Tests](https://img.shields.io/badge/Tests-219%20Passing-brightgreen)](https://github.com/H09-0/jython3-prototype)
 
 Jython 3 is an independent re-implementation of Python 3 on the Java Virtual
 Machine, built from the ground up with a layered architecture, an explicit
@@ -67,6 +67,8 @@ Supported has passed T1; `—` marks work that has not started.
 | Real bytecode layer (`CompiledCode`: `int[]` + `Object[]` constants pool) | T1 | ✅ Supported |
 | Exception handling (`try` / `except` / `else` / `finally` / `raise`) | T1 | ✅ Supported |
 | Exception values carry real `PyClass` types | T1 | ✅ Supported |
+| `raise E`, `raise E(...)`, `raise e`, and bare `raise` | T1 | ✅ Supported |
+| Custom exception classes (`class E(ValueError)`) | T1 | ✅ Supported |
 | Multiple `except` clauses and `except Exception` catch-all | T1 | ✅ Supported |
 | Classes, inheritance, bound methods, decorators | T1 | ✅ Supported |
 | Java bridge (`from java.lang import Math`) | T1 | ✅ Supported |
@@ -80,9 +82,11 @@ Supported has passed T1; `—` marks work that has not started.
 - Generators are evaluated eagerly: the function runs to completion on the first
   iteration. `send()`, `throw()`, and `close()` are not implemented.
 - Exception values carry a real `PyClass` type, arguments, Python cause/context,
-  the original Java throwable, and a traceback snapshot. The `raise` and
-  `except` instructions still pass type names to the active registry; user
-  classes such as `class E(Exception)` become first-class in the next slice.
+  the original Java throwable, and a traceback snapshot. `except` evaluates its
+  clause to a class object and `raise` accepts a class, a call, or an existing
+  value; a custom `class E(ValueError)` is a real exception type. `raise ... from
+  ...` is not parsed yet, so `cause` stays null. The `as` name is not deleted
+  when its handler ends, unlike Python 3.
 - No `with`, `async`/`await`, comprehensions, `lambda`, f-strings, or `match`
   statements yet.
 - Java access is gated per interpreter by `JavaAccessPolicy`. The default
@@ -218,10 +222,13 @@ import foo   ──▶  modules/foo.py         ──▶  file-based fallback
 | `BINARY_SUBSCR` | — | Pop index and container; push `container[index]` |
 | `GET_ITER` | — | Convert PyList on stack to PyIterator |
 | `FOR_ITER` | exit pc | Advance iterator; jump when exhausted |
-| `PUSH_EXCEPT_HANDLER` | except pc | Register an exception handler for a `try` block |
+| `PUSH_EXCEPT_HANDLER` | except pc | Register a handler for a `try` block and record the active-exception depth |
 | `POP_EXCEPT_HANDLER` | — | Deregister handler on normal exit from `try` |
-| `COMPARE_EXC_TYPE` | — | Pop type name; push whether the current exception matches |
-| `RAISE` | constPool idx | Raise an exception (type name from pool) |
+| `BEGIN_EXCEPT_HANDLER` | — | Push the caught value as the active exception |
+| `END_EXCEPT_HANDLER` | — | Restore the previously active exception |
+| `COMPARE_EXC_TYPE` | — | Pop a clause class; push whether the exception value matches |
+| `RAISE` | — | Raise a class or an exception value from the stack |
+| `RAISE_ACTIVE` | — | Bare `raise`: re-raise the active exception |
 | `RERAISE` | — | Propagate an unmatched exception |
 | `YIELD_VALUE` | — | Emit a value from a generator function |
 | `EXECFILE` | — | Execute a script file in the current scope |
@@ -278,7 +285,7 @@ BUILD SUCCESSFUL in Xs
 5 actionable tasks: 5 executed
 ```
 
-All 200 tests pass with zero failures and zero skipped. Test reports are written to:
+All 219 tests pass with zero failures and zero skipped. Test reports are written to:
 
 ```
 build/reports/tests/test/index.html
@@ -318,7 +325,7 @@ jython3-prototype/
     │       └── cli/                             # Repl and RunScript
     └── test/
         └── java/org/example/jython3/
-            ├── Jython3InterpreterTest.java      # 166 JUnit 5 regression tests
+            ├── Jython3InterpreterTest.java      # 185 JUnit 5 regression tests
             ├── ExceptionTypeRegistryTest.java   # 9 exception-type hierarchy tests
             ├── JavaAccessPolicyTest.java        # 9 bridge and access-policy tests
             └── ErrorFactoryTest.java            # 16 error-model guard tests

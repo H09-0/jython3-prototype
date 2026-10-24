@@ -14,16 +14,17 @@ import java.util.Objects;
  *
  * <p>The exception type is a real {@link PyClass}. The name is derived from
  * that class, never stored separately, so matching always follows the actual
- * base list. {@code cause} and {@code context} are the Python-level links
- * created by {@code raise ... from ...}; {@code javaCause} keeps the original
- * JVM throwable when the error came through the bridge. They are kept apart on
- * purpose: a Java throwable is not a Python exception.
+ * base list. {@code context} links to the exception that was being handled when
+ * this one was raised; {@code cause} is the explicit {@code raise ... from ...}
+ * link. {@code javaCause} keeps the original JVM throwable when the error came
+ * through the bridge. They are kept apart on purpose: a Java throwable is not a
+ * Python exception.
  */
 public final class PyException implements PyObject {
     private final PyClass type;
     private final List<PyObject> args;
     private final PyException cause;
-    private final PyException context;
+    private PyException context;
     private final Throwable javaCause;
     /**
      * Frames captured when the error was caught. The carrier builds the
@@ -37,6 +38,11 @@ public final class PyException implements PyObject {
         this(type, defaultArgs(message), null, null, null);
     }
 
+    /** Creates a value that carries {@code args} as its arguments. */
+    public PyException(PyClass type, List<PyObject> args) {
+        this(type, args, null, null, null);
+    }
+
     public PyException(PyClass type, List<PyObject> args, PyException cause,
                        PyException context, Throwable javaCause) {
         this.type = Objects.requireNonNull(type, "type");
@@ -44,6 +50,18 @@ public final class PyException implements PyObject {
         this.cause = cause;
         this.context = context;
         this.javaCause = javaCause;
+    }
+
+    /**
+     * Records {@code candidate} as the exception being handled when this one
+     * was raised. Python sets {@code __context__} once, at raise time; a value
+     * that already has a context keeps it, and an exception is never its own
+     * context.
+     */
+    public void attachContextIfAbsent(PyException candidate) {
+        if (candidate != null && candidate != this && this.context == null) {
+            this.context = candidate;
+        }
     }
 
     private static List<PyObject> defaultArgs(String message) {

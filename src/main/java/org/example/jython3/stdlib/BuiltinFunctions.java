@@ -16,6 +16,7 @@ import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
+import org.example.jython3.runtime.PyException;
 import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
@@ -292,8 +293,16 @@ public final class BuiltinFunctions {
             checkArgCount("isinstance", args, 2);
             PyObject obj = args[0];
             PyObject typeArg = args[1];
-            if (typeArg instanceof PyClass cls && obj instanceof PyInstance inst) {
-                return PyBool.of(inst.isInstanceOf(cls));
+            if (typeArg instanceof PyClass cls) {
+                if (obj instanceof PyException pe) {
+                    return PyBool.of(PyErrors.matches(pe, cls));
+                }
+                if (obj instanceof PyInstance inst) {
+                    return PyBool.of(inst.isInstanceOf(cls));
+                }
+                if (obj instanceof PyClass objClass) {
+                    return PyBool.of(objClass.isSubclassOf(cls));
+                }
             }
             String tn = typeName(obj);
             String target = (typeArg instanceof PyStr s) ? s.value() : typeArg.toString();

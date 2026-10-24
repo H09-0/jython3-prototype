@@ -164,6 +164,12 @@ public class Jython3Interpreter {
     private final Deque<Frame> callStack = new ArrayDeque<>();
     /** Per-frame exception handler stack — saved/restored on function call boundaries. */
     private Deque<ExceptHandler> exceptStack = new ArrayDeque<>();
+    /**
+     * Python exceptions currently being handled, innermost last. Bare
+     * {@code raise} uses the top; entering a handler pushes and leaving it
+     * pops. It is per frame, so a callee never inherits the caller's handler.
+     */
+    private Deque<PyObject> activeExceptions = new ArrayDeque<>();
     /** Non-null while a generator function is being drained; collects yielded values. */
     private List<PyObject> yieldCollector = null;
     /** Source location of the instruction being executed, for tracebacks. */
@@ -216,6 +222,11 @@ public class Jython3Interpreter {
     /** Install built-in functions into the global namespace. */
     private void registerBuiltins() {
         BuiltinFunctions.register(this::setGlobal, this::callPyCallable, javaAccessPolicy);
+        // Built-in exception classes must resolve as real objects so that
+        // `except ValueError` and `class E(Exception)` work.
+        for (var entry : exceptionTypes.types().entrySet()) {
+            globals.putIfAbsent(entry.getKey(), entry.getValue());
+        }
     }
 
 
@@ -275,6 +286,55 @@ public class Jython3Interpreter {
         if (ie.value() instanceof PyException pe) pe.attachTraceback(ie.traceback());
     }
 
+    /** Drops active exceptions pushed by handlers that the unwind abandoned. */
+    private void truncateActiveExceptions(int depth) {
+        while (activeExceptions.size() > depth) {
+            activeExceptions.removeLast();
+        }
+    }
+
+    /** Builds an exception value for {@code type} with the given arguments. */
+    private static PyException exceptionValue(PyClass type, PyObject[] args) {
+        return new PyException(type, List.of(args));
+    }
+
+    /**
+     * Turns a raised value into the carrier. A class is instantiated with no
+     * arguments, an existing value is re-raised, and anything else is a
+     * {@code TypeError}, as in Python. A new exception raised while another is
+     * being handled keeps the active one as its context.
+     */
+    private InterpreterException toRaise(PyObject value) {
+        PyException exception;
+        if (value instanceof PyException pe) {
+            exception = pe;
+        } else if (value instanceof PyClass cls && cls.isExceptionType()) {
+            exception = new PyException(cls, List.of());
+        } else {
+            throw newRaiseTypeError();
+        }
+
+        if (activeExceptions.peekLast() instanceof PyException active) {
+            exception.attachContextIfAbsent(active);
+        }
+        return PyErrors.errorValue(exception);
+    }
+
+    /**
+     * The error for raising a value that is not an exception. It goes through
+     * the same context rule as any other error raised while a handler is
+     * active.
+     */
+    private InterpreterException newRaiseTypeError() {
+        PyException error = new PyException(
+                ExceptionTypeRegistry.current().type("TypeError"),
+                "exceptions must derive from BaseException");
+        if (activeExceptions.peekLast() instanceof PyException active) {
+            error.attachContextIfAbsent(active);
+        }
+        return PyErrors.errorValue(error);
+    }
+
     /**
      * Compile and run {@code source}. Failures propagate as
      * {@link InterpreterException} instead of being printed.
@@ -293,6 +353,7 @@ public class Jython3Interpreter {
             stack = new ArrayDeque<>();
             currentLocals = globals;
             exceptStack = new ArrayDeque<>();
+            activeExceptions = new ArrayDeque<>();
             callStack.clear();
             yieldCollector = null;
             currentFile = filename;
@@ -328,6 +389,7 @@ public class Jython3Interpreter {
         var savedStack = stack;
         var savedLocals = currentLocals;
         var savedExcept = exceptStack;
+        var savedActive = activeExceptions;
         var savedCollector = yieldCollector;
         var savedFunc = currentFunc;
         var savedLine = currentLine;
@@ -341,6 +403,7 @@ public class Jython3Interpreter {
             stack = new ArrayDeque<>();
             currentLocals = locals;
             exceptStack = new ArrayDeque<>();
+            activeExceptions = new ArrayDeque<>();
             currentFunc = fn.name();
             yieldCollector = collected;
             run(fn.code());
@@ -351,6 +414,7 @@ public class Jython3Interpreter {
             stack = savedStack;
             currentLocals = savedLocals;
             exceptStack = savedExcept;
+            activeExceptions = savedActive;
             currentFunc = savedFunc;
             currentLine = savedLine;
         }
@@ -670,16 +734,22 @@ public class Jython3Interpreter {
                     } else if (callable instanceof PyFunction fn2 && containsYield(fn2.code())) {
                         stack.push(new PyGenerator(fn2, args));
                     } else if (callable instanceof PyClass cls) {
-                        // Instantiate class
-                        var inst = new PyInstance(cls);
-                        PyObject initObj = cls.lookupMember("__init__");
-                        if (initObj instanceof PyFunction initFn) {
-                            var initArgs = new PyObject[argc + 1];
-                            initArgs[0] = inst;
-                            System.arraycopy(args, 0, initArgs, 1, argc);
-                            callPyCallable(initFn, initArgs);
+                        if (cls.isExceptionType()) {
+                            // Calling an exception class produces an exception
+                            // value, not a plain instance.
+                            stack.push(exceptionValue(cls, args));
+                        } else {
+                            // Instantiate class
+                            var inst = new PyInstance(cls);
+                            PyObject initObj = cls.lookupMember("__init__");
+                            if (initObj instanceof PyFunction initFn) {
+                                var initArgs = new PyObject[argc + 1];
+                                initArgs[0] = inst;
+                                System.arraycopy(args, 0, initArgs, 1, argc);
+                                callPyCallable(initFn, initArgs);
+                            }
+                            stack.push(inst);
                         }
-                        stack.push(inst);
                     } else if (callable instanceof PyFunction fn) {
                         if (containsYield(fn.code())) {
                             stack.push(new PyGenerator(fn, args));
@@ -688,7 +758,7 @@ public class Jython3Interpreter {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                    currentFunc, currentFile, currentLine));
+                                    activeExceptions, currentFunc, currentFile, currentLine));
                             var fl = new HashMap<String, PyObject>();
                             if (fn.closure() != null) {
                                 fl.putAll(fn.closure());
@@ -699,6 +769,7 @@ public class Jython3Interpreter {
                             currentLocals = fl;
                             stack = new ArrayDeque<>();
                             exceptStack = new ArrayDeque<>();
+                            activeExceptions = new ArrayDeque<>();
                             currentFunc = fn.name();
                             code = fn.code();
                             bc = code.bytecode();
@@ -734,6 +805,7 @@ public class Jython3Interpreter {
                         currentLocals = cf.locals();
                         stack = cf.stack();
                         exceptStack = cf.exceptHandlers();
+                        activeExceptions = cf.activeExceptions();
                         currentFunc = cf.funcName();
                         currentFile = cf.file();
                         currentLine = cf.line();
@@ -752,6 +824,7 @@ public class Jython3Interpreter {
                     currentLocals = cf.locals();
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
+                    activeExceptions = cf.activeExceptions();
                     stack.push(rv);
                     continue outer;
                 }
@@ -910,21 +983,29 @@ public class Jython3Interpreter {
                 }
 
                 // ── Exception handling ──
-                case PUSH_EXCEPT_HANDLER -> exceptStack.push(new ExceptHandler(ai));
+                case PUSH_EXCEPT_HANDLER -> exceptStack.push(new ExceptHandler(ai, activeExceptions.size()));
                 case POP_EXCEPT_HANDLER  -> { if (!exceptStack.isEmpty()) exceptStack.pop(); }
-                case RAISE -> {
-                    PyObject msgObj = stack.pop();
-                    String excType = (String) pool[ai];
-                    String msg = (msgObj instanceof PyStr s) ? s.value() : msgObj.toString();
-                    throw PyErrors.error(excType, msg);
+                case BEGIN_EXCEPT_HANDLER -> activeExceptions.addLast(stack.peek());
+                case END_EXCEPT_HANDLER -> { if (!activeExceptions.isEmpty()) activeExceptions.removeLast(); }
+                case RAISE -> throw toRaise(stack.pop());
+                case RAISE_ACTIVE -> {
+                    PyObject active = activeExceptions.peekLast();
+                    if (active == null) {
+                        throw PyErrors.error("RuntimeError", "No active exception to reraise");
+                    }
+                    throw PyErrors.errorValue(active);
                 }
                 case COMPARE_EXC_TYPE -> {
-                    // Stack: [..., exceptionValue, typeName]
-                    // Pops typeName, keeps the value for binding, and pushes the match result.
-                    PyObject typeNameObj = stack.pop();
+                    // Stack: [..., exceptionValue, clauseType]
+                    // Pops the clause type, keeps the value for binding, and
+                    // pushes the match result.
+                    PyObject typeObj = stack.pop();
                     PyObject excValue = stack.peek();
-                    String typeName2 = typeNameObj instanceof PyStr s ? s.value() : typeNameObj.toString();
-                    stack.push(PyBool.of(PyErrors.matches(excValue, typeName2)));
+                    if (!(typeObj instanceof PyClass type) || !type.isExceptionType()) {
+                        throw PyErrors.error("TypeError",
+                                "catching classes that do not inherit from BaseException is not allowed");
+                    }
+                    stack.push(PyBool.of(PyErrors.matches(excValue, type)));
                 }
                 case RERAISE -> {
                     PyObject excObj = stack.pop();
@@ -941,12 +1022,15 @@ public class Jython3Interpreter {
                         var savedStack2 = stack;
                         var savedLocals2 = currentLocals;
                         var savedExcept2 = exceptStack;
+                        var savedActive2 = activeExceptions;
                         stack = new ArrayDeque<>();
                         exceptStack = new ArrayDeque<>();
+                        activeExceptions = new ArrayDeque<>();
                         run(fileCode);
                         stack = savedStack2;
                         currentLocals = savedLocals2;
                         exceptStack = savedExcept2;
+                        activeExceptions = savedActive2;
                     } catch (java.io.IOException ioe) {
                         throw PyErrors.error("IOError", "cannot open '" + filePath + "': " + ioe.getMessage());
                     }
@@ -956,6 +1040,7 @@ public class Jython3Interpreter {
             } catch (InterpreterException ie) {
                 if (!exceptStack.isEmpty()) {
                     ExceptHandler h = exceptStack.pop();
+                    truncateActiveExceptions(h.activeDepth());
                     ie.setLocation(currentFile, currentLine, currentFunc);
                     ie.addFrame(currentFile, currentLine, currentFunc);
                     captureTraceback(ie);
@@ -975,11 +1060,13 @@ public class Jython3Interpreter {
                     currentLocals = cf.locals();
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
+                    activeExceptions = cf.activeExceptions();
                     currentFunc = cf.funcName();
                     currentFile = cf.file();
                     currentLine = cf.line();
                     if (!exceptStack.isEmpty()) {
                         ExceptHandler h = exceptStack.pop();
+                        truncateActiveExceptions(h.activeDepth());
                         ie.addFrame(currentFile, currentLine, currentFunc);
                         captureTraceback(ie);
                         stack.push(ie.value());
@@ -1273,6 +1360,7 @@ public class Jython3Interpreter {
             var savedStack = stack;
             var savedLocals = currentLocals;
             var savedExcept = exceptStack;
+            var savedActive = activeExceptions;
             var savedFunc = currentFunc;
             var savedLine = currentLine;
 
@@ -1286,6 +1374,7 @@ public class Jython3Interpreter {
             currentLocals = fl;
             stack = new ArrayDeque<>();
             exceptStack = new ArrayDeque<>();
+            activeExceptions = new ArrayDeque<>();
             currentFunc = fn.name();
             run(fn.code());
             PyObject result = stack.isEmpty() ? new PyNull() : stack.pop();
@@ -1293,6 +1382,7 @@ public class Jython3Interpreter {
             stack = savedStack;
             currentLocals = savedLocals;
             exceptStack = savedExcept;
+            activeExceptions = savedActive;
             currentFunc = savedFunc;
             currentLine = savedLine;
             return result;
