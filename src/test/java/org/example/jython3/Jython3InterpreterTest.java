@@ -2528,6 +2528,61 @@ class Jython3InterpreterTest {
         assertThrows(InterpreterException.class, () -> py.eval("[1, 2, 3][::0]"));
     }
 
+    @Test void testBigIntFloorDivAndModuloSignCombinations() {
+        py.exec("""
+            a = 100000000000000000000
+            b = 3
+            # Positive // Positive
+            q1 = a // b
+            r1 = a % b
+            inv1 = (a == q1 * b + r1)
+
+            # Positive // Negative
+            q2 = a // -b
+            r2 = a % -b
+            inv2 = (a == q2 * -b + r2)
+
+            # Negative // Positive
+            q3 = -a // b
+            r3 = -a % b
+            inv3 = (-a == q3 * b + r3)
+
+            # Negative // Negative
+            q4 = -a // -b
+            r4 = -a % -b
+            inv4 = (-a == q4 * -b + r4)
+            """);
+        assertEquals("", err());
+        assertEquals("True", py.getGlobal("inv1").toString());
+        assertEquals("True", py.getGlobal("inv2").toString());
+        assertEquals("True", py.getGlobal("inv3").toString());
+        assertEquals("True", py.getGlobal("inv4").toString());
+
+        assertEquals("33333333333333333333", py.getGlobal("q1").toString());
+        assertEquals("1", py.getGlobal("r1").toString());
+
+        assertEquals("-33333333333333333334", py.getGlobal("q2").toString());
+        assertEquals("-2", py.getGlobal("r2").toString());
+
+        assertEquals("-33333333333333333334", py.getGlobal("q3").toString());
+        assertEquals("2", py.getGlobal("r3").toString());
+
+        assertEquals("33333333333333333333", py.getGlobal("q4").toString());
+        assertEquals("-1", py.getGlobal("r4").toString());
+    }
+
+    @Test void testBigIntUnaryMinusNegation() {
+        py.exec("""
+            pos = 100000000000000000000
+            neg = -pos
+            neg_neg = -neg
+            is_pos = (neg_neg == pos)
+            """);
+        assertEquals("", err());
+        assertEquals("-100000000000000000000", py.getGlobal("neg").toString());
+        assertEquals("True", py.getGlobal("is_pos").toString());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

@@ -812,15 +812,16 @@ public class Jython3Interpreter {
                     if (l instanceof PyInt li && r instanceof PyInt ri) {
                         if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
                         stack.push(new PyInt(Math.floorDiv(li.value(), ri.value())));
-                    } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
-                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
-                        stack.push(new BigInt(bi.value().divide(bri.value())));
-                    } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
-                        stack.push(new BigInt(bi.value().divide(java.math.BigInteger.valueOf(ri.value()))));
-                    } else if (l instanceof PyInt li && r instanceof BigInt bri) {
-                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
-                        stack.push(new BigInt(java.math.BigInteger.valueOf(li.value()).divide(bri.value())));
+                    } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+                        java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+                        java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+                        java.math.BigInteger q = PyOps.floorDiv(ba, bb);
+                        if (q.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
+                            q.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
+                            stack.push(new PyInt(q.intValue()));
+                        } else {
+                            stack.push(new BigInt(q));
+                        }
                     } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r);
                         if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float floor division by zero");
@@ -836,15 +837,16 @@ public class Jython3Interpreter {
                     } else if (l instanceof PyInt li && r instanceof PyInt ri) {
                         if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
                         stack.push(new PyInt(Math.floorMod(li.value(), ri.value())));
-                    } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
-                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
-                        stack.push(new BigInt(bi.value().remainder(bri.value())));
-                    } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
-                        stack.push(new BigInt(bi.value().remainder(java.math.BigInteger.valueOf(ri.value()))));
-                    } else if (l instanceof PyInt li && r instanceof BigInt bri) {
-                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
-                        stack.push(new BigInt(java.math.BigInteger.valueOf(li.value()).remainder(bri.value())));
+                    } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+                        java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+                        java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+                        java.math.BigInteger rem = PyOps.floorMod(ba, bb);
+                        if (rem.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
+                            rem.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
+                            stack.push(new PyInt(rem.intValue()));
+                        } else {
+                            stack.push(new BigInt(rem));
+                        }
                     } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r), lv = toDouble(l);
                         if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
@@ -891,9 +893,20 @@ public class Jython3Interpreter {
                 }
                 case UNARY_MINUS -> {
                     var v = stack.pop();
-                    if (v instanceof PyInt i) stack.push(new PyInt(-i.value()));
-                    else if (v instanceof PyFloat f) stack.push(new PyFloat(-f.value()));
-                    else throw PyErrors.error("TypeError", "bad operand type for unary -: '" + typeName(v) + "'");
+                    if (v instanceof PyInt i) {
+                        long negated = -(long) i.value();
+                        if (negated > Integer.MAX_VALUE || negated < Integer.MIN_VALUE) {
+                            stack.push(new BigInt(java.math.BigInteger.valueOf(negated)));
+                        } else {
+                            stack.push(new PyInt((int) negated));
+                        }
+                    } else if (v instanceof BigInt bi) {
+                        stack.push(new BigInt(bi.value().negate()));
+                    } else if (v instanceof PyFloat f) {
+                        stack.push(new PyFloat(-f.value()));
+                    } else {
+                        throw PyErrors.error("TypeError", "bad operand type for unary -: '" + typeName(v) + "'");
+                    }
                 }
 
                 // ── Comparison ──

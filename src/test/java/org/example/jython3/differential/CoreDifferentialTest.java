@@ -23,6 +23,11 @@ public class CoreDifferentialTest {
         assertMatchesCPython("print(-7 // 2)");
         assertMatchesCPython("print(7 % 2)");
         assertMatchesCPython("print(-7 % 2)");
+        // BigInt differential tests across all sign combinations
+        assertMatchesCPython("a = 100000000000000000000; b = 3; print(a // b, a % b)");
+        assertMatchesCPython("a = 100000000000000000000; b = 3; print(a // -b, a % -b)");
+        assertMatchesCPython("a = 100000000000000000000; b = 3; print(-a // b, -a % b)");
+        assertMatchesCPython("a = 100000000000000000000; b = 3; print(-a // -b, -a % -b)");
     }
 
     @Test

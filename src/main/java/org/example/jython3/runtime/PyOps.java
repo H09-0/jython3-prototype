@@ -1,5 +1,6 @@
 package org.example.jython3.runtime;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -7,6 +8,47 @@ import java.util.List;
 /** Shared value operations used by the VM, the standard library, and the Java bridge. */
 public final class PyOps {
     private PyOps() {}
+
+    /**
+     * Python-compatible floor division for arbitrary-precision integers.
+     * Rounding is toward negative infinity for all sign combinations:
+     *   floorDiv(10, 3) = 3
+     *   floorDiv(-10, 3) = -4
+     *   floorDiv(10, -3) = -4
+     *   floorDiv(-10, -3) = 3
+     */
+    public static BigInteger floorDiv(BigInteger a, BigInteger b) {
+        if (b.equals(BigInteger.ZERO)) {
+            throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
+        }
+        BigInteger[] divRem = a.divideAndRemainder(b);
+        BigInteger q = divRem[0];
+        BigInteger r = divRem[1];
+        if (!r.equals(BigInteger.ZERO) && (a.signum() ^ b.signum()) < 0) {
+            q = q.subtract(BigInteger.ONE);
+        }
+        return q;
+    }
+
+    /**
+     * Python-compatible modulo for arbitrary-precision integers.
+     * Result has the same sign as the divisor b:
+     *   floorMod(10, 3) = 1
+     *   floorMod(-10, 3) = 2
+     *   floorMod(10, -3) = -2
+     *   floorMod(-10, -3) = -1
+     * Preserves identity: a == (floorDiv(a, b) * b) + floorMod(a, b).
+     */
+    public static BigInteger floorMod(BigInteger a, BigInteger b) {
+        if (b.equals(BigInteger.ZERO)) {
+            throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
+        }
+        BigInteger r = a.remainder(b);
+        if (!r.equals(BigInteger.ZERO) && (a.signum() ^ b.signum()) < 0) {
+            r = r.add(b);
+        }
+        return r;
+    }
 
     public static boolean isNumeric(PyObject o) {
         return o instanceof PyInt || o instanceof PyFloat || o instanceof PyBool || o instanceof BigInt;
