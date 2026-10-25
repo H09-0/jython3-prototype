@@ -87,6 +87,10 @@ import static org.example.jython3.runtime.PyOps.typeName;
 
 public class Jython3Interpreter {
 
+    // ─── Module Cache & Loading States ───────────────────────────────────
+    private enum ModuleState { INITIALIZING, LOADED }
+    private record ModuleEntry(PyModule module, ModuleState state) {}
+    private final Map<String, ModuleEntry> moduleCache = new ConcurrentHashMap<>();
     // ─── Bytecode Cache ──────────────────────────────────────────────────
     private static final int MAX_CACHE_SIZE = 2048;
     private final Map<String, CompiledCode> bytecodeCache = new ConcurrentHashMap<>();
@@ -417,6 +421,46 @@ public class Jython3Interpreter {
             }
         } finally {
             ExceptionTypeRegistry.restore(previousTypes);
+        }
+    }
+
+    /**
+     * Executes {@code code} within an isolated VM state (fresh stack, callStack, exceptStack)
+     * using the specified {@code executionLocals}, ensuring the caller's frames and operand stacks
+     * are perfectly preserved and restored upon completion or exception.
+     */
+    private void executeIsolated(CompiledCode code, Map<String, PyObject> executionLocals, String filename) {
+        var savedStack = stack;
+        var savedLocals = currentLocals;
+        var savedExcept = exceptStack;
+        var savedActive = activeExceptions;
+        var savedCallStack = new ArrayDeque<>(callStack);
+        var savedCollector = yieldCollector;
+        var savedFunc = currentFunc;
+        var savedFile = currentFile;
+        var savedLine = currentLine;
+        try {
+            stack = new ArrayDeque<>();
+            currentLocals = executionLocals;
+            exceptStack = new ArrayDeque<>();
+            activeExceptions = new ArrayDeque<>();
+            callStack.clear();
+            yieldCollector = null;
+            currentFunc = "<module>";
+            currentFile = filename != null ? filename : "<module>";
+            currentLine = 0;
+            run(code);
+        } finally {
+            stack = savedStack;
+            currentLocals = savedLocals;
+            exceptStack = savedExcept;
+            activeExceptions = savedActive;
+            callStack.clear();
+            callStack.addAll(savedCallStack);
+            yieldCollector = savedCollector;
+            currentFunc = savedFunc;
+            currentFile = savedFile;
+            currentLine = savedLine;
         }
     }
 
@@ -1180,19 +1224,8 @@ public class Jython3Interpreter {
                     try {
                         String src2 = java.nio.file.Files.readString(p);
                         CompiledCode fileCode = compile(src2);
-                        // Execute in current scope (globals shared, fresh locals inherit)
-                        var savedStack2 = stack;
-                        var savedLocals2 = currentLocals;
-                        var savedExcept2 = exceptStack;
-                        var savedActive2 = activeExceptions;
-                        stack = new ArrayDeque<>();
-                        exceptStack = new ArrayDeque<>();
-                        activeExceptions = new ArrayDeque<>();
-                        run(fileCode);
-                        stack = savedStack2;
-                        currentLocals = savedLocals2;
-                        exceptStack = savedExcept2;
-                        activeExceptions = savedActive2;
+                        // Execute in isolated VM context sharing current globals
+                        executeIsolated(fileCode, currentLocals != null ? currentLocals : globals, filePath);
                     } catch (java.io.IOException ioe) {
                         throw PyErrors.error("IOError", "cannot open '" + filePath + "': " + ioe.getMessage());
                     }
@@ -1583,7 +1616,14 @@ public class Jython3Interpreter {
                 throw PyErrors.error("ImportError", "cannot import name '" + item + "' from '" + pkg + "'");
             }
 
-            throw PyErrors.error("ImportError", "cannot import '" + item + "' from '" + pkg + "'");
+            PyModule mod = loadDiskModule(pkg);
+            PyObject attr = mod.attrs().get(item);
+            if (attr != null) {
+                if (currentLocals != null) currentLocals.put(alias, attr);
+                else globals.put(alias, attr);
+                return;
+            }
+            throw PyErrors.error("ImportError", "cannot import name '" + item + "' from '" + pkg + "'");
         }
 
         // ── pkg:alias  or plain pkg ──
@@ -1593,7 +1633,8 @@ public class Jython3Interpreter {
 
         PyModule builtin = resolveBuiltinModule(pkg);
         if (builtin != null) {
-            globals.put(alias, builtin);
+            if (currentLocals != null) currentLocals.put(alias, builtin);
+            else globals.put(alias, builtin);
             return;
         }
 
@@ -1601,7 +1642,8 @@ public class Jython3Interpreter {
             try {
                 PyObject javaObj = JavaBridge.resolveClassOrPackage(pkg, javaAccessPolicy);
                 if (javaObj != null) {
-                    globals.put(alias, javaObj);
+                    if (currentLocals != null) currentLocals.put(alias, javaObj);
+                    else globals.put(alias, javaObj);
                     return;
                 }
             } catch (InterpreterException ex) {
@@ -1613,22 +1655,61 @@ public class Jython3Interpreter {
             throw PyErrors.error("ImportError", "invalid module name '" + pkg + "'");
         }
 
+        PyModule diskMod = loadDiskModule(pkg);
+        if (currentLocals != null) currentLocals.put(alias, diskMod);
+        else globals.put(alias, diskMod);
+    }
+
+    /**
+     * Loads, compiles, and executes a Python source file from the modules/ directory.
+     * <p>Enforces full module lifecycle:
+     * <ul>
+     *   <li>Returns cached module if already LOADED.
+     *   <li>Returns initializing module if a circular import occurs.
+     *   <li>Executes module code in an isolated scope (its own dict) so caller state is untouched.
+     *   <li>Propagates any error up to the caller without swallowing it.
+     *   <li>Evicts partially initialized module from cache on failure.
+     * </ul>
+     */
+    private PyModule loadDiskModule(String pkg) {
+        ModuleEntry entry = moduleCache.get(pkg);
+        if (entry != null) {
+            return entry.module();
+        }
+
+        java.nio.file.Path p = java.nio.file.Path.of("modules", pkg + ".py").normalize();
+        if (!p.startsWith(java.nio.file.Path.of("modules").normalize())) {
+            throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
+        }
+        if (!hostAccessPolicy.canImportFromDisk(p)) {
+            throw PyErrors.error("SecurityError", "importing module '" + pkg + "' from filesystem is restricted");
+        }
+
+        String content;
         try {
-            java.nio.file.Path p = java.nio.file.Path.of("modules", pkg + ".py").normalize();
-            if (!p.startsWith(java.nio.file.Path.of("modules").normalize())) {
-                throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
-            }
-            if (!hostAccessPolicy.canImportFromDisk(p)) {
-                throw PyErrors.error("SecurityError", "importing module '" + pkg + "' from filesystem is restricted");
-            }
-            String content = java.nio.file.Files.readString(p);
-            exec(content);
-            if (!alias.equals(pkg)) {
-                PyObject mod = globals.get(pkg);
-                if (mod != null) globals.put(alias, mod);
-            }
+            content = java.nio.file.Files.readString(p);
         } catch (java.io.IOException e) {
             throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
+        }
+
+        CompiledCode moduleCode = compile(content);
+        Map<String, PyObject> moduleScope = new HashMap<>();
+        // Inject built-ins and standard types into module globals
+        for (var e : globals.entrySet()) {
+            moduleScope.putIfAbsent(e.getKey(), e.getValue());
+        }
+
+        PyModule module = new PyModule(pkg, moduleScope);
+        moduleCache.put(pkg, new ModuleEntry(module, ModuleState.INITIALIZING));
+
+        try {
+            executeIsolated(moduleCode, moduleScope, p.toString());
+            moduleCache.put(pkg, new ModuleEntry(module, ModuleState.LOADED));
+            return module;
+        } catch (InterpreterException ie) {
+            // Remove from cache so subsequent imports don't see a broken module
+            moduleCache.remove(pkg);
+            throw ie;
         }
     }
 

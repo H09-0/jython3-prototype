@@ -287,12 +287,19 @@ class JavaAccessPolicyTest {
 
         assertSame(AllowlistPolicy.trusted(), trusted.javaAccessPolicy());
         assertSame(DenyAllPolicy.INSTANCE, restricted.javaAccessPolicy());
+        assertSame(org.example.jython3.security.HostAccessPolicy.PERMISSIVE, trusted.hostAccessPolicy());
+        assertSame(org.example.jython3.security.HostAccessPolicy.DENY_ALL, restricted.hostAccessPolicy());
 
         assertDoesNotThrow(() -> trusted.eval("from java.lang import String"));
 
         InterpreterException e = assertThrows(InterpreterException.class,
                 () -> restricted.eval("from java.lang import String"));
         assertEquals("SecurityError", e.typeName());
+
+        // Verify DenyAllPolicy interpreter denies Host OS I/O as well
+        assertThrows(InterpreterException.class, () -> restricted.eval("import io; io.open('/etc/hostname')"));
+        assertThrows(InterpreterException.class, () -> restricted.eval("import os; os.listdir('.')"));
+        assertThrows(InterpreterException.class, () -> restricted.eval("execfile('test.py')"));
     }
 
     @Test

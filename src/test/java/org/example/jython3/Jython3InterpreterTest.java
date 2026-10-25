@@ -152,7 +152,7 @@ class Jython3InterpreterTest {
         Files.createDirectories(Path.of("modules"));
         Files.writeString(Path.of("modules/testmod.py"), "a = 99\n");
         py.exec("import testmod");
-        py.exec("print(a)");
+        py.exec("print(testmod.a)");
         assertEquals("99", out());
     }
 
@@ -2268,6 +2268,86 @@ class Jython3InterpreterTest {
             sandboxed.eval("import testmod");
         });
         assertEquals("SecurityError", e.typeName());
+    }
+
+    @Test void testImportInsideFunctionDoesNotDisruptCallerExecution() throws IOException {
+        Path modFile = Path.of("modules", "good_helper.py");
+        try {
+            Files.writeString(modFile, "helper_val = 100\ndef get_val():\n    return helper_val\n");
+            py.exec("""
+                events = []
+                def f():
+                    events.append("before_import")
+                    import good_helper
+                    events.append("after_import")
+                    return good_helper.get_val() + 5
+
+                events.append("start")
+                res = f()
+                events.append("result_" + str(res))
+                events.append("end")
+                """);
+            assertEquals("", err());
+            assertEquals("['start', 'before_import', 'after_import', 'result_105', 'end']",
+                         py.getGlobal("events").toString());
+            // Module globals should not leak into outer globals
+            assertNull(py.getGlobal("helper_val"), "module internal variable must not leak to caller globals");
+        } finally {
+            Files.deleteIfExists(modFile);
+        }
+    }
+
+    @Test void testImportErrorPropagatesToCallerAndCleansCache() throws IOException {
+        Path modFile = Path.of("modules", "broken_mod.py");
+        try {
+            Files.writeString(modFile, "x = 1\nraise ValueError('failing module initialization')\n");
+            py.exec("""
+                caught_msg = ""
+                try:
+                    import broken_mod
+                except ValueError as e:
+                    caught_msg = str(e)
+                """);
+            assertEquals("", err());
+            assertTrue(py.getGlobal("caught_msg").toString().contains("failing module initialization"));
+        } finally {
+            Files.deleteIfExists(modFile);
+        }
+    }
+
+    @Test void testModuleCacheReusesLoadedInstance() throws IOException {
+        Path modFile = Path.of("modules", "counter_mod.py");
+        try {
+            Files.writeString(modFile, "init_count = 1\n");
+            py.exec("""
+                import counter_mod
+                counter_mod.init_count = 42
+                import counter_mod as alias_mod
+                same_instance = (counter_mod.init_count == alias_mod.init_count)
+                """);
+            assertEquals("", err());
+            assertEquals("True", py.getGlobal("same_instance").toString());
+        } finally {
+            Files.deleteIfExists(modFile);
+        }
+    }
+
+    @Test void testCircularModuleImportDoesNotHang() throws IOException {
+        Path modA = Path.of("modules", "circ_a.py");
+        Path modB = Path.of("modules", "circ_b.py");
+        try {
+            Files.writeString(modA, "import circ_b\nval_a = 'A'\n");
+            Files.writeString(modB, "import circ_a\nval_b = 'B'\n");
+            py.exec("""
+                import circ_a
+                loaded = circ_a.val_a == 'A'
+                """);
+            assertEquals("", err());
+            assertEquals("True", py.getGlobal("loaded").toString());
+        } finally {
+            Files.deleteIfExists(modA);
+            Files.deleteIfExists(modB);
+        }
     }
 
     /**
