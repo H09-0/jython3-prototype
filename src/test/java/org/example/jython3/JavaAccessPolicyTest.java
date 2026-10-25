@@ -71,8 +71,25 @@ class JavaAccessPolicyTest {
         assertFalse(trusted.canAccessClass("sun.misc.Unsafe"));
         assertFalse(trusted.canAccessClass("java.lang.System"));
         assertFalse(trusted.canAccessClass("java.lang.reflect.Method"));
+        // Security enhancements: thread manipulation, deserialization, class loaders, process handles
+        assertFalse(trusted.canAccessClass("java.lang.Thread"));
+        assertFalse(trusted.canAccessClass("java.lang.ThreadGroup"));
+        assertFalse(trusted.canAccessClass("java.lang.Process"));
+        assertFalse(trusted.canAccessClass("java.lang.ProcessHandle"));
+        assertFalse(trusted.canAccessClass("java.io.ObjectInputStream"));
+        assertFalse(trusted.canAccessClass("java.io.ObjectOutputStream"));
+        assertFalse(trusted.canAccessClass("java.net.URLClassLoader"));
+        assertFalse(trusted.canAccessClass("java.lang.ClassLoader"));
+        // Restricted method names
         assertTrue(trusted.canCallMethod("java.lang.String", "toUpperCase", "()V"));
         assertFalse(trusted.canCallMethod("java.lang.String", "getClass", "()V"));
+        assertFalse(trusted.canCallMethod("java.lang.Class", "newInstance", "()V"));
+        assertFalse(trusted.canCallMethod("java.lang.Class", "getMethods", "()V"));
+        assertFalse(trusted.canCallMethod("java.lang.Class", "getDeclaredMethods", "()V"));
+        assertFalse(trusted.canCallMethod("java.lang.ClassLoader", "loadClass", "()V"));
+        assertFalse(trusted.canCallMethod("java.lang.Thread", "getThreadGroup", "()V"));
+        assertFalse(trusted.canCallMethod("java.lang.Thread", "interrupt", "()V"));
+        assertFalse(trusted.canCallMethod("java.io.ObjectInputStream", "readObject", "()V"));
     }
 
     @Test

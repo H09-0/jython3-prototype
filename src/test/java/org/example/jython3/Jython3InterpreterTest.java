@@ -1205,6 +1205,30 @@ class Jython3InterpreterTest {
                    "Expected security error, got: " + err());
     }
 
+    @Test void testJavaBridgeSecurityThreadBlocked() {
+        py.exec("from java.lang import Thread");
+        assertTrue(err().contains("SecurityError") || err().contains("ImportError"),
+                   "Expected security error, got: " + err());
+    }
+
+    @Test void testJavaBridgeSecurityThreadGroupBlocked() {
+        py.exec("from java.lang import ThreadGroup");
+        assertTrue(err().contains("SecurityError") || err().contains("ImportError"),
+                   "Expected security error, got: " + err());
+    }
+
+    @Test void testJavaBridgeSecurityObjectInputStreamBlocked() {
+        py.exec("from java.io import ObjectInputStream");
+        assertTrue(err().contains("SecurityError") || err().contains("ImportError"),
+                   "Expected security error, got: " + err());
+    }
+
+    @Test void testJavaBridgeSecurityURLClassLoaderBlocked() {
+        py.exec("from java.net import URLClassLoader");
+        assertTrue(err().contains("SecurityError") || err().contains("ImportError"),
+                   "Expected security error, got: " + err());
+    }
+
     // ── JB-10: Chained method calls ──────────────────────────────────
     @Test void testJavaBridgeChainedCalls() {
         py.exec("""

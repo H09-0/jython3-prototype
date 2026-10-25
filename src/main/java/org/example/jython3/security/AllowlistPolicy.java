@@ -61,12 +61,31 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
             "java.math.BigDecimal");
 
     public static final Set<String> FORBIDDEN_CLASSES = Set.of(
+            // Process and system control
             "java.lang.Runtime",
             "java.lang.ProcessBuilder",
+            "java.lang.Process",
+            "java.lang.ProcessHandle",
+            "java.lang.ProcessHandle$Info",
             "java.lang.System",
+            // Thread and concurrency manipulation
+            "java.lang.Thread",
+            "java.lang.ThreadGroup",
+            "java.lang.ThreadLocal",
+            "java.lang.InheritableThreadLocal",
+            // Class loading and reflection
             "java.lang.ClassLoader",
+            "java.security.SecureClassLoader",
+            "java.net.URLClassLoader",
             "java.lang.invoke.MethodHandles",
             "java.lang.invoke.MethodHandles$Lookup",
+            "java.lang.invoke.MethodHandle",
+            "java.lang.invoke.VarHandle",
+            // Java Object Deserialization hazards
+            "java.io.ObjectInputStream",
+            "java.io.ObjectOutputStream",
+            "java.io.ObjectStreamClass",
+            // Unsafe internals
             "sun.misc.Unsafe",
             "jdk.internal.misc.Unsafe");
 
@@ -74,26 +93,51 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
             "sun.",
             "jdk.internal.",
             "com.sun.",
-            "java.lang.reflect.");
+            "java.lang.reflect.",
+            "java.lang.instrument.",
+            "java.lang.management.");
 
     /**
-     * Members that expose reflection, class loading, or process control. They
-     * are denied even when the owning class is allowed.
+     * Members that expose reflection, class loading, process control, thread manipulation,
+     * or object deserialization. They are denied even when the owning class is allowed.
      */
     public static final Set<String> RESTRICTED_MEMBERS = Set.of(
+            // Reflection and type inspection
             "getClass",
             "forName",
             "getClassLoader",
             "getMethod",
+            "getMethods",
             "getDeclaredMethod",
-            "getFields",
+            "getDeclaredMethods",
             "getField",
+            "getFields",
             "getDeclaredField",
             "getDeclaredFields",
+            "getConstructor",
+            "getConstructors",
+            "getDeclaredConstructor",
+            "getDeclaredConstructors",
+            "newInstance",
+            // Class loading
+            "loadClass",
+            "findClass",
+            "defineClass",
+            // Execution and library loading
             "exec",
             "getRuntime",
             "load",
-            "loadLibrary");
+            "loadLibrary",
+            // Thread group and thread manipulation
+            "getThreadGroup",
+            "interrupt",
+            "stop",
+            "suspend",
+            "resume",
+            // Deserialization entry points
+            "readObject",
+            "readObjectUnshared",
+            "readUnshared");
 
     private AllowlistPolicy() {}
 
