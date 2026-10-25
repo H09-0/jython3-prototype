@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.10.0-alpha] - 2026-10-26
+### Added
+- **Core Numeric Model (P1.0 & P1.1)**: True division `/` always producing `float`, integer-power semantics using BigInteger exponentiation, and `PyOps` exact numeric operations.
+- **Python Dictionary Key Semantics (P1.2)**: `PyKey` wrapper implementing Python 3 key semantics where `1`, `1.0`, and `True` share equivalent identity and hash codes, while unhashable collections (`list`, `dict`) throw `TypeError`.
+- **Extended Slicing (P1.3)**: Comprehensive list and string slicing (`s[a:b:c]`, `s[::-1]`, `lst[:]`) with exact CPython `slice.indices()` semantics, Unicode/Emoji surrogate boundaries, and `step != 0` validation.
+- **Differential Test Harness**: `DifferentialHarness` and `CoreDifferentialTest` comparing Jython 3 directly against host CPython 3 across division, powers, comparisons, dictionary keys, and slicing.
+- **Security & Resource Enforcement (P0.1, P0.2, P0.3)**: `HostAccessPolicy` gating filesystem, environment, and disk imports; clean module namespaces avoiding caller globals leakage; `ExecutionLimits` and `ExecutionContext` with instruction counting, timeouts, and pre-allocation checks.
+- Test suite expanded to **276 automated tests** (all passing green).
+
+---
+
 ## [v0.9.8-alpha] - 2026-10-26
 ### Documentation
 - Modularized documentation architecture following the single source of truth principle:

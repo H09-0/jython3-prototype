@@ -25,7 +25,8 @@ public enum OpCode {
     RAISE_ACTIVE(54),      // bare raise: re-raises the active exception
     BEGIN_EXCEPT_HANDLER(55), // marks the caught value as the active exception
     END_EXCEPT_HANDLER(56),   // restores the previously active exception
-    DELETE_NAME_SILENT(57);   // deletes name if present, does not throw NameError if absent
+    DELETE_NAME_SILENT(57),   // deletes name if present, does not throw NameError if absent
+    BUILD_SLICE(58);          // raw arg: 2 (start, stop) or 3 (start, stop, step)
 
     private final int code;
 

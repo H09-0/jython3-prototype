@@ -772,9 +772,83 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitSubscript(Jython3Parser.SubscriptContext c) {
-        visit(c.expr(0));
-        visit(c.expr(1));
+        visit(c.expr());
+        visit(c.slice_item());
         b.emit(OpCode.BINARY_SUBSCR);
+        return null;
+    }
+
+    @Override public Void visitSliceSingleIndex(Jython3Parser.SliceSingleIndexContext c) {
+        visit(c.expr());
+        return null;
+    }
+
+    @Override public Void visitSliceDoubleColonStep(Jython3Parser.SliceDoubleColonStepContext c) {
+        b.emit(OpCode.LOAD_CONST, null); // start omitted
+        b.emit(OpCode.LOAD_CONST, null); // stop omitted
+        visit(c.expr());                 // step
+        b.emitRaw(OpCode.BUILD_SLICE, 3);
+        return null;
+    }
+
+    @Override public Void visitSliceOmittedStartStep(Jython3Parser.SliceOmittedStartStepContext c) {
+        b.emit(OpCode.LOAD_CONST, null); // start omitted
+        visit(c.expr(0));                // stop
+        if (c.expr().size() > 1) {
+            visit(c.expr(1));            // step
+        } else {
+            b.emit(OpCode.LOAD_CONST, null); // step omitted
+        }
+        b.emitRaw(OpCode.BUILD_SLICE, 3);
+        return null;
+    }
+
+    @Override public Void visitSliceOmittedStart(Jython3Parser.SliceOmittedStartContext c) {
+        b.emit(OpCode.LOAD_CONST, null); // start omitted
+        visit(c.expr());                 // stop
+        b.emitRaw(OpCode.BUILD_SLICE, 2);
+        return null;
+    }
+
+    @Override public Void visitSliceOmittedAll(Jython3Parser.SliceOmittedAllContext c) {
+        b.emit(OpCode.LOAD_CONST, null); // start omitted
+        b.emit(OpCode.LOAD_CONST, null); // stop omitted
+        b.emitRaw(OpCode.BUILD_SLICE, 2);
+        return null;
+    }
+
+    @Override public Void visitSliceStartDoubleColonStep(Jython3Parser.SliceStartDoubleColonStepContext c) {
+        visit(c.expr(0));                // start
+        b.emit(OpCode.LOAD_CONST, null); // stop omitted
+        if (c.expr().size() > 1) {
+            visit(c.expr(1));            // step
+        } else {
+            b.emit(OpCode.LOAD_CONST, null); // step omitted
+        }
+        b.emitRaw(OpCode.BUILD_SLICE, 3);
+        return null;
+    }
+
+    @Override public Void visitSliceFull(Jython3Parser.SliceFullContext c) {
+        visit(c.expr(0)); // start
+        visit(c.expr(1)); // stop
+        if (c.COLON().size() > 1) {
+            if (c.expr().size() > 2) {
+                visit(c.expr(2)); // step
+            } else {
+                b.emit(OpCode.LOAD_CONST, null); // step omitted
+            }
+            b.emitRaw(OpCode.BUILD_SLICE, 3);
+        } else {
+            b.emitRaw(OpCode.BUILD_SLICE, 2);
+        }
+        return null;
+    }
+
+    @Override public Void visitSliceStartOnly(Jython3Parser.SliceStartOnlyContext c) {
+        visit(c.expr());                 // start
+        b.emit(OpCode.LOAD_CONST, null); // stop omitted
+        b.emitRaw(OpCode.BUILD_SLICE, 2);
         return null;
     }
 

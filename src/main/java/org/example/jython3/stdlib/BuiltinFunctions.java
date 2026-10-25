@@ -49,7 +49,7 @@ public final class BuiltinFunctions {
         define.accept("len", new PyBuiltinFunction("len", args -> {
             checkArgCount("len", args, 1);
             PyObject o = args[0];
-            if (o instanceof PyStr s) return new PyInt(s.value().length());
+            if (o instanceof PyStr s) return new PyInt((int) s.value().codePoints().count());
             if (o instanceof PyList l) return new PyInt(l.items().size());
             if (o instanceof PyDict d) return new PyInt(d.map().size());
             if (o instanceof PyInstance inst) {

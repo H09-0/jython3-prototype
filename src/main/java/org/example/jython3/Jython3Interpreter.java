@@ -743,7 +743,7 @@ public class Jython3Interpreter {
                             throw PyErrors.error("IndexError", "list assignment index out of range");
                         list.items().set(i, val);
                     } else if (container instanceof PyDict dict) {
-                        dict.map().put(key, val);
+                        dict.put(key, val);
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(container) + "' object does not support item assignment");
                     }
@@ -785,7 +785,7 @@ public class Jython3Interpreter {
                             throw PyErrors.error("IndexError", "list index out of range");
                         list.items().remove(i);
                     } else if (container instanceof PyDict dict) {
-                        if (dict.map().remove(key) == null)
+                        if (dict.remove(key) == null)
                             throw PyErrors.error("KeyError", String.valueOf(key));
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(container) + "' object doesn't support item deletion");
@@ -798,17 +798,11 @@ public class Jython3Interpreter {
                 case MULTIPLY -> binaryMultiply();
                 case DIVIDE -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (l instanceof PyInt li && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "division by zero");
-                        if (li.value() % ri.value() == 0) {
-                            stack.push(new PyInt(li.value() / ri.value()));
-                        } else {
-                            stack.push(new PyFloat((double) li.value() / ri.value()));
-                        }
-                    } else if (isNumeric(l) && isNumeric(r)) {
+                    if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r);
-                        if (rv == 0) throw PyErrors.error("ZeroDivisionError", "division by zero");
-                        stack.push(new PyFloat(toDouble(l) / rv));
+                        if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "division by zero");
+                        double lv = toDouble(l);
+                        stack.push(new PyFloat(lv / rv));
                     } else {
                         throw PyErrors.error("TypeError", "unsupported operand types for /");
                     }
@@ -818,9 +812,18 @@ public class Jython3Interpreter {
                     if (l instanceof PyInt li && r instanceof PyInt ri) {
                         if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
                         stack.push(new PyInt(Math.floorDiv(li.value(), ri.value())));
+                    } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
+                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
+                        stack.push(new BigInt(bi.value().divide(bri.value())));
+                    } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
+                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
+                        stack.push(new BigInt(bi.value().divide(java.math.BigInteger.valueOf(ri.value()))));
+                    } else if (l instanceof PyInt li && r instanceof BigInt bri) {
+                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
+                        stack.push(new BigInt(java.math.BigInteger.valueOf(li.value()).divide(bri.value())));
                     } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r);
-                        if (rv == 0) throw PyErrors.error("ZeroDivisionError", "float floor division by zero");
+                        if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float floor division by zero");
                         stack.push(new PyFloat(Math.floor(toDouble(l) / rv)));
                     } else {
                         throw PyErrors.error("TypeError", "unsupported operand types for //");
@@ -833,9 +836,18 @@ public class Jython3Interpreter {
                     } else if (l instanceof PyInt li && r instanceof PyInt ri) {
                         if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
                         stack.push(new PyInt(Math.floorMod(li.value(), ri.value())));
+                    } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
+                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
+                        stack.push(new BigInt(bi.value().remainder(bri.value())));
+                    } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
+                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
+                        stack.push(new BigInt(bi.value().remainder(java.math.BigInteger.valueOf(ri.value()))));
+                    } else if (l instanceof PyInt li && r instanceof BigInt bri) {
+                        if (bri.value().equals(java.math.BigInteger.ZERO)) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
+                        stack.push(new BigInt(java.math.BigInteger.valueOf(li.value()).remainder(bri.value())));
                     } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r), lv = toDouble(l);
-                        if (rv == 0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
+                        if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
                         stack.push(new PyFloat(lv - Math.floor(lv / rv) * rv));
                     } else {
                         throw PyErrors.error("TypeError", "unsupported operand types for %");
@@ -843,17 +855,36 @@ public class Jython3Interpreter {
                 }
                 case POWER -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (l instanceof PyInt li && r instanceof PyInt ri && ri.value() >= 0) {
-                        if (ri.value() > executionLimits.maxExponent()) {
-                            throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
+                    if (isNumeric(l) && isNumeric(r)) {
+                        // Integer exact exponentiation
+                        if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+                            java.math.BigInteger base = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+                            java.math.BigInteger exp = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+                            if (exp.compareTo(java.math.BigInteger.valueOf(executionLimits.maxExponent())) > 0) {
+                                throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
+                            }
+                            if (exp.compareTo(java.math.BigInteger.ZERO) < 0) {
+                                // Negative exponent produces float: 2 ** -3 -> 0.125
+                                double baseD = base.doubleValue();
+                                double expD = exp.doubleValue();
+                                stack.push(new PyFloat(Math.pow(baseD, expD)));
+                            } else {
+                                int expInt = exp.intValueExact();
+                                java.math.BigInteger res = base.pow(expInt);
+                                if (res.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
+                                    res.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
+                                    stack.push(new PyInt(res.intValue()));
+                                } else {
+                                    stack.push(new BigInt(res));
+                                }
+                            }
+                        } else {
+                            double exp = toDouble(r);
+                            if (exp > executionLimits.maxExponent()) {
+                                throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
+                            }
+                            stack.push(new PyFloat(Math.pow(toDouble(l), exp)));
                         }
-                        stack.push(new PyInt((int) Math.pow(li.value(), ri.value())));
-                    } else if (isNumeric(l) && isNumeric(r)) {
-                        double exp = toDouble(r);
-                        if (exp > executionLimits.maxExponent()) {
-                            throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
-                        }
-                        stack.push(new PyFloat(Math.pow(toDouble(l), exp)));
                     } else {
                         throw PyErrors.error("TypeError", "unsupported operand types for **");
                     }
@@ -868,10 +899,26 @@ public class Jython3Interpreter {
                 // ── Comparison ──
                 case COMPARE_EQ     -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(pyEquals(l, r))); }
                 case COMPARE_NEQ    -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(!pyEquals(l, r))); }
-                case COMPARE_LT     -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(compareObjects(l, r) < 0)); }
-                case COMPARE_GT     -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(compareObjects(l, r) > 0)); }
-                case COMPARE_LTE    -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(compareObjects(l, r) <= 0)); }
-                case COMPARE_GTE    -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(compareObjects(l, r) >= 0)); }
+                case COMPARE_LT     -> {
+                    var r = stack.pop(); var l = stack.pop();
+                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    else stack.push(PyBool.of(compareObjects(l, r) < 0));
+                }
+                case COMPARE_GT     -> {
+                    var r = stack.pop(); var l = stack.pop();
+                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    else stack.push(PyBool.of(compareObjects(l, r) > 0));
+                }
+                case COMPARE_LTE    -> {
+                    var r = stack.pop(); var l = stack.pop();
+                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    else stack.push(PyBool.of(compareObjects(l, r) <= 0));
+                }
+                case COMPARE_GTE    -> {
+                    var r = stack.pop(); var l = stack.pop();
+                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    else stack.push(PyBool.of(compareObjects(l, r) >= 0));
+                }
                 case COMPARE_IN     -> { var container = stack.pop(); var item = stack.pop(); stack.push(PyBool.of(pyContains(container, item))); }
                 case COMPARE_NOT_IN -> { var container = stack.pop(); var item = stack.pop(); stack.push(PyBool.of(!pyContains(container, item))); }
                 case COMPARE_IS     -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(l == r || (l instanceof PyNull && r instanceof PyNull))); }
@@ -1092,25 +1139,60 @@ public class Jython3Interpreter {
                     for (int i = 0; i < n * 2; i += 2) map.put(pairs[i], pairs[i + 1]);
                     stack.push(new PyDict(map));
                 }
+                case BUILD_SLICE -> {
+                    int count = ai;
+                    if (count == 3) {
+                        PyObject step = stack.pop();
+                        PyObject stop = stack.pop();
+                        PyObject start = stack.pop();
+                        stack.push(new org.example.jython3.runtime.PySlice(start, stop, step));
+                    } else {
+                        PyObject stop = stack.pop();
+                        PyObject start = stack.pop();
+                        stack.push(new org.example.jython3.runtime.PySlice(start, stop));
+                    }
+                }
                 case BINARY_SUBSCR -> {
                     PyObject idx = stack.pop();
                     PyObject ctr = stack.pop();
-                    if (ctr instanceof PyList list && idx instanceof PyInt ix) {
+                    if (ctr instanceof PyList list && idx instanceof org.example.jython3.runtime.PySlice slice) {
+                        var indices = slice.computeIndices(list.items().size());
+                        if (indices.length() > executionLimits.maxCollectionSize()) {
+                            throw PyErrors.error("OverflowError", "Slice result exceeds maximum collection size: " + executionLimits.maxCollectionSize());
+                        }
+                        var resList = new ArrayList<PyObject>(indices.length());
+                        for (int i = indices.start(), count = 0; count < indices.length(); i += indices.step(), count++) {
+                            resList.add(list.items().get(i));
+                        }
+                        stack.push(new PyList(resList));
+                    } else if (ctr instanceof PyStr s && idx instanceof org.example.jython3.runtime.PySlice slice) {
+                        int[] codePoints = s.value().codePoints().toArray();
+                        var indices = slice.computeIndices(codePoints.length);
+                        if (indices.length() > executionLimits.maxStringLength()) {
+                            throw PyErrors.error("OverflowError", "Slice result exceeds maximum string length: " + executionLimits.maxStringLength());
+                        }
+                        var sb = new StringBuilder();
+                        for (int i = indices.start(), count = 0; count < indices.length(); i += indices.step(), count++) {
+                            sb.appendCodePoint(codePoints[i]);
+                        }
+                        stack.push(new PyStr(sb.toString()));
+                    } else if (ctr instanceof PyList list && idx instanceof PyInt ix) {
                         int i = ix.value();
                         if (i < 0) i += list.items().size();
                         if (i < 0 || i >= list.items().size())
                             throw PyErrors.error("IndexError", "list index out of range");
                         stack.push(list.items().get(i));
                     } else if (ctr instanceof PyDict dict) {
-                        PyObject val = dict.map().get(idx);
+                        PyObject val = dict.get(idx);
                         if (val == null) throw PyErrors.error("KeyError", String.valueOf(idx));
                         stack.push(val);
                     } else if (ctr instanceof PyStr s && idx instanceof PyInt ix) {
+                        int[] codePoints = s.value().codePoints().toArray();
                         int i = ix.value();
-                        if (i < 0) i += s.value().length();
-                        if (i < 0 || i >= s.value().length())
+                        if (i < 0) i += codePoints.length;
+                        if (i < 0 || i >= codePoints.length)
                             throw PyErrors.error("IndexError", "string index out of range");
-                        stack.push(new PyStr(String.valueOf(s.value().charAt(i))));
+                        stack.push(new PyStr(new String(Character.toChars(codePoints[i]))));
                     } else if (ctr instanceof PyInstance inst) {
                         PyObject getitem = inst.getField("__getitem__");
                         if (getitem != null) {
@@ -1577,34 +1659,36 @@ public class Jython3Interpreter {
 
     private PyObject dictMethod(PyDict dict, String method) {
         return switch (method) {
-            case "keys" -> new PyBuiltinFunction("dict.keys", args -> new PyList(new ArrayList<>(dict.map().keySet())));
-            case "values" -> new PyBuiltinFunction("dict.values", args -> new PyList(new ArrayList<>(dict.map().values())));
+            case "keys" -> new PyBuiltinFunction("dict.keys", args -> new PyList(dict.keys()));
+            case "values" -> new PyBuiltinFunction("dict.values", args -> new PyList(dict.values()));
             case "items" -> new PyBuiltinFunction("dict.items", args -> {
                 var items = new ArrayList<PyObject>();
-                for (var entry : dict.map().entrySet()) items.add(new PyList(List.of(entry.getKey(), entry.getValue())));
+                for (var entry : dict.itemsList()) items.add(new PyList(entry));
                 return new PyList(items);
             });
             case "get" -> new PyBuiltinFunction("dict.get", args -> {
                 if (args.length < 1) throw PyErrors.error("TypeError", "get() takes at least 1 argument");
-                PyObject val = dict.map().get(args[0]);
+                PyObject val = dict.get(args[0]);
                 if (val != null) return val;
                 return (args.length > 1) ? args[1] : new PyNull();
             });
             case "update" -> new PyBuiltinFunction("dict.update", args -> {
                 checkArgCount("dict.update", args, 1);
                 if (!(args[0] instanceof PyDict other)) throw PyErrors.error("TypeError", "update() argument must be a dict");
-                dict.map().putAll(other.map());
+                for (var key : other.keys()) {
+                    dict.put(key, other.get(key));
+                }
                 return new PyNull();
             });
             case "pop" -> new PyBuiltinFunction("dict.pop", args -> {
                 if (args.length < 1) throw PyErrors.error("TypeError", "pop() takes at least 1 argument");
-                PyObject val = dict.map().remove(args[0]);
+                PyObject val = dict.remove(args[0]);
                 if (val != null) return val;
                 if (args.length > 1) return args[1];
                 throw PyErrors.error("KeyError", String.valueOf(args[0]));
             });
-            case "clear" -> new PyBuiltinFunction("dict.clear", args -> { dict.map().clear(); return new PyNull(); });
-            case "copy" -> new PyBuiltinFunction("dict.copy", args -> new PyDict(new LinkedHashMap<>(dict.map())));
+            case "clear" -> new PyBuiltinFunction("dict.clear", args -> { dict.clear(); return new PyNull(); });
+            case "copy" -> new PyBuiltinFunction("dict.copy", args -> new PyDict(dict.map()));
             default -> throw PyErrors.error("AttributeError", "'dict' object has no attribute '" + method + "'");
         };
     }
@@ -1808,6 +1892,10 @@ public class Jython3Interpreter {
             case "random" -> BuiltinModules.random();
             default     -> null;
         };
+    }
+
+    private static boolean isNan(PyObject o) {
+        return o instanceof PyFloat f && Double.isNaN(f.value());
     }
 
     private boolean containsYield(CompiledCode code) {

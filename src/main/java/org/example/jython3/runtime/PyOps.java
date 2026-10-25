@@ -19,7 +19,17 @@ public final class PyOps {
             case PyFloat f -> f.value();
             case PyBool b -> b.value() ? 1.0 : 0.0;
             case PyStr s -> {
-                try { yield Double.parseDouble(s.value()); }
+                String str = s.value().trim();
+                if (str.equalsIgnoreCase("nan") || str.equalsIgnoreCase("+nan") || str.equalsIgnoreCase("-nan")) {
+                    yield Double.NaN;
+                }
+                if (str.equalsIgnoreCase("inf") || str.equalsIgnoreCase("+inf") || str.equalsIgnoreCase("infinity") || str.equalsIgnoreCase("+infinity")) {
+                    yield Double.POSITIVE_INFINITY;
+                }
+                if (str.equalsIgnoreCase("-inf") || str.equalsIgnoreCase("-infinity")) {
+                    yield Double.NEGATIVE_INFINITY;
+                }
+                try { yield Double.parseDouble(str); }
                 catch (NumberFormatException e) { throw PyErrors.error("ValueError", "could not convert string to float: '" + s.value() + "'"); }
             }
             default -> throw PyErrors.error("TypeError", "expected number, got " + typeName(o));
@@ -58,6 +68,7 @@ public final class PyOps {
             case PyJavaPackage jp -> true;
                 case PyGenerator g -> true;
                 case PySuper s -> true;
+                case PySlice sl -> true;
         };
     }
 
@@ -70,9 +81,9 @@ public final class PyOps {
         if (a instanceof PyInt ai && b instanceof BigInt bb) return java.math.BigInteger.valueOf(ai.value()).equals(bb.value());
         if (a instanceof BigInt ba && b instanceof PyFloat bf) return equalsBigIntAndFloat(ba, bf);
         if (a instanceof PyFloat af && b instanceof BigInt bb) return equalsBigIntAndFloat(bb, af);
-        if (a instanceof PyFloat af && b instanceof PyFloat bf) return Double.compare(af.value(), bf.value()) == 0;
+        if (a instanceof PyFloat af && b instanceof PyFloat bf) return af.value() == bf.value();
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().equals(bs.value());
-        if (isNumeric(a) && isNumeric(b)) return Double.compare(toDouble(a), toDouble(b)) == 0;
+        if (isNumeric(a) && isNumeric(b)) return toDouble(a) == toDouble(b);
         if (a instanceof PyList al && b instanceof PyList bl) {
             if (al.items().size() != bl.items().size()) return false;
             for (int i = 0; i < al.items().size(); i++) {
@@ -99,6 +110,8 @@ public final class PyOps {
     }
 
     public static int compareObjects(PyObject a, PyObject b) {
+        if (a instanceof PyFloat af && Double.isNaN(af.value())) return -1;
+        if (b instanceof PyFloat bf && Double.isNaN(bf.value())) return 1;
         if (a instanceof BigInt ba && b instanceof BigInt bb) {
             return ba.value().compareTo(bb.value());
         }
@@ -121,9 +134,7 @@ public final class PyOps {
 
     private static int compareBigIntAndFloat(BigInt bi, PyFloat pf) {
         double d = pf.value();
-        if (Double.isNaN(d)) {
-            throw PyErrors.error("ValueError", "cannot compare with NaN");
-        }
+        if (Double.isNaN(d)) return 1;
         if (d == Double.POSITIVE_INFINITY) return -1;
         if (d == Double.NEGATIVE_INFINITY) return 1;
         java.math.BigDecimal bdFloat = new java.math.BigDecimal(d);
@@ -166,6 +177,7 @@ public final class PyOps {
             case PyJavaPackage jp -> "JavaPackage(" + jp.packageName() + ")";
             case PyGenerator g -> "generator";
             case PySuper s -> "super";
+            case PySlice sl -> "slice";
         };
     }
 

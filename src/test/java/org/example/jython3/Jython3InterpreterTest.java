@@ -92,7 +92,7 @@ class Jython3InterpreterTest {
     @Test void testAddition() { py.exec("print(3 + 4)"); assertEquals("7", out()); }
     @Test void testSubtraction() { py.exec("print(10 - 3)"); assertEquals("7", out()); }
     @Test void testMultiplication() { py.exec("print(6 * 7)"); assertEquals("42", out()); }
-    @Test void testDivision() { py.exec("print(20 / 4)"); assertEquals("5", out()); }
+    @Test void testDivision() { py.exec("print(20 / 4)"); assertEquals("5.0", out()); }
 
     @Test void testOperatorPrecedence_MulBeforeAdd() {
         py.exec("print(2 + 3 * 4)");
@@ -2472,6 +2472,60 @@ class Jython3InterpreterTest {
         });
         assertEquals("ValueError", e.typeName());
         assertTrue(e.getMessage().contains("Source text exceeds maximum allowed length"));
+    }
+
+    @Test void testDictNumericAndBooleanEquivalenceKeys() {
+        py.exec("""
+            d = {}
+            d[1] = "integer"
+            d[1.0] = "float"
+            d[True] = "boolean"
+
+            len_d = len(d)
+            val = d[1]
+            """);
+        assertEquals("", err());
+        assertEquals("1", py.getGlobal("len_d").toString(), "1, 1.0, and True must overwrite the same dict entry in Python");
+        assertEquals("boolean", py.getGlobal("val").toString());
+    }
+
+    @Test void testDictUnhashableKeyRaisesTypeError() {
+        assertThrows(InterpreterException.class, () -> py.eval("d = {}; d[[1, 2]] = 'unhashable'"));
+        assertThrows(InterpreterException.class, () -> py.eval("d = {}; d[{'k': 'v'}] = 'unhashable'"));
+    }
+
+    @Test void testListSlicingBasicAndExtended() {
+        py.exec("""
+            lst = [10, 20, 30, 40, 50]
+            s1 = lst[1:4]
+            s2 = lst[:3]
+            s3 = lst[2:]
+            s4 = lst[::2]
+            s5 = lst[::-1]
+            """);
+        assertEquals("", err());
+        assertEquals("[20, 30, 40]", py.getGlobal("s1").toString());
+        assertEquals("[10, 20, 30]", py.getGlobal("s2").toString());
+        assertEquals("[30, 40, 50]", py.getGlobal("s3").toString());
+        assertEquals("[10, 30, 50]", py.getGlobal("s4").toString());
+        assertEquals("[50, 40, 30, 20, 10]", py.getGlobal("s5").toString());
+    }
+
+    @Test void testStringSlicingUnicodeSafe() {
+        py.exec("""
+            s = "Python3😀🚀"
+            sub1 = s[0:6]
+            sub2 = s[6:]
+            rev = s[::-1]
+            """);
+        assertEquals("", err());
+        assertEquals("Python", py.getGlobal("sub1").toString());
+        assertEquals("3😀🚀", py.getGlobal("sub2").toString());
+        assertEquals("🚀😀3nohtyP", py.getGlobal("rev").toString(), "Reverse slicing must respect Unicode surrogate code points");
+    }
+
+    @Test void testSliceStepZeroRaisesValueError() {
+        assertThrows(InterpreterException.class, () -> py.eval("[1, 2, 3][::0]"));
     }
 
     /**

@@ -212,7 +212,7 @@ arg_list
  * Expression grammar with precedence.
  */
 expr
-    : expr LBRACK expr RBRACK                         # Subscript
+    : expr LBRACK slice_item RBRACK                   # Subscript
     | expr DOT ID LPAREN arg_list? RPAREN             # AttrCall
     | expr DOT ID                                     # AttrAccess
     | <assoc=right> expr POWER expr                   # Power
@@ -241,7 +241,17 @@ expr
     | ID                                              # Id
     ;
 
-/** Comma‑separated list of expressions (for list literals). */
+/** subscript or slice index, e.g. i or a:b or a:b:c or :b or a: or ::-1 */
+slice_item
+    : COLON COLON expr                                # SliceDoubleColonStep
+    | COLON expr COLON expr?                          # SliceOmittedStartStep
+    | COLON expr                                      # SliceOmittedStart
+    | COLON                                           # SliceOmittedAll
+    | expr COLON COLON expr?                          # SliceStartDoubleColonStep
+    | expr COLON expr (COLON expr?)?                  # SliceFull
+    | expr COLON                                      # SliceStartOnly
+    | expr                                            # SliceSingleIndex
+    ;
 expr_list
     : expr (COMMA expr)* COMMA?
     ;

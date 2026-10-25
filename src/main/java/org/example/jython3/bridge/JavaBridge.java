@@ -100,7 +100,18 @@ public class JavaBridge {
         if (obj instanceof Byte || obj instanceof Short || obj instanceof Integer)
             return new PyInt(((Number) obj).intValue());
         if (obj instanceof Long l) {
-            return new PyInt(l.intValue());
+            long val = l;
+            if (val <= Integer.MAX_VALUE && val >= Integer.MIN_VALUE) {
+                return new PyInt((int) val);
+            }
+            return new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(val));
+        }
+        if (obj instanceof java.math.BigInteger bi) {
+            if (bi.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
+                bi.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
+                return new PyInt(bi.intValue());
+            }
+            return new org.example.jython3.runtime.BigInt(bi);
         }
         if (obj instanceof Float || obj instanceof Double)
             return new PyFloat(((Number) obj).doubleValue());
@@ -159,8 +170,15 @@ public class JavaBridge {
         }
         if (targetType == long.class || targetType == Long.class) {
             if (pyObj instanceof PyInt i) return (long) i.value();
+            if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().longValue();
             if (pyObj instanceof PyFloat f) return (long) f.value();
             return Long.parseLong(pyObj.toString());
+        }
+        if (targetType == java.math.BigInteger.class) {
+            if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value();
+            if (pyObj instanceof PyInt i) return java.math.BigInteger.valueOf(i.value());
+            if (pyObj instanceof PyFloat f) return java.math.BigInteger.valueOf((long) f.value());
+            return new java.math.BigInteger(pyObj.toString());
         }
         if (targetType == double.class || targetType == Double.class) {
             return PyOps.toDouble(pyObj);

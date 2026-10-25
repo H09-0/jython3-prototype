@@ -25,8 +25,9 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 | **String Manipulation** | **T1** | UTF-8 `PyStr`. Triple-quoted strings, escapes, `.upper()`, `.lower()`, `.strip()`, `.split()`, `.join()`, `.replace()`, `.startswith()`, `.endswith()`, `.find()`, `.count()`, `.isdigit()`, `.isalpha()`, `.isalnum()`. |
 | **Boolean & Identity Operations** | **T2** | `True`, `False`, `None`, short-circuit `and` / `or`, unary `not`, identity `is` / `is not`, membership `in` / `not in`. |
 | **Lists** | **T1** | Dynamic mutable `PyList`. Indexing, slicing, `.append()`, `.extend()`, `.insert()`, `.pop()`, `.remove()`, `.index()`, `.count()`, `.sort()`, `.reverse()`, `.copy()`, `.clear()`. |
-| **Dictionaries** | **T1** | Insertion-ordered `PyDict`. Key lookup, `.keys()`, `.values()`, `.items()`, `.get(key, default)`, `.pop()`, `.update()`, `.copy()`, `.clear()`. |
+| **Dictionaries** | **T2** | Insertion-ordered `PyDict` implementing Python 3 key semantics (1 == 1.0 == True map to the same key; unhashable lists/dicts raise TypeError). Key lookup, `.keys()`, `.values()`, `.items()`, `.get(key, default)`, `.pop()`, `.update()`, `.copy()`, `.clear()`. Differential tested. |
 | **Tuples** | **T1** | Parsed as `(a, b)` and supported in `except (E1, E2)` clauses. Full tuple immutability is in progress. |
+| **Slicing** | **T2** | List and string slicing (`s[a:b]`, `s[:b]`, `s[a:]`, `s[::step]`, `s[::-1]`) implementing exact CPython `slice.indices()` semantics, Unicode/Emoji codepoint boundaries, and step != 0 validation. Differential tested. |
 | **Control Flow** | **T1** | `if` / `elif` / `else`, `while`, `for ... in ...`. Loop control: `break` and `continue` with loop context back-patching across nested loops. |
 | **Functions & Scope** | **T1** | `def name(args):`, `return val`, isolated local call frames, lexical closure capture, nested function definitions. |
 | **Decorators** | **T1** | Function and class decorators `@dec` with bottom-to-top chaining. |
