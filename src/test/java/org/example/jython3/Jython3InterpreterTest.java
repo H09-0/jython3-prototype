@@ -2224,6 +2224,52 @@ class Jython3InterpreterTest {
         assertEquals("False", py.getGlobal("lt_result").toString());
     }
 
+    @Test void testRestrictedExecutionBlocksHostFileRead() {
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            sandboxed.eval("import io; io.open('/etc/hostname', 'r')");
+        });
+        assertEquals("SecurityError", e.typeName());
+    }
+
+    @Test void testRestrictedExecutionBlocksHostFileWrite() {
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            sandboxed.eval("import io; io.open('/tmp/restricted_test.txt', 'w')");
+        });
+        assertEquals("SecurityError", e.typeName());
+    }
+
+    @Test void testRestrictedExecutionBlocksHostDirectoryListing() {
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            sandboxed.eval("import os; os.listdir('/')");
+        });
+        assertEquals("SecurityError", e.typeName());
+    }
+
+    @Test void testRestrictedExecutionBlocksHostEnvironmentAccess() {
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        sandboxed.exec("import os; env_len = len(os.environ)");
+        assertEquals("0", sandboxed.getGlobal("env_len").toString());
+    }
+
+    @Test void testRestrictedExecutionBlocksExecfile() {
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            sandboxed.eval("execfile('test.py')");
+        });
+        assertEquals("SecurityError", e.typeName());
+    }
+
+    @Test void testRestrictedExecutionBlocksDiskModuleImport() {
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            sandboxed.eval("import testmod");
+        });
+        assertEquals("SecurityError", e.typeName());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

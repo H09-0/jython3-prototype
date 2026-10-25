@@ -29,6 +29,7 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.SystemExit;
+import org.example.jython3.security.HostAccessPolicy;
 
 
 public class BuiltinModules {
@@ -82,6 +83,10 @@ public class BuiltinModules {
     // ─── os ───────────────────────────────────────────────────────────────
 
     public static PyModule os() {
+        return os(HostAccessPolicy.PERMISSIVE);
+    }
+
+    public static PyModule os(HostAccessPolicy hostPolicy) {
         Map<String, PyObject> attrs = new HashMap<>();
 
         attrs.put("getcwd",   fn("getcwd",  args -> new PyStr(System.getProperty("user.dir"))));
@@ -89,16 +94,22 @@ public class BuiltinModules {
         attrs.put("sep",      new PyStr(java.io.File.separator));
         attrs.put("pathsep",  new PyStr(java.io.File.pathSeparator));
         attrs.put("name",     new PyStr("java"));
-        // Populate initial environ dictionary from system environment
+        // Populate initial environ dictionary if permitted by host policy
         var envMap = new java.util.LinkedHashMap<PyObject, PyObject>();
-        for (var entry : System.getenv().entrySet()) {
-            envMap.put(new PyStr(entry.getKey()), new PyStr(entry.getValue()));
+        if (hostPolicy.canReadEnvironment()) {
+            for (var entry : System.getenv().entrySet()) {
+                envMap.put(new PyStr(entry.getKey()), new PyStr(entry.getValue()));
+            }
         }
         var envDict = new PyDict(envMap);
         attrs.put("environ",  envDict);
         attrs.put("listdir",  fn("listdir", args -> {
-            String path = args.length > 0 ? args[0].toString() : ".";
-            java.io.File dir = new java.io.File(path);
+            String pathStr = args.length > 0 ? args[0].toString() : ".";
+            java.nio.file.Path p = java.nio.file.Path.of(pathStr);
+            if (!hostPolicy.canListDirectory(p)) {
+                throw PyErrors.error("SecurityError", "access to list directory '" + pathStr + "' is restricted");
+            }
+            java.io.File dir = p.toFile();
             java.io.File[] files = dir.listFiles();
             var list = new java.util.ArrayList<PyObject>();
             if (files != null) {
@@ -113,14 +124,27 @@ public class BuiltinModules {
     // ─── io ───────────────────────────────────────────────────────────────
 
     public static PyModule io() {
+        return io(HostAccessPolicy.PERMISSIVE);
+    }
+
+    public static PyModule io(HostAccessPolicy hostPolicy) {
         Map<String, PyObject> attrs = new HashMap<>();
         attrs.put("open", fn("open", args -> {
             if (args.length == 0) throw PyErrors.error("TypeError", "open() missing required argument");
             String filename = args[0].toString();
             String mode = args.length > 1 ? args[1].toString() : "r";
+            java.nio.file.Path p = java.nio.file.Path.of(filename).normalize();
+
+            boolean isWrite = mode.contains("w") || mode.contains("a") || mode.contains("+");
+            if (isWrite && !hostPolicy.canWriteFile(p)) {
+                throw PyErrors.error("SecurityError", "access to write file '" + filename + "' is restricted");
+            }
+            if (!isWrite && !hostPolicy.canReadFile(p)) {
+                throw PyErrors.error("SecurityError", "access to read file '" + filename + "' is restricted");
+            }
+
             try {
-                java.nio.file.Path p = java.nio.file.Path.of(filename).normalize();
-                if (mode.contains("w") || mode.contains("a") || mode.contains("+")) {
+                if (isWrite) {
                     java.nio.file.Files.createDirectories(p.getParent() == null ? java.nio.file.Path.of(".") : p.getParent());
                     if (mode.contains("w") && !mode.contains("a")) {
                         java.nio.file.Files.writeString(p, "");
@@ -129,10 +153,12 @@ public class BuiltinModules {
                     fattrs.put("name", new PyStr(p.toString()));
                     fattrs.put("mode", new PyStr(mode));
                     fattrs.put("read", fn("read", a -> {
+                        if (!hostPolicy.canReadFile(p)) throw PyErrors.error("SecurityError", "access to read file '" + filename + "' is restricted");
                         try { return new PyStr(java.nio.file.Files.readString(p)); }
                         catch (Exception ex) { throw PyErrors.error("IOError", ex.getMessage()); }
                     }));
                     fattrs.put("write", fn("write", a -> {
+                        if (!hostPolicy.canWriteFile(p)) throw PyErrors.error("SecurityError", "access to write file '" + filename + "' is restricted");
                         try {
                             String data = a.length > 0 ? a[0].toString() : "";
                             if (mode.contains("a")) java.nio.file.Files.writeString(p, data, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);

@@ -67,7 +67,9 @@ import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.SystemExit;
 import org.example.jython3.security.AllowlistPolicy;
+import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.security.JavaAccessPolicy;
+import org.example.jython3.security.SandboxedPolicy;
 import org.example.jython3.stdlib.BuiltinFunctions;
 import org.example.jython3.stdlib.BuiltinModules;
 
@@ -89,6 +91,8 @@ public class Jython3Interpreter {
     private final Map<String, CompiledCode> bytecodeCache = new ConcurrentHashMap<>();
     /** Gate for every Java class, constructor, method, and field access. */
     private final JavaAccessPolicy javaAccessPolicy;
+    /** Gate for host file system, environment, and disk module execution. */
+    private final HostAccessPolicy hostAccessPolicy;
     /** Built-in exception classes owned by this interpreter. */
     private final ExceptionTypeRegistry exceptionTypes;
 
@@ -181,21 +185,28 @@ public class Jython3Interpreter {
 
     // ─── Constructor ──────────────────────────────────────────────────────
     public Jython3Interpreter() {
-        this(AllowlistPolicy.trusted());
+        this(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE);
     }
 
     /** Creates an interpreter whose Java access is controlled by {@code javaAccessPolicy}. */
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy) {
-        this(javaAccessPolicy, ExceptionTypeRegistry.standard());
+        this(javaAccessPolicy,
+             javaAccessPolicy instanceof SandboxedPolicy ? HostAccessPolicy.DENY_ALL : HostAccessPolicy.PERMISSIVE,
+             ExceptionTypeRegistry.standard());
+    }
+
+    public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy, HostAccessPolicy hostAccessPolicy) {
+        this(javaAccessPolicy, hostAccessPolicy, ExceptionTypeRegistry.standard());
     }
 
     /**
-     * Creates an interpreter with an explicit exception-type registry. Most
-     * callers should use {@link #Jython3Interpreter(JavaAccessPolicy)}.
+     * Creates an interpreter with explicit access policies and exception-type registry.
      */
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
+                              HostAccessPolicy hostAccessPolicy,
                               ExceptionTypeRegistry exceptionTypes) {
         this.javaAccessPolicy = Objects.requireNonNull(javaAccessPolicy, "javaAccessPolicy");
+        this.hostAccessPolicy = Objects.requireNonNull(hostAccessPolicy, "hostAccessPolicy");
         this.exceptionTypes = Objects.requireNonNull(exceptionTypes, "exceptionTypes");
         PyCaller.CURRENT.set(new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
@@ -207,6 +218,18 @@ public class Jython3Interpreter {
             }
         });
         registerBuiltins();
+    }
+
+    public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
+                              ExceptionTypeRegistry exceptionTypes) {
+        this(javaAccessPolicy,
+             javaAccessPolicy instanceof SandboxedPolicy ? HostAccessPolicy.DENY_ALL : HostAccessPolicy.PERMISSIVE,
+             exceptionTypes);
+    }
+
+    /** The policy this interpreter applies to host I/O and OS access. */
+    public HostAccessPolicy hostAccessPolicy() {
+        return hostAccessPolicy;
     }
 
     /** The policy this interpreter applies to Java access. */
@@ -1131,8 +1154,12 @@ public class Jython3Interpreter {
                     // Stack top = file path string
                     PyObject pathObj = stack.pop();
                     String filePath = pathObj instanceof PyStr s ? s.value() : pathObj.toString();
+                    java.nio.file.Path p = java.nio.file.Path.of(filePath);
+                    if (!hostAccessPolicy.canExecFile(p)) {
+                        throw PyErrors.error("SecurityError", "execution of file '" + filePath + "' is restricted");
+                    }
                     try {
-                        String src2 = java.nio.file.Files.readString(java.nio.file.Path.of(filePath));
+                        String src2 = java.nio.file.Files.readString(p);
                         CompiledCode fileCode = compile(src2);
                         // Execute in current scope (globals shared, fresh locals inherit)
                         var savedStack2 = stack;
@@ -1572,6 +1599,9 @@ public class Jython3Interpreter {
             if (!p.startsWith(java.nio.file.Path.of("modules").normalize())) {
                 throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
             }
+            if (!hostAccessPolicy.canImportFromDisk(p)) {
+                throw PyErrors.error("SecurityError", "importing module '" + pkg + "' from filesystem is restricted");
+            }
             String content = java.nio.file.Files.readString(p);
             exec(content);
             if (!alias.equals(pkg)) {
@@ -1587,8 +1617,8 @@ public class Jython3Interpreter {
         return switch (name) {
             case "math" -> BuiltinModules.math();
             case "sys"  -> BuiltinModules.sys();
-            case "os"   -> BuiltinModules.os();
-            case "io"   -> BuiltinModules.io();
+            case "os"   -> BuiltinModules.os(hostAccessPolicy);
+            case "io"   -> BuiltinModules.io(hostAccessPolicy);
             case "json" -> BuiltinModules.json();
             case "re"   -> BuiltinModules.re();
             case "time" -> BuiltinModules.time();
