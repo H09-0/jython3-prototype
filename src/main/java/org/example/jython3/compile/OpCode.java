@@ -24,7 +24,8 @@ public enum OpCode {
     RERAISE(53),           // pops an exception value and raises it again
     RAISE_ACTIVE(54),      // bare raise: re-raises the active exception
     BEGIN_EXCEPT_HANDLER(55), // marks the caught value as the active exception
-    END_EXCEPT_HANDLER(56);   // restores the previously active exception
+    END_EXCEPT_HANDLER(56),   // restores the previously active exception
+    DELETE_NAME_SILENT(57);   // deletes name if present, does not throw NameError if absent
 
     private final int code;
 

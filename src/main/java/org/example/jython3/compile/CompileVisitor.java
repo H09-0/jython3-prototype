@@ -31,6 +31,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         boolean insideFinally = false;
         /** True while compiling an {@code except} suite of this statement. */
         boolean inHandler = false;
+        String boundVar = null;
 
         TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth) {
             this.finallySuite = finallySuite;
@@ -53,6 +54,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         for (TryScope scope : tryStack) {
             if (!all && scope.loopDepth < targetLoopDepth) break;
             if (scope.inHandler) {
+                if (scope.boundVar != null) {
+                    b.emit(OpCode.DELETE_NAME_SILENT, scope.boundVar);
+                }
                 b.emit(OpCode.END_EXCEPT_HANDLER);
             }
             if (scope.handlerActive) {
@@ -532,21 +536,44 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             // The VM records the previously active one so it can be restored.
             b.emit(OpCode.BEGIN_EXCEPT_HANDLER);
 
+            String boundVarName = null;
             if (clause.AS() != null && clause.ID() != null) {
-                b.emit(OpCode.STORE_FAST, clause.ID().getText());
+                boundVarName = clause.ID().getText();
+                b.emit(OpCode.STORE_FAST, boundVarName);
             } else {
                 b.emit(OpCode.POP_TOP);
             }
 
             boolean prevActiveScope = scope.handlerActive;
             boolean prevInHandler = scope.inHandler;
+            String prevBoundVar = scope.boundVar;
             scope.handlerActive = false;
             scope.inHandler = true;
+            scope.boundVar = boundVarName;
+
+            int handlerPushIdx = -1;
+            if (finallySuite != null) {
+                // If this try statement has a finally suite, register a handler around the
+                // except clause body so an exception raised inside the handler still runs finally.
+                handlerPushIdx = b.size();
+                b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
+            }
+
             try {
                 visit(clause.suite());
             } finally {
                 scope.handlerActive = prevActiveScope;
                 scope.inHandler = prevInHandler;
+                scope.boundVar = prevBoundVar;
+            }
+
+            if (finallySuite != null) {
+                b.emit(OpCode.POP_EXCEPT_HANDLER);
+            }
+
+            // In Python 3, 'as e' variable is explicitly deleted at the end of the except block.
+            if (boundVarName != null) {
+                b.emit(OpCode.DELETE_NAME_SILENT, boundVarName);
             }
 
             // Natural end of the handler: restore the outer active exception.
@@ -556,6 +583,17 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             int jmpEnd = b.size();
             b.emitRaw(OpCode.JUMP, 0);
             clauseEndPatches.add(jmpEnd);
+
+            if (finallySuite != null) {
+                // Exceptional path out of this except clause: run finally then reraise.
+                b.patch(handlerPushIdx, b.size());
+                if (boundVarName != null) {
+                    b.emit(OpCode.DELETE_NAME_SILENT, boundVarName);
+                }
+                b.emit(OpCode.END_EXCEPT_HANDLER);
+                visitFinally(scope);
+                b.emit(OpCode.RERAISE);
+            }
 
             if (hasType) {
                 b.patch(nextClauseIdx, b.size());
@@ -695,6 +733,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitListLiteral(Jython3Parser.ListLiteralContext c) {
+        int n = 0;
+        if (c.expr_list() != null) {
+            for (var e : c.expr_list().expr()) { visit(e); n++; }
+        }
+        b.emitRaw(OpCode.BUILD_LIST, n);
+        return null;
+    }
+
+    @Override public Void visitTupleLiteral(Jython3Parser.TupleLiteralContext c) {
         int n = 0;
         if (c.expr_list() != null) {
             for (var e : c.expr_list().expr()) { visit(e); n++; }

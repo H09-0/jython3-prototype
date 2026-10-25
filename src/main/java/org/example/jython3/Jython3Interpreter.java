@@ -539,6 +539,11 @@ public class Jython3Interpreter {
                         throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     }
                 }
+                case DELETE_NAME_SILENT -> {
+                    String n = (String) pool[ai];
+                    if (currentLocals != null) currentLocals.remove(n);
+                    globals.remove(n);
+                }
                 case DELETE_SUBSCR -> {
                     PyObject key = stack.pop();
                     PyObject container = stack.pop();
@@ -1001,11 +1006,25 @@ public class Jython3Interpreter {
                     // pushes the match result.
                     PyObject typeObj = stack.pop();
                     PyObject excValue = stack.peek();
-                    if (!(typeObj instanceof PyClass type) || !type.isExceptionType()) {
+                    if (typeObj instanceof PyList tupleOrList) {
+                        // Python allows a tuple of exception types: except (E1, E2, ...):
+                        boolean matched = false;
+                        for (PyObject item : tupleOrList.items()) {
+                            if (!(item instanceof PyClass type) || !type.isExceptionType()) {
+                                throw PyErrors.error("TypeError",
+                                        "catching classes that do not inherit from BaseException is not allowed");
+                            }
+                            if (!matched && PyErrors.matches(excValue, type)) {
+                                matched = true;
+                            }
+                        }
+                        stack.push(PyBool.of(matched));
+                    } else if (typeObj instanceof PyClass type && type.isExceptionType()) {
+                        stack.push(PyBool.of(PyErrors.matches(excValue, type)));
+                    } else {
                         throw PyErrors.error("TypeError",
                                 "catching classes that do not inherit from BaseException is not allowed");
                     }
-                    stack.push(PyBool.of(PyErrors.matches(excValue, type)));
                 }
                 case RERAISE -> {
                     PyObject excObj = stack.pop();

@@ -1937,15 +1937,17 @@ class Jython3InterpreterTest {
                 try:
                     raise ValueError("outer")
                 except ValueError as original:
+                    saved_original = original
                     try:
                         raise TypeError("inner")
                     except TypeError:
                         raise original
             except ValueError as caught:
-                same = original is caught
+                same = saved_original is caught
+                saved_caught = caught
             """);
         assertEquals("True", py.getGlobal("same").toString());
-        PyException caught = assertInstanceOf(PyException.class, py.getGlobal("caught"));
+        PyException caught = assertInstanceOf(PyException.class, py.getGlobal("saved_caught"));
         assertNotNull(caught.context(), "the re-raise sets the handled TypeError as context");
         assertEquals("TypeError", caught.context().typeName());
     }
@@ -1966,6 +1968,97 @@ class Jython3InterpreterTest {
         assertEquals("False", py.getGlobal("by_other").toString());
         assertEquals("<class 'MyError'>", py.getGlobal("name").toString());
         assertInstanceOf(PyException.class, py.getGlobal("saved"));
+    }
+
+    @Test void testExceptTupleCatchesMatchingType() {
+        py.exec("""
+            events = []
+            try:
+                raise ValueError("tuple-match")
+            except (TypeError, ValueError) as e:
+                events.append("caught")
+                events.append(isinstance(e, ValueError))
+            """);
+        assertEquals("", err());
+        assertEquals("['caught', True]", py.getGlobal("events").toString());
+    }
+
+    @Test void testExceptTupleSkipsNonMatchingType() {
+        py.exec("""
+            events = []
+            try:
+                try:
+                    raise KeyError("missing")
+                except (TypeError, ValueError):
+                    events.append("wrong")
+            except KeyError:
+                events.append("outer-caught")
+            """);
+        assertEquals("", err());
+        assertEquals("['outer-caught']", py.getGlobal("events").toString());
+    }
+
+    @Test void testExceptTupleWithNonClassRaisesTypeError() {
+        assertThrows(InterpreterException.class, () -> py.eval("""
+            try:
+                raise RuntimeError("boom")
+            except (ValueError, "not a class"):
+                pass
+            """));
+    }
+
+    @Test void testFinallyRunsWhenExceptionRaisedInsideExcept() {
+        py.exec("""
+            events = []
+            try:
+                try:
+                    raise ValueError("original")
+                except ValueError:
+                    raise TypeError("replacement")
+                finally:
+                    events.append("inner_cleanup")
+            except TypeError:
+                events.append("outer_caught")
+            """);
+        assertEquals("", err());
+        assertEquals("['inner_cleanup', 'outer_caught']", py.getGlobal("events").toString());
+    }
+
+    @Test void testNestedFinallyRunsWhenExceptionRaisedInsideExcept() {
+        py.exec("""
+            events = []
+            try:
+                try:
+                    try:
+                        raise ValueError("original")
+                    except ValueError:
+                        raise TypeError("replacement")
+                    finally:
+                        events.append("inner_cleanup")
+                finally:
+                    events.append("outer_cleanup")
+            except TypeError:
+                events.append("outer_caught")
+            """);
+        assertEquals("", err());
+        assertEquals("['inner_cleanup', 'outer_cleanup', 'outer_caught']", py.getGlobal("events").toString());
+    }
+
+    @Test void testAsVariableDeletedAfterExceptBlock() {
+        py.exec("""
+            deleted = False
+            try:
+                try:
+                    raise ValueError("my-val")
+                except ValueError as err_var:
+                    inside = err_var is not None
+                check = err_var
+            except NameError:
+                deleted = True
+            """);
+        assertEquals("", err());
+        assertEquals("True", py.getGlobal("inside").toString());
+        assertEquals("True", py.getGlobal("deleted").toString());
     }
 
     /**

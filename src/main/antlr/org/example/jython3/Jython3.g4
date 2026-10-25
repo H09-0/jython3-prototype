@@ -229,6 +229,7 @@ expr
     | expr OR expr                                    # OrExpr
     | ID LPAREN arg_list? RPAREN                      # FuncCall
     | LPAREN expr RPAREN                              # Paren
+    | LPAREN expr_list? RPAREN                        # TupleLiteral
     | LBRACK expr_list? RBRACK                        # ListLiteral
     | LBRACE dict_entries? RBRACE                     # DictLiteral
     | FLOAT                                           # Float
