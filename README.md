@@ -5,19 +5,25 @@
 [![Java 21+](https://img.shields.io/badge/Java-21%2B-orange.svg)](https://openjdk.org/projects/jdk/21/)
 [![Status: Pre-Production](https://img.shields.io/badge/Status-Pre--Production%20Alpha-yellow.svg)](docs/ROADMAP.md)
 
-An exploratory, high-performance **Python 3 execution engine running directly on the Java Virtual Machine (JVM)**.
+An experimental Python runtime for the JVM, written in Java.
 
-Inspired by the design and vision of the original [Jython Project](https://www.jython.org/), this prototype provides a modern JVM-native implementation designed to bring clean Python 3.14 syntax, object models, and bidirectional Java interop to JVM applications and automation frameworks.
+Jython 3 is an independent re-implementation inspired by the original Jython project's goals. It targets a documented subset of Python 3.14 and provides a custom compiler, stack-based virtual machine, Python object model, and Java bridge.
+
+The implementation is currently pre-production. Python 3.14 compatibility is tracked feature-by-feature in the [Compatibility Matrix](docs/COMPATIBILITY.md).
+
+> **Important**: This is an independent research prototype. It is not an official release of the original Jython project and is not endorsed by the upstream project.
 
 ---
 
 ## Key Highlights
 
-- **Python 3 Compatibility**: Conforms to Python 3.14 syntax and semantics, including indentation blocks, OOP, exception models, and standard built-ins.
+- **Python 3 Compatibility**: Targets a documented subset of Python 3.14, including indentation blocks, OOP, exception models, and standard built-ins.
 - **Direct JVM Execution**: Pure Java 21+ stack-based bytecode virtual machine with zero C-dependencies.
-- **Fast Java Bridge**: Blazing-fast bidirectional reflection bridge allowing scripts to directly instantiate and call JVM classes.
+- **Java Bridge**: Bidirectional Java reflection bridge allowing scripts to directly instantiate and interact with JVM classes.
 - **Defense-in-Depth Security**: Configurable access policies (`AllowlistPolicy`, `SandboxedPolicy`, `DenyAllPolicy`) with recursive inner-class containment and circular reference safety.
-- **Tested & Verified**: Comprehensive test suite with **246 automated tests** passing green across all subsystems.
+- **Automated Verification**: Comprehensive regression test suite verified in continuous integration.
+
+> **Security Note**: Access policies restrict Java interop but do not provide an in-process security sandbox. To safely execute untrusted code, run the interpreter in a separate, isolated OS process or container with CPU, memory, and timeout limits. See [SECURITY.md](SECURITY.md) for full details.
 
 ---
 
@@ -61,7 +67,7 @@ print("Current Unix Epoch Nanos:", time.time_ns())
 git clone https://github.com/H09-0/jython3-prototype.git
 cd jython3-prototype
 
-# Run all 246 unit tests
+# Run automated unit tests
 ./gradlew test
 
 # Start the interactive REPL

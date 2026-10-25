@@ -34,7 +34,7 @@ This document outlines the milestones, completed phases, and future development 
 - ✅ `execfile()` opcode for direct execution of legacy automation scripts.
 - ✅ Interactive CLI REPL and standalone script runner (`jython3`).
 
-### Phase 10: Security Hardening & Conformance (v0.9.1 – v0.9.7)
+### Phase 10: Security Hardening & Conformance (v0.9.1 – v0.9.8)
 - ✅ Python 3 `except (A, B)` tuple matching and PEP 3110 `as e` deletion at block exit.
 - ✅ Complete unwinding guarantee for `finally` suites when exceptions are raised inside handlers.
 - ✅ ThreadGroup, Process, ProcessHandle, Deserialization, ClassLoader, and Reflection lockdown.
@@ -43,12 +43,15 @@ This document outlines the milestones, completed phases, and future development 
 - ✅ Safe graph-aware sanitization with `IdentityHashMap` to handle circular object references.
 - ✅ Standard `time` (with Epoch `time_ns()`) and `random` (with unbiased arbitrary-precision `randint()`).
 - ✅ Exact `BigInt` vs `PyFloat` comparisons without precision loss.
+- ✅ Modularized documentation architecture (v0.9.8-alpha).
 
 ---
 
-## Current Status: Milestone v1.0.0-alpha
+## Current Status
 
-The prototype now has **246 passing automated tests**, covering the core language syntax, exception engine, memory structures, standard library built-ins, and secure Java interop.
+- **Current Release**: `v0.9.8-alpha` (Pre-production research prototype).
+- **Next Milestone**: `v1.0.0-alpha` (Feature stabilization & differential CPython 3.14 test harness).
+- Automated test suite: **246 tests passing green in continuous integration**.
 
 ---
 

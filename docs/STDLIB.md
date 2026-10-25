@@ -33,7 +33,7 @@ print("Platform:", sys.platform)          # 'java'
 print("CLI Arguments:", sys.argv)         # ['script.py', 'arg1', ...]
 ```
 
-- **Attributes**: `argv` (list of CLI arguments), `version`, `platform`, `maxsize` (2147483647)
+- **Attributes**: `argv` (list of CLI arguments), `version`, `platform`, `maxsize` (9223372036854775807 on 64-bit platform)
 - **Functions**: `exit(code=0)` (raises `SystemExit` with exit code)
 
 ---
@@ -49,8 +49,8 @@ pid = os.getpid()           # Current process ID integer
 files = os.listdir(".")      # List of file and directory names
 ```
 
-- **Attributes**: `sep` (system path separator), `pathsep` (system PATH delimiter), `name` ('java')
-- **Functions**: `getcwd()`, `getpid()`, `environ()`, `listdir(path=".")`
+- **Attributes**: `sep` (system path separator), `pathsep` (system PATH delimiter), `name` ('java'), `environ` (dict of environment variables)
+- **Functions**: `getcwd()`, `getpid()`, `listdir(path=".")`
 
 ---
 
@@ -94,6 +94,8 @@ print(parsed["name"])  # 'Alice'
 
 ## 6. `re`
 Provides regular expression matching operations backed by Java's `java.util.regex` engine.
+
+> **Note**: Backed by the JVM regex engine. Basic syntax is compatible with CPython, while certain advanced PCRE-specific features may behave differently.
 
 ```python
 import re

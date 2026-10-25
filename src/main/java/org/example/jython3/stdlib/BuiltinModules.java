@@ -70,7 +70,7 @@ public class BuiltinModules {
         attrs.put("argv",     new PyList(new ArrayList<>()));
         attrs.put("version",  new PyStr("3.0.0 (Jython3-prototype)"));
         attrs.put("platform", new PyStr("java"));
-        attrs.put("maxsize",  new PyInt(Integer.MAX_VALUE));
+        attrs.put("maxsize",  new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(Long.MAX_VALUE)));
         attrs.put("exit",     fn("exit", args -> {
             int code = (args.length > 0 && args[0] instanceof PyInt i) ? i.value() : 0;
             throw new SystemExit(code);
@@ -89,7 +89,13 @@ public class BuiltinModules {
         attrs.put("sep",      new PyStr(java.io.File.separator));
         attrs.put("pathsep",  new PyStr(java.io.File.pathSeparator));
         attrs.put("name",     new PyStr("java"));
-        attrs.put("environ",  fn("environ", args -> new PyDict(new java.util.LinkedHashMap<>())));
+        // Populate initial environ dictionary from system environment
+        var envMap = new java.util.LinkedHashMap<PyObject, PyObject>();
+        for (var entry : System.getenv().entrySet()) {
+            envMap.put(new PyStr(entry.getKey()), new PyStr(entry.getValue()));
+        }
+        var envDict = new PyDict(envMap);
+        attrs.put("environ",  envDict);
         attrs.put("listdir",  fn("listdir", args -> {
             String path = args.length > 0 ? args[0].toString() : ".";
             java.io.File dir = new java.io.File(path);

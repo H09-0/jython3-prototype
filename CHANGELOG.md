@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.9.8-alpha] - 2026-10-26
+### Documentation
+- Modularized documentation architecture following the single source of truth principle:
+  - Streamlined `README.md` into an accurate, clean landing page with quickstart guide and documentation links.
+  - Created `docs/PROJECT_STRUCTURE.md` mapping full codebase layout and package responsibilities.
+  - Created `docs/COMPATIBILITY.md` documenting T0–T3 compatibility stages against CPython 3.14.
+  - Created `docs/ROADMAP.md` documenting milestone progression from foundation to v1.0.0.
+  - Created `docs/STDLIB.md` detailing built-in modules (`math`, `sys`, `os`, `io`, `json`, `re`, `time`, `random`).
+  - Created `SECURITY.md` detailing threat models, access policies, and vulnerability reporting.
+  - Created `CHANGELOG.md` tracking all historical releases.
+
+---
+
 ## [v0.9.7-alpha] - 2026-10-26
 ### Added
 - Graph-aware, circular-reference safe sanitization in `sanitizeForPolicy()` using `IdentityHashMap` to prevent `StackOverflowError` on self-referential lists, dicts, and modules.
