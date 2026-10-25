@@ -85,6 +85,8 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
             "java.io.ObjectInputStream",
             "java.io.ObjectOutputStream",
             "java.io.ObjectStreamClass",
+            // Desktop and external application launching
+            "java.awt.Desktop",
             // Unsafe internals
             "sun.misc.Unsafe",
             "jdk.internal.misc.Unsafe");
@@ -137,14 +139,31 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
             // Deserialization entry points
             "readObject",
             "readObjectUnshared",
-            "readUnshared");
+            "readUnshared",
+            // Desktop / external launcher methods
+            "getDesktop",
+            "browse",
+            "open",
+            "edit",
+            "print",
+            "mail");
 
     private AllowlistPolicy() {}
 
     @Override
     public boolean canAccessClass(String binaryName) {
         if (binaryName == null || binaryName.isEmpty()) return false;
-        if (FORBIDDEN_CLASSES.contains(binaryName)) return false;
+
+        // Check if the class itself or any of its enclosing outer classes is forbidden.
+        // For example, "java.lang.Thread$State" or "java.lang.ProcessBuilder$Redirect"
+        // will be rejected because the outer class "java.lang.Thread" / "java.lang.ProcessBuilder" is forbidden.
+        String checkName = binaryName;
+        while (checkName != null && !checkName.isEmpty()) {
+            if (FORBIDDEN_CLASSES.contains(checkName)) return false;
+            int lastDollar = checkName.lastIndexOf('$');
+            checkName = lastDollar > 0 ? checkName.substring(0, lastDollar) : null;
+        }
+
         for (String prefix : FORBIDDEN_PREFIXES) {
             if (binaryName.startsWith(prefix)) return false;
         }

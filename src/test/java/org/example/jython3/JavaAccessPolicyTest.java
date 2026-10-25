@@ -80,6 +80,10 @@ class JavaAccessPolicyTest {
         assertFalse(trusted.canAccessClass("java.io.ObjectOutputStream"));
         assertFalse(trusted.canAccessClass("java.net.URLClassLoader"));
         assertFalse(trusted.canAccessClass("java.lang.ClassLoader"));
+        assertFalse(trusted.canAccessClass("java.awt.Desktop"));
+        // Inner classes of forbidden classes are also rejected
+        assertFalse(trusted.canAccessClass("java.lang.Thread$State"));
+        assertFalse(trusted.canAccessClass("java.lang.ProcessBuilder$Redirect"));
         // Restricted method names
         assertTrue(trusted.canCallMethod("java.lang.String", "toUpperCase", "()V"));
         assertFalse(trusted.canCallMethod("java.lang.String", "getClass", "()V"));
@@ -90,6 +94,9 @@ class JavaAccessPolicyTest {
         assertFalse(trusted.canCallMethod("java.lang.Thread", "getThreadGroup", "()V"));
         assertFalse(trusted.canCallMethod("java.lang.Thread", "interrupt", "()V"));
         assertFalse(trusted.canCallMethod("java.io.ObjectInputStream", "readObject", "()V"));
+        assertFalse(trusted.canCallMethod("java.awt.Desktop", "getDesktop", "()V"));
+        assertFalse(trusted.canCallMethod("java.awt.Desktop", "browse", "()V"));
+        assertFalse(trusted.canCallMethod("java.awt.Desktop", "open", "()V"));
     }
 
     @Test
@@ -171,6 +178,30 @@ class JavaAccessPolicyTest {
         PyJavaObject instance = (PyJavaObject) type.newInstance(new PyObject[]{new PyInt(1)});
         instance.setMember("value", new PyInt(9));
         assertEquals(9, ((PyInt) instance.getMember("value")).value());
+    }
+
+    @Test
+    void sandboxedPolicyAllowsOnlyPureDataAndDeniesIOAndNetwork() {
+        JavaAccessPolicy sandboxed = org.example.jython3.security.SandboxedPolicy.get();
+        // Allowed pure data structures and math
+        assertTrue(sandboxed.canAccessClass("java.lang.String"));
+        assertTrue(sandboxed.canAccessClass("java.lang.Integer"));
+        assertTrue(sandboxed.canAccessClass("java.lang.Math"));
+        assertTrue(sandboxed.canAccessClass("java.util.ArrayList"));
+        assertTrue(sandboxed.canAccessClass("java.util.HashMap"));
+        assertTrue(sandboxed.canAccessClass("java.math.BigInteger"));
+        // Completely denies I/O
+        assertFalse(sandboxed.canAccessClass("java.io.File"));
+        assertFalse(sandboxed.canAccessClass("java.io.FileInputStream"));
+        assertFalse(sandboxed.canAccessClass("java.io.FileOutputStream"));
+        assertFalse(sandboxed.canAccessClass("java.io.InputStream"));
+        // Completely denies Network
+        assertFalse(sandboxed.canAccessClass("java.net.Socket"));
+        assertFalse(sandboxed.canAccessClass("java.net.URL"));
+        assertFalse(sandboxed.canAccessClass("java.net.HttpURLConnection"));
+        // Completely denies UI
+        assertFalse(sandboxed.canAccessClass("java.awt.Desktop"));
+        assertFalse(sandboxed.canAccessClass("java.awt.Color"));
     }
 
     @Test
