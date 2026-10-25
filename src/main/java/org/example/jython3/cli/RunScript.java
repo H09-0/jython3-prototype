@@ -22,12 +22,31 @@ import java.nio.file.Path;
 public class RunScript {
     public static void main(String[] args) {
         if (args.length == 0) {
-            System.err.println("Usage: java RunScript <script.py> [arg ...]");
+            System.err.println("Usage: jython3 <script.py> [arg ...] or jython3 -c \"code\"");
             System.exit(2);
         }
 
-        String filename = args[0];
         var interpreter = new Jython3Interpreter();
+
+        // Handle inline execution: jython3 -c "<code>"
+        if ("-c".equals(args[0])) {
+            if (args.length < 2) {
+                System.err.println("Argument expected for the -c option");
+                System.exit(2);
+            }
+            String code = args[1];
+            try {
+                interpreter.eval(code, "<string>");
+            } catch (SystemExit se) {
+                System.exit(se.code);
+            } catch (InterpreterException ie) {
+                System.err.println(interpreter.formatTraceback(ie, "<string>", code));
+                System.exit(1);
+            }
+            return;
+        }
+
+        String filename = args[0];
 
         // Forward remaining CLI args as sys.argv
         var argv = new org.example.jython3.runtime.PyList(new java.util.ArrayList<>());
