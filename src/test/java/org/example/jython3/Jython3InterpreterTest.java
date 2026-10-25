@@ -1012,6 +1012,18 @@ class Jython3InterpreterTest {
         assertEquals("hello world", out());
     }
 
+    @Test void testExecfile() throws java.io.IOException {
+        java.nio.file.Path tmp = java.nio.file.Files.createTempFile("test_execfile", ".py");
+        try {
+            java.nio.file.Files.writeString(tmp, "val = 42\nprint('from execfile:', val)");
+            py.exec("execfile('" + tmp.toAbsolutePath().toString().replace("\\", "/") + "')");
+            assertEquals("", err());
+            assertEquals("from execfile: 42", out());
+        } finally {
+            java.nio.file.Files.deleteIfExists(tmp);
+        }
+    }
+
     @Test void testJavaBridgeArrayList() {
         py.exec("""
             from java.util import ArrayList

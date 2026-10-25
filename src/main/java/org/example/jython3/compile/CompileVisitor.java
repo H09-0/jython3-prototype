@@ -245,12 +245,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return null;
     }
 
-    /**
-     * execfile(path) — compile the target .py file and execute it inline.
-     * Emits EXECFILE opcode; the interpreter reads and runs the file at runtime.
-     */
     @Override public Void visitExecfile_stmt(Jython3Parser.Execfile_stmtContext c) {
-        // Push the path expression onto the stack, then emit EXECFILE
         visit(c.expr());
         b.emit(OpCode.EXECFILE);
         return null;

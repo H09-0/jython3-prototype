@@ -983,7 +983,7 @@ public class Jython3Interpreter {
                 }
 
                 // ── Exception handling ──
-                case PUSH_EXCEPT_HANDLER -> exceptStack.push(new ExceptHandler(ai, activeExceptions.size()));
+                case PUSH_EXCEPT_HANDLER -> exceptStack.push(new ExceptHandler(ai, activeExceptions.size(), stack.size()));
                 case POP_EXCEPT_HANDLER  -> { if (!exceptStack.isEmpty()) exceptStack.pop(); }
                 case BEGIN_EXCEPT_HANDLER -> activeExceptions.addLast(stack.peek());
                 case END_EXCEPT_HANDLER -> { if (!activeExceptions.isEmpty()) activeExceptions.removeLast(); }
