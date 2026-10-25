@@ -426,7 +426,43 @@ public class Jython3Interpreter {
     }
 
     public void setGlobal(String name, PyObject value) {
-        globals.put(name, value);
+        globals.put(name, sanitizeForPolicy(value, javaAccessPolicy));
+    }
+
+    /**
+     * Ensures any injected host object or wrapper adheres to this interpreter's policy.
+     * Recursively verifies collections (PyList, PyDict) and retargets wrappers.
+     */
+    private static PyObject sanitizeForPolicy(PyObject val, JavaAccessPolicy policy) {
+        if (val == null || val instanceof PyNull) return val;
+        if (val instanceof PyJavaClass jc) {
+            if (!policy.canAccessClass(jc.clazz().getName())) {
+                throw JavaBridge.denied(jc.clazz().getName());
+            }
+            return new PyJavaClass(jc.clazz(), policy);
+        }
+        if (val instanceof PyJavaObject jo) {
+            if (!policy.canAccessClass(jo.object().getClass().getName())) {
+                throw JavaBridge.denied(jo.object().getClass().getName());
+            }
+            return new PyJavaObject(jo.object(), policy);
+        }
+        if (val instanceof PyList list) {
+            var sanitizedItems = new ArrayList<PyObject>();
+            for (PyObject item : list.items()) {
+                sanitizedItems.add(sanitizeForPolicy(item, policy));
+            }
+            return new PyList(sanitizedItems);
+        }
+        if (val instanceof PyDict dict) {
+            var sanitizedMap = new LinkedHashMap<PyObject, PyObject>();
+            for (var entry : dict.map().entrySet()) {
+                sanitizedMap.put(sanitizeForPolicy(entry.getKey(), policy),
+                                 sanitizeForPolicy(entry.getValue(), policy));
+            }
+            return new PyDict(sanitizedMap);
+        }
+        return val;
     }
 
     // ─── ANTLR compilation with Python Indentation Stream ─────────────────
@@ -1494,6 +1530,8 @@ public class Jython3Interpreter {
             case "io"   -> BuiltinModules.io();
             case "json" -> BuiltinModules.json();
             case "re"   -> BuiltinModules.re();
+            case "time" -> BuiltinModules.time();
+            case "random" -> BuiltinModules.random();
             default     -> null;
         };
     }

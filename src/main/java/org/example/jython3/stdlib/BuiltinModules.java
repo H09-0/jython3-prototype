@@ -235,6 +235,68 @@ public class BuiltinModules {
         return new PyModule("re", attrs);
     }
 
+    // ─── time ─────────────────────────────────────────────────────────────
+
+    public static PyModule time() {
+        Map<String, PyObject> attrs = new HashMap<>();
+        attrs.put("time", fn("time", args -> new PyFloat(System.currentTimeMillis() / 1000.0)));
+        attrs.put("time_ns", fn("time_ns", args -> new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(System.nanoTime()))));
+        attrs.put("sleep", fn("sleep", args -> {
+            if (args.length == 0) throw PyErrors.error("TypeError", "sleep() takes at least 1 argument");
+            double secs = toDouble(args[0]);
+            try {
+                long millis = (long) (secs * 1000);
+                int nanos = (int) ((secs * 1000 - millis) * 1_000_000);
+                if (millis < 0) throw PyErrors.error("ValueError", "sleep length must be non-negative");
+                Thread.sleep(millis, Math.max(0, Math.min(999999, nanos)));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw PyErrors.error("KeyboardInterrupt", "sleep interrupted");
+            }
+            return new PyNull();
+        }));
+        attrs.put("perf_counter", fn("perf_counter", args -> new PyFloat(System.nanoTime() / 1_000_000_000.0)));
+        attrs.put("monotonic", fn("monotonic", args -> new PyFloat(System.nanoTime() / 1_000_000_000.0)));
+        return new PyModule("time", attrs);
+    }
+
+    // ─── random ───────────────────────────────────────────────────────────
+
+    private static final java.util.Random RNG = new java.util.Random();
+
+    public static PyModule random() {
+        Map<String, PyObject> attrs = new HashMap<>();
+        attrs.put("random", fn("random", args -> new PyFloat(RNG.nextDouble())));
+        attrs.put("randint", fn("randint", args -> {
+            if (args.length < 2) throw PyErrors.error("TypeError", "randint() takes exactly 2 arguments");
+            int a = (int) toDouble(args[0]);
+            int b = (int) toDouble(args[1]);
+            if (a > b) throw PyErrors.error("ValueError", "empty range for randint(" + a + ", " + b + ")");
+            return new PyInt(a + RNG.nextInt(b - a + 1));
+        }));
+        attrs.put("choice", fn("choice", args -> {
+            if (args.length == 0) throw PyErrors.error("TypeError", "choice() missing 1 required argument");
+            if (args[0] instanceof PyList list) {
+                if (list.items().isEmpty()) throw PyErrors.error("IndexError", "Cannot choose from an empty sequence");
+                return list.items().get(RNG.nextInt(list.items().size()));
+            }
+            if (args[0] instanceof PyStr s) {
+                if (s.value().isEmpty()) throw PyErrors.error("IndexError", "Cannot choose from an empty sequence");
+                return new PyStr(String.valueOf(s.value().charAt(RNG.nextInt(s.value().length()))));
+            }
+            throw PyErrors.error("TypeError", "object is not subscriptable or sequence");
+        }));
+        attrs.put("seed", fn("seed", args -> {
+            if (args.length > 0 && args[0] instanceof PyInt i) {
+                RNG.setSeed(i.value());
+            } else {
+                RNG.setSeed(System.currentTimeMillis());
+            }
+            return new PyNull();
+        }));
+        return new PyModule("random", attrs);
+    }
+
     // ─── Helpers ───────────────────────────────────────────────────────────
 
     /** Convenience: create a PyBuiltinFunction. */

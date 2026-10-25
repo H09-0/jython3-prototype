@@ -212,9 +212,17 @@ class JavaAccessPolicyTest {
         // Create a trusted wrapper for java.io.File
         PyJavaClass trustedFileClass = new PyJavaClass(java.io.File.class, AllowlistPolicy.trusted());
 
-        // In a sandboxed interpreter, java.io.File is not accessible
+        // In a sandboxed interpreter, passing a trusted wrapper via setGlobal() is rejected
         Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
-        sandboxed.setGlobal("FileClass", trustedFileClass);
+        assertThrows(InterpreterException.class, () -> {
+            sandboxed.setGlobal("FileClass", trustedFileClass);
+        });
+
+        // Passing a nested list with a trusted wrapper via setGlobal() is also rejected
+        org.example.jython3.runtime.PyList nestedList = new org.example.jython3.runtime.PyList(new java.util.ArrayList<>(java.util.List.of(trustedFileClass)));
+        assertThrows(InterpreterException.class, () -> {
+            sandboxed.setGlobal("nested", nestedList);
+        });
 
         // Retargeting on conversion to target Java type blocks restricted object
         assertThrows(InterpreterException.class, () -> {
@@ -224,6 +232,42 @@ class JavaAccessPolicyTest {
         // Calling toPyObject on an untrusted object under SandboxedPolicy rejects it
         assertThrows(InterpreterException.class, () -> {
             JavaBridge.toPyObject(new java.io.File("/tmp"), org.example.jython3.security.SandboxedPolicy.get());
+        });
+    }
+
+    /** Custom CharSequence that records invocations of toString(). */
+    public static final class SideEffectCharSequence implements CharSequence {
+        public static int toStringInvocations = 0;
+        @Override public int length() { return 4; }
+        @Override public char charAt(int index) { return "test".charAt(index); }
+        @Override public CharSequence subSequence(int start, int end) { return "test".subSequence(start, end); }
+        @Override public String toString() {
+            toStringInvocations++;
+            return "side-effect-triggered";
+        }
+    }
+
+    @Test
+    void customCharSequenceIsRejectedBeforeToStringExecution() {
+        SideEffectCharSequence.toStringInvocations = 0;
+        SideEffectCharSequence custom = new SideEffectCharSequence();
+
+        // Under SandboxedPolicy, the custom class is not in the allowlist; it must throw SecurityError WITHOUT calling toString()
+        assertThrows(InterpreterException.class, () -> {
+            JavaBridge.toPyObject(custom, org.example.jython3.security.SandboxedPolicy.get());
+        });
+        assertEquals(0, SideEffectCharSequence.toStringInvocations, "toString() must not have been executed on restricted CharSequence");
+    }
+
+    @Test
+    void nestedCollectionConversionEnforcesPolicy() {
+        // Create an untrusted PyJavaObject wrapped with trusted policy
+        PyJavaObject fileObj = new PyJavaObject(new java.io.File("/tmp"), AllowlistPolicy.trusted());
+        org.example.jython3.runtime.PyList list = new org.example.jython3.runtime.PyList(new java.util.ArrayList<>(java.util.List.of(fileObj)));
+
+        // Converting this list to Java List under SandboxedPolicy must reject the nested fileObj
+        assertThrows(InterpreterException.class, () -> {
+            JavaBridge.toJavaObject(list, java.util.List.class, org.example.jython3.security.SandboxedPolicy.get());
         });
     }
 

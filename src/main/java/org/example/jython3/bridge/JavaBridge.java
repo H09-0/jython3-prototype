@@ -104,8 +104,17 @@ public class JavaBridge {
         }
         if (obj instanceof Float || obj instanceof Double)
             return new PyFloat(((Number) obj).doubleValue());
-        if (obj instanceof CharSequence || obj instanceof Character)
+        if (obj instanceof String || obj instanceof Character)
             return new PyStr(obj.toString());
+
+        // For non-String CharSequence (e.g. custom user class implementing CharSequence, or StringBuilder),
+        // we must check the policy BEFORE invoking toString(), to prevent arbitrary host code execution.
+        if (obj instanceof CharSequence) {
+            if (!policy.canAccessClass(obj.getClass().getName())) {
+                throw denied(obj.getClass().getName());
+            }
+            return new PyStr(obj.toString());
+        }
 
         // Check if the object class is accessible under the given policy before wrapping
         if (!policy.canAccessClass(obj.getClass().getName())) {
@@ -187,13 +196,13 @@ public class JavaBridge {
             if (pyObj instanceof PyBool b) return b.value();
             if (pyObj instanceof PyList list) {
                 var javaList = new ArrayList<Object>();
-                for (var it : list.items()) javaList.add(toJavaObject(it, Object.class));
+                for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy));
                 return javaList;
             }
             if (pyObj instanceof PyDict dict) {
                 var javaMap = new LinkedHashMap<Object, Object>();
                 for (var entry : dict.map().entrySet()) {
-                    javaMap.put(toJavaObject(entry.getKey(), Object.class), toJavaObject(entry.getValue(), Object.class));
+                    javaMap.put(toJavaObject(entry.getKey(), Object.class, policy), toJavaObject(entry.getValue(), Object.class, policy));
                 }
                 return javaMap;
             }
@@ -203,7 +212,7 @@ public class JavaBridge {
         // List conversion
         if (pyObj instanceof PyList list && (List.class.isAssignableFrom(targetType) || targetType == Object.class || targetType == Collection.class)) {
             var javaList = new ArrayList<Object>();
-            for (var it : list.items()) javaList.add(toJavaObject(it, Object.class));
+            for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy));
             return javaList;
         }
 
@@ -211,7 +220,7 @@ public class JavaBridge {
         if (pyObj instanceof PyDict dict && (Map.class.isAssignableFrom(targetType) || targetType == Object.class)) {
             var javaMap = new LinkedHashMap<Object, Object>();
             for (var entry : dict.map().entrySet()) {
-                javaMap.put(toJavaObject(entry.getKey(), Object.class), toJavaObject(entry.getValue(), Object.class));
+                javaMap.put(toJavaObject(entry.getKey(), Object.class, policy), toJavaObject(entry.getValue(), Object.class, policy));
             }
             return javaMap;
         }
@@ -221,7 +230,7 @@ public class JavaBridge {
             Class<?> componentType = targetType.getComponentType();
             Object arr = java.lang.reflect.Array.newInstance(componentType, list.items().size());
             for (int i = 0; i < list.items().size(); i++) {
-                java.lang.reflect.Array.set(arr, i, toJavaObject(list.items().get(i), componentType));
+                java.lang.reflect.Array.set(arr, i, toJavaObject(list.items().get(i), componentType, policy));
             }
             return arr;
         }

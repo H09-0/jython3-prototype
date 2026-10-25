@@ -2100,6 +2100,41 @@ class Jython3InterpreterTest {
         assertEquals("True", py.getGlobal("deleted").toString());
     }
 
+    @Test void testTimeModuleFunctions() {
+        py.exec("""
+            import time
+            t1 = time.time()
+            mono = time.monotonic()
+            perf = time.perf_counter()
+            time.sleep(0.01)
+            t2 = time.time()
+            elapsed_positive = t2 >= t1
+            mono_positive = mono > 0
+            perf_positive = perf > 0
+            """);
+        assertEquals("", err());
+        assertEquals("True", py.getGlobal("elapsed_positive").toString());
+        assertEquals("True", py.getGlobal("mono_positive").toString());
+        assertEquals("True", py.getGlobal("perf_positive").toString());
+    }
+
+    @Test void testRandomModuleFunctions() {
+        py.exec("""
+            import random
+            random.seed(42)
+            r = random.random()
+            ri = random.randint(10, 20)
+            ch = random.choice(["alpha", "beta", "gamma"])
+            in_range_float = 0.0 <= r <= 1.0
+            in_range_int = 10 <= ri <= 20
+            valid_choice = ch in ["alpha", "beta", "gamma"]
+            """);
+        assertEquals("", err());
+        assertEquals("True", py.getGlobal("in_range_float").toString());
+        assertEquals("True", py.getGlobal("in_range_int").toString());
+        assertEquals("True", py.getGlobal("valid_choice").toString());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.
