@@ -21,7 +21,7 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
             throw JavaBridge.denied(clazz.getName() + descriptor);
         }
         try {
-            Object[] javaArgs = JavaBridge.convertArgs(args, match.paramTypes());
+            Object[] javaArgs = JavaBridge.convertArgs(args, match.paramTypes(), policy);
             Object instance = match.constructor().newInstance(javaArgs);
             return new PyJavaObject(instance, policy);
         } catch (Exception e) {

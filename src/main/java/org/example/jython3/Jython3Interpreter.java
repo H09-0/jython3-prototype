@@ -892,10 +892,10 @@ public class Jython3Interpreter {
                                 throw PyErrors.error("TypeError", "Java list indices must be integers");
                             }
                         } else if (jObj instanceof java.util.Map<?,?> m) {
-                            Object key = JavaBridge.toJavaObject(idx, Object.class);
+                            Object key = JavaBridge.toJavaObject(idx, Object.class, jo.policy());
                             Object val = m.get(key);
                             if (val == null && !m.containsKey(key))
-                                throw PyErrors.error("KeyError", String.valueOf(idx));
+                                throw PyErrors.error("KeyError", idx.toString());
                             stack.push(JavaBridge.toPyObject(val, jo.policy()));
                         } else if (jObj.getClass().isArray()) {
                             if (idx instanceof PyInt ix) {

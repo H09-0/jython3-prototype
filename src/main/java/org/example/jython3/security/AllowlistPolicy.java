@@ -85,8 +85,9 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
             "java.io.ObjectInputStream",
             "java.io.ObjectOutputStream",
             "java.io.ObjectStreamClass",
-            // Desktop and external application launching
+            // Desktop and external application launching / UI automation
             "java.awt.Desktop",
+            "java.awt.Robot",
             // Unsafe internals
             "sun.misc.Unsafe",
             "jdk.internal.misc.Unsafe");

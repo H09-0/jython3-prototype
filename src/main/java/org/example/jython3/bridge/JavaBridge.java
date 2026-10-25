@@ -79,7 +79,22 @@ public class JavaBridge {
     /** Convert an arbitrary Java object into a Jython PyObject. */
     public static PyObject toPyObject(Object obj, JavaAccessPolicy policy) {
         if (obj == null) return new PyNull();
-        if (obj instanceof PyObject pyObj) return pyObj;
+        if (obj instanceof PyObject pyObj) {
+            // If already a PyJavaObject or PyJavaClass, retarget with the current policy to prevent privilege escalation
+            if (pyObj instanceof PyJavaObject jo) {
+                if (!policy.canAccessClass(jo.object().getClass().getName())) {
+                    throw denied(jo.object().getClass().getName());
+                }
+                return new PyJavaObject(jo.object(), policy);
+            }
+            if (pyObj instanceof PyJavaClass jc) {
+                if (!policy.canAccessClass(jc.clazz().getName())) {
+                    throw denied(jc.clazz().getName());
+                }
+                return new PyJavaClass(jc.clazz(), policy);
+            }
+            return pyObj;
+        }
 
         if (obj instanceof Boolean b) return PyBool.of(b);
         if (obj instanceof Byte || obj instanceof Short || obj instanceof Integer)
@@ -92,18 +107,33 @@ public class JavaBridge {
         if (obj instanceof CharSequence || obj instanceof Character)
             return new PyStr(obj.toString());
 
+        // Check if the object class is accessible under the given policy before wrapping
+        if (!policy.canAccessClass(obj.getClass().getName())) {
+            throw denied(obj.getClass().getName());
+        }
+
         // Wrap arbitrary Java object
         return new PyJavaObject(obj, policy);
     }
 
-    /** Convert a Python PyObject into a target Java type. */
     public static Object toJavaObject(PyObject pyObj, Class<?> targetType) {
+        return toJavaObject(pyObj, targetType, null);
+    }
+
+    /** Convert a Python PyObject into a target Java type, enforcing access policy. */
+    public static Object toJavaObject(PyObject pyObj, Class<?> targetType, JavaAccessPolicy policy) {
         if (pyObj instanceof PyNull) return null;
 
         if (pyObj instanceof PyJavaObject jo) {
+            if (policy != null && !policy.canAccessClass(jo.object().getClass().getName())) {
+                throw denied(jo.object().getClass().getName());
+            }
             return jo.object();
         }
         if (pyObj instanceof PyJavaClass jc) {
+            if (policy != null && !policy.canAccessClass(jc.clazz().getName())) {
+                throw denied(jc.clazz().getName());
+            }
             return jc.clazz();
         }
 
@@ -351,9 +381,13 @@ public class JavaBridge {
     }
 
     public static Object[] convertArgs(PyObject[] args, Class<?>[] paramTypes) {
+        return convertArgs(args, paramTypes, null);
+    }
+
+    public static Object[] convertArgs(PyObject[] args, Class<?>[] paramTypes, JavaAccessPolicy policy) {
         Object[] res = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
-            res[i] = toJavaObject(args[i], paramTypes[i]);
+            res[i] = toJavaObject(args[i], paramTypes[i], policy);
         }
         return res;
     }

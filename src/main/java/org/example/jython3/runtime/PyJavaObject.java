@@ -91,7 +91,7 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
                 if (!policy.canWriteField(clazz.getName(), name)) {
                     throw JavaBridge.denied("field '" + name + "'");
                 }
-                Object javaVal = JavaBridge.toJavaObject(val, f.getType());
+                Object javaVal = JavaBridge.toJavaObject(val, f.getType(), policy);
                 f.set(object, javaVal);
                 return;
             }
@@ -112,7 +112,7 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
                 permittedSetterSeen = true;
                 try {
                     m.setAccessible(true);
-                    Object javaArg = JavaBridge.toJavaObject(val, m.getParameterTypes()[0]);
+                    Object javaArg = JavaBridge.toJavaObject(val, m.getParameterTypes()[0], policy);
                     m.invoke(object, javaArg);
                     return;
                 } catch (InvocationTargetException e) {
@@ -136,6 +136,10 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
     }
 
     @Override public String toString() {
-        return object != null ? object.toString() : "null";
+        if (object == null) return "null";
+        if (!policy.canAccessClass(object.getClass().getName())) {
+            return "<unprintable restricted Java object of type " + object.getClass().getName() + ">";
+        }
+        return object.toString();
     }
 }

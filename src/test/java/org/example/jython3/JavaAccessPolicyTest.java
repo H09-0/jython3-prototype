@@ -201,7 +201,39 @@ class JavaAccessPolicyTest {
         assertFalse(sandboxed.canAccessClass("java.net.HttpURLConnection"));
         // Completely denies UI
         assertFalse(sandboxed.canAccessClass("java.awt.Desktop"));
+        assertFalse(sandboxed.canAccessClass("java.awt.Robot"));
         assertFalse(sandboxed.canAccessClass("java.awt.Color"));
+        // AllowlistPolicy also denies Robot
+        assertFalse(AllowlistPolicy.trusted().canAccessClass("java.awt.Robot"));
+    }
+
+    @Test
+    void wrappersCannotEscalatePrivilegesAcrossInterpreters() {
+        // Create a trusted wrapper for java.io.File
+        PyJavaClass trustedFileClass = new PyJavaClass(java.io.File.class, AllowlistPolicy.trusted());
+
+        // In a sandboxed interpreter, java.io.File is not accessible
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        sandboxed.setGlobal("FileClass", trustedFileClass);
+
+        // Retargeting on conversion to target Java type blocks restricted object
+        assertThrows(InterpreterException.class, () -> {
+            JavaBridge.toJavaObject(trustedFileClass, Object.class, org.example.jython3.security.SandboxedPolicy.get());
+        });
+
+        // Calling toPyObject on an untrusted object under SandboxedPolicy rejects it
+        assertThrows(InterpreterException.class, () -> {
+            JavaBridge.toPyObject(new java.io.File("/tmp"), org.example.jython3.security.SandboxedPolicy.get());
+        });
+    }
+
+    @Test
+    void restrictedObjectToStringDoesNotExecuteTargetCode() {
+        // An object whose class is not permitted by SandboxedPolicy
+        PyJavaObject restrictedJo = new PyJavaObject(new java.io.File("/tmp/secret.txt"), org.example.jython3.security.SandboxedPolicy.get());
+        String repr = restrictedJo.toString();
+        assertTrue(repr.contains("unprintable restricted Java object"));
+        assertFalse(repr.contains("/tmp/secret.txt"));
     }
 
     @Test

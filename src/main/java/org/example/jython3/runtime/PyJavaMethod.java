@@ -19,7 +19,7 @@ public record PyJavaMethod(Object target, Class<?> clazz, String name, List<Meth
             throw JavaBridge.denied("method '" + name + "'");
         }
         try {
-            Object[] javaArgs = JavaBridge.convertArgs(args, match.paramTypes());
+            Object[] javaArgs = JavaBridge.convertArgs(args, match.paramTypes(), policy);
             Object result = match.method().invoke(target, javaArgs);
             return JavaBridge.toPyObject(result, policy);
         } catch (Exception e) {

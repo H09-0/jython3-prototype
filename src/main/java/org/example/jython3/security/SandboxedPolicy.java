@@ -7,7 +7,7 @@ import java.util.Set;
  *
  * <p>Unlike {@link AllowlistPolicy#trusted()}, this policy:
  * <ul>
- *   <li>Only allows explicit, immutable data types and math utilities (String, Integer, Math, Collections, etc.).
+ *   <li>Only allows explicit safe data types, builders, math utilities, and standard in-memory collections.
  *   <li>Completely denies all file I/O (no java.io.*, no java.nio.*).
  *   <li>Completely denies all network access (no java.net.*).
  *   <li>Completely denies all UI/AWT subsystems (no java.awt.*).
