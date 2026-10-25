@@ -294,4 +294,37 @@ class JavaAccessPolicyTest {
                 () -> restricted.eval("from java.lang import String"));
         assertEquals("SecurityError", e.typeName());
     }
+
+    @Test
+    void customJavaPolicyInterpreterDefaultsHostAccessToDenyAll() {
+        // Create an interpreter with a custom Java policy but NO explicit HostAccessPolicy
+        JavaAccessPolicy customJavaPolicy = new JavaAccessPolicy() {
+            @Override public boolean canAccessClass(String binaryName) { return "java.lang.String".equals(binaryName); }
+            @Override public boolean canConstructClass(String binaryName, String descriptor) { return true; }
+            @Override public boolean canCallMethod(String owner, String name, String descriptor) { return true; }
+            @Override public boolean canReadField(String owner, String name) { return true; }
+            @Override public boolean canWriteField(String owner, String name) { return true; }
+        };
+
+        Jython3Interpreter interp = new Jython3Interpreter(customJavaPolicy);
+        // Java access permitted according to policy
+        assertDoesNotThrow(() -> interp.eval("from java.lang import String"));
+
+        // Host I/O MUST default to DENY_ALL regardless of custom Java policy
+        assertSame(org.example.jython3.security.HostAccessPolicy.DENY_ALL, interp.hostAccessPolicy());
+        assertThrows(InterpreterException.class, () -> interp.eval("import io; io.open('/etc/hostname')"));
+        assertThrows(InterpreterException.class, () -> interp.eval("import os; os.listdir('.')"));
+        assertThrows(InterpreterException.class, () -> interp.eval("execfile('test.py')"));
+    }
+
+    @Test
+    void explicitFactoryMethodsSetCorrectPolicies() {
+        Jython3Interpreter trusted = Jython3Interpreter.trusted();
+        assertSame(AllowlistPolicy.trusted(), trusted.javaAccessPolicy());
+        assertSame(org.example.jython3.security.HostAccessPolicy.PERMISSIVE, trusted.hostAccessPolicy());
+
+        Jython3Interpreter restricted = Jython3Interpreter.restricted();
+        assertSame(DenyAllPolicy.INSTANCE, restricted.javaAccessPolicy());
+        assertSame(org.example.jython3.security.HostAccessPolicy.DENY_ALL, restricted.hostAccessPolicy());
+    }
 }

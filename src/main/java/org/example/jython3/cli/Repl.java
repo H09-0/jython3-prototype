@@ -19,7 +19,7 @@ import java.io.IOException;
  */
 public class Repl {
     public static void main(String[] args) throws IOException {
-        Jython3Interpreter py = new Jython3Interpreter();
+        Jython3Interpreter py = Jython3Interpreter.trusted();
         BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
         StringBuilder buffer = new StringBuilder();
         System.out.println("\u001B[36mJython3 3.0.0 REPL\u001B[0m (type exit() to quit)");

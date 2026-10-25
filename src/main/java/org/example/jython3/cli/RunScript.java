@@ -26,7 +26,7 @@ public class RunScript {
             System.exit(2);
         }
 
-        var interpreter = new Jython3Interpreter();
+        var interpreter = Jython3Interpreter.trusted();
 
         // Handle inline execution: jython3 -c "<code>"
         if ("-c".equals(args[0])) {

@@ -67,6 +67,7 @@ import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.SystemExit;
 import org.example.jython3.security.AllowlistPolicy;
+import org.example.jython3.security.DenyAllPolicy;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.security.JavaAccessPolicy;
 import org.example.jython3.security.SandboxedPolicy;
@@ -183,16 +184,36 @@ public class Jython3Interpreter {
     /** Source text of the current script, used to quote lines in a traceback. */
     private String currentSource = "";
 
+    // ─── Factory Methods ──────────────────────────────────────────────────
+
+    /**
+     * Creates an interpreter for trusted scripts (e.g. application internal automation).
+     * Grants the standard Java allowlist and permissive host OS access.
+     */
+    public static Jython3Interpreter trusted() {
+        return new Jython3Interpreter(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE);
+    }
+
+    /**
+     * Creates an interpreter for untrusted or restricted script execution.
+     * Denies all Java reflection interop and denies all host OS filesystem/environment access.
+     */
+    public static Jython3Interpreter restricted() {
+        return new Jython3Interpreter(DenyAllPolicy.INSTANCE, HostAccessPolicy.DENY_ALL);
+    }
+
     // ─── Constructor ──────────────────────────────────────────────────────
     public Jython3Interpreter() {
         this(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE);
     }
 
-    /** Creates an interpreter whose Java access is controlled by {@code javaAccessPolicy}. */
+    /**
+     * Creates an interpreter whose Java access is controlled by {@code javaAccessPolicy}.
+     * <p><b>Security Default:</b> Unless an explicit {@link HostAccessPolicy} is provided,
+     * host filesystem and OS access defaults strictly to {@link HostAccessPolicy#DENY_ALL}.
+     */
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy) {
-        this(javaAccessPolicy,
-             javaAccessPolicy instanceof SandboxedPolicy ? HostAccessPolicy.DENY_ALL : HostAccessPolicy.PERMISSIVE,
-             ExceptionTypeRegistry.standard());
+        this(javaAccessPolicy, HostAccessPolicy.DENY_ALL, ExceptionTypeRegistry.standard());
     }
 
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy, HostAccessPolicy hostAccessPolicy) {
@@ -222,9 +243,7 @@ public class Jython3Interpreter {
 
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
                               ExceptionTypeRegistry exceptionTypes) {
-        this(javaAccessPolicy,
-             javaAccessPolicy instanceof SandboxedPolicy ? HostAccessPolicy.DENY_ALL : HostAccessPolicy.PERMISSIVE,
-             exceptionTypes);
+        this(javaAccessPolicy, HostAccessPolicy.DENY_ALL, exceptionTypes);
     }
 
     /** The policy this interpreter applies to host I/O and OS access. */
