@@ -68,6 +68,8 @@ import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.SystemExit;
 import org.example.jython3.security.AllowlistPolicy;
 import org.example.jython3.security.DenyAllPolicy;
+import org.example.jython3.security.ExecutionContext;
+import org.example.jython3.security.ExecutionLimits;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.security.JavaAccessPolicy;
 import org.example.jython3.security.SandboxedPolicy;
@@ -100,6 +102,13 @@ public class Jython3Interpreter {
     private final HostAccessPolicy hostAccessPolicy;
     /** Built-in exception classes owned by this interpreter. */
     private final ExceptionTypeRegistry exceptionTypes;
+    /** Execution limits (instruction count, timeout, pre-allocation thresholds). */
+    private final ExecutionLimits executionLimits;
+    /** Active execution context tracking consumption across frames. */
+    private ExecutionContext currentContext;
+
+    /** Built-in functions and standard types template for module initialization. */
+    private final Map<String, PyObject> builtinSymbols = new HashMap<>();
 
     public void clearCache() {
         bytecodeCache.clear();
@@ -168,6 +177,7 @@ public class Jython3Interpreter {
 
     // ─── Runtime state ────────────────────────────────────────────────────
     private final Map<String, PyObject> globals = new HashMap<>();
+    private Map<String, PyObject> currentGlobals = globals;
     private Deque<PyObject> stack;
     private Map<String, PyObject> currentLocals;
     private final Deque<Frame> callStack = new ArrayDeque<>();
@@ -195,20 +205,21 @@ public class Jython3Interpreter {
      * Grants the standard Java allowlist and permissive host OS access.
      */
     public static Jython3Interpreter trusted() {
-        return new Jython3Interpreter(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE);
+        return new Jython3Interpreter(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE, ExecutionLimits.TRUSTED);
     }
 
     /**
      * Creates an interpreter for untrusted or restricted script execution.
-     * Denies all Java reflection interop and denies all host OS filesystem/environment access.
+     * Denies all Java reflection interop and denies all host OS filesystem/environment access,
+     * and strictly enforces instruction and timeout execution limits.
      */
     public static Jython3Interpreter restricted() {
-        return new Jython3Interpreter(DenyAllPolicy.INSTANCE, HostAccessPolicy.DENY_ALL);
+        return new Jython3Interpreter(DenyAllPolicy.INSTANCE, HostAccessPolicy.DENY_ALL, ExecutionLimits.SANDBOXED);
     }
 
     // ─── Constructor ──────────────────────────────────────────────────────
     public Jython3Interpreter() {
-        this(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE);
+        this(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE, ExecutionLimits.TRUSTED);
     }
 
     /**
@@ -217,21 +228,34 @@ public class Jython3Interpreter {
      * host filesystem and OS access defaults strictly to {@link HostAccessPolicy#DENY_ALL}.
      */
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy) {
-        this(javaAccessPolicy, HostAccessPolicy.DENY_ALL, ExceptionTypeRegistry.standard());
+        this(javaAccessPolicy,
+             HostAccessPolicy.DENY_ALL,
+             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             ExceptionTypeRegistry.standard());
     }
 
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy, HostAccessPolicy hostAccessPolicy) {
-        this(javaAccessPolicy, hostAccessPolicy, ExceptionTypeRegistry.standard());
+        this(javaAccessPolicy, hostAccessPolicy,
+             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             ExceptionTypeRegistry.standard());
+    }
+
+    public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
+                              HostAccessPolicy hostAccessPolicy,
+                              ExecutionLimits executionLimits) {
+        this(javaAccessPolicy, hostAccessPolicy, executionLimits, ExceptionTypeRegistry.standard());
     }
 
     /**
-     * Creates an interpreter with explicit access policies and exception-type registry.
+     * Creates an interpreter with explicit access policies, resource limits, and exception-type registry.
      */
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
                               HostAccessPolicy hostAccessPolicy,
+                              ExecutionLimits executionLimits,
                               ExceptionTypeRegistry exceptionTypes) {
         this.javaAccessPolicy = Objects.requireNonNull(javaAccessPolicy, "javaAccessPolicy");
         this.hostAccessPolicy = Objects.requireNonNull(hostAccessPolicy, "hostAccessPolicy");
+        this.executionLimits = Objects.requireNonNull(executionLimits, "executionLimits");
         this.exceptionTypes = Objects.requireNonNull(exceptionTypes, "exceptionTypes");
         PyCaller.CURRENT.set(new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
@@ -246,8 +270,22 @@ public class Jython3Interpreter {
     }
 
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
+                              HostAccessPolicy hostAccessPolicy,
                               ExceptionTypeRegistry exceptionTypes) {
-        this(javaAccessPolicy, HostAccessPolicy.DENY_ALL, exceptionTypes);
+        this(javaAccessPolicy, hostAccessPolicy,
+             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             exceptionTypes);
+    }
+
+    public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
+                              ExceptionTypeRegistry exceptionTypes) {
+        this(javaAccessPolicy, HostAccessPolicy.DENY_ALL,
+             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             exceptionTypes);
+    }
+
+    public ExecutionLimits executionLimits() {
+        return executionLimits;
     }
 
     /** The policy this interpreter applies to host I/O and OS access. */
@@ -267,12 +305,11 @@ public class Jython3Interpreter {
 
     /** Install built-in functions into the global namespace. */
     private void registerBuiltins() {
-        BuiltinFunctions.register(this::setGlobal, this::callPyCallable, javaAccessPolicy);
-        // Built-in exception classes must resolve as real objects so that
-        // `except ValueError` and `class E(Exception)` work.
+        BuiltinFunctions.register(builtinSymbols::put, this::callPyCallable, javaAccessPolicy);
         for (var entry : exceptionTypes.types().entrySet()) {
-            globals.putIfAbsent(entry.getKey(), entry.getValue());
+            builtinSymbols.put(entry.getKey(), entry.getValue());
         }
+        globals.putAll(builtinSymbols);
     }
 
 
@@ -397,11 +434,13 @@ public class Jython3Interpreter {
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
         try {
             stack = new ArrayDeque<>();
+            currentGlobals = globals;
             currentLocals = globals;
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
             yieldCollector = null;
+            currentContext = new ExecutionContext(executionLimits);
             currentFile = filename;
             currentFunc = "<module>";
             currentLine = 0;
@@ -432,6 +471,7 @@ public class Jython3Interpreter {
     private void executeIsolated(CompiledCode code, Map<String, PyObject> executionLocals, String filename) {
         var savedStack = stack;
         var savedLocals = currentLocals;
+        var savedGlobals = currentGlobals;
         var savedExcept = exceptStack;
         var savedActive = activeExceptions;
         var savedCallStack = new ArrayDeque<>(callStack);
@@ -441,6 +481,7 @@ public class Jython3Interpreter {
         var savedLine = currentLine;
         try {
             stack = new ArrayDeque<>();
+            currentGlobals = executionLocals;
             currentLocals = executionLocals;
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
@@ -453,6 +494,7 @@ public class Jython3Interpreter {
         } finally {
             stack = savedStack;
             currentLocals = savedLocals;
+            currentGlobals = savedGlobals;
             exceptStack = savedExcept;
             activeExceptions = savedActive;
             callStack.clear();
@@ -614,6 +656,9 @@ public class Jython3Interpreter {
     // ─── ANTLR compilation with Python Indentation Stream ─────────────────
 
     private CompiledCode compile(String src) throws InterpreterException {
+        if (src.length() > executionLimits.maxSourceLength()) {
+            throw PyErrors.error("ValueError", "Source text exceeds maximum allowed length: " + executionLimits.maxSourceLength());
+        }
         CompiledCode cached = bytecodeCache.get(src);
         if (cached != null) return cached;
 
@@ -647,6 +692,9 @@ public class Jython3Interpreter {
         int pc = 0;
 
         outer: while (pc < bc.length) {
+            if (currentContext != null) {
+                currentContext.stepInstruction();
+            }
             int instr = bc[pc];
             OpCode op = OP_VALUES[instr >>> 16];
             int ai = instr & 0xFFFF;
@@ -673,13 +721,13 @@ public class Jython3Interpreter {
                     if (currentLocals != null) {
                         v = currentLocals.get(n);
                     }
-                    if (v == null) v = globals.get(n);
+                    if (v == null) v = currentGlobals.get(n);
                     if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     stack.push(v);
                 }
                 case LOAD_GLOBAL -> {
                     String n = (String) pool[ai];
-                    PyObject v = globals.get(n);
+                    PyObject v = currentGlobals.get(n);
                     if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     stack.push(v);
                 }
@@ -796,9 +844,16 @@ public class Jython3Interpreter {
                 case POWER -> {
                     var r = stack.pop(); var l = stack.pop();
                     if (l instanceof PyInt li && r instanceof PyInt ri && ri.value() >= 0) {
+                        if (ri.value() > executionLimits.maxExponent()) {
+                            throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
+                        }
                         stack.push(new PyInt((int) Math.pow(li.value(), ri.value())));
                     } else if (isNumeric(l) && isNumeric(r)) {
-                        stack.push(new PyFloat(Math.pow(toDouble(l), toDouble(r))));
+                        double exp = toDouble(r);
+                        if (exp > executionLimits.maxExponent()) {
+                            throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
+                        }
+                        stack.push(new PyFloat(Math.pow(toDouble(l), exp)));
                     } else {
                         throw PyErrors.error("TypeError", "unsupported operand types for **");
                     }
@@ -946,7 +1001,7 @@ public class Jython3Interpreter {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                    activeExceptions, currentFunc, currentFile, currentLine));
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals));
                             var fl = new HashMap<String, PyObject>();
                             if (fn.closure() != null) {
                                 fl.putAll(fn.closure());
@@ -1010,6 +1065,7 @@ public class Jython3Interpreter {
                     pool = code.constPool();
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
+                    if (cf.globals() != null) currentGlobals = cf.globals();
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
                     activeExceptions = cf.activeExceptions();
@@ -1253,6 +1309,7 @@ public class Jython3Interpreter {
                     pool = code.constPool();
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
+                    if (cf.globals() != null) currentGlobals = cf.globals();
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
                     activeExceptions = cf.activeExceptions();
@@ -1343,17 +1400,37 @@ public class Jython3Interpreter {
     private void binaryMultiply() {
         var r = stack.pop(); var l = stack.pop();
         if (l instanceof PyStr s && r instanceof PyInt n) {
-            stack.push(new PyStr(s.value().repeat(Math.max(0, (int)Math.min(Integer.MAX_VALUE, n.value())))));
+            long newLen = (long) s.value().length() * Math.max(0, n.value());
+            if (newLen > executionLimits.maxStringLength()) {
+                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
+            }
+            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value()))));
         } else if (l instanceof PyInt n && r instanceof PyStr s) {
-            stack.push(new PyStr(s.value().repeat(Math.max(0, (int)Math.min(Integer.MAX_VALUE, n.value())))));
+            long newLen = (long) s.value().length() * Math.max(0, n.value());
+            if (newLen > executionLimits.maxStringLength()) {
+                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
+            }
+            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value()))));
         } else if (l instanceof PyStr s && r instanceof BigInt n) {
-            stack.push(new PyStr(s.value().repeat(Math.max(0, n.value().intValue()))));
+            long newLen = (long) s.value().length() * Math.max(0, n.value().longValue());
+            if (newLen > executionLimits.maxStringLength()) {
+                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
+            }
+            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value().intValue()))));
         } else if (l instanceof BigInt n && r instanceof PyStr s) {
-            stack.push(new PyStr(s.value().repeat(Math.max(0, n.value().intValue()))));
+            long newLen = (long) s.value().length() * Math.max(0, n.value().longValue());
+            if (newLen > executionLimits.maxStringLength()) {
+                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
+            }
+            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value().intValue()))));
         } else if (l instanceof PyList ll && r instanceof PyInt n) {
+            long newSize = (long) ll.items().size() * Math.max(0, n.value());
+            if (newSize > executionLimits.maxCollectionSize()) {
+                throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
+            }
             var items = new ArrayList<PyObject>();
             long count = Math.max(0, n.value());
-            for (long i = 0; i < count && items.size() < 100000; i++) items.addAll(ll.items());
+            for (long i = 0; i < count; i++) items.addAll(ll.items());
             stack.push(new PyList(items));
         } else if (l instanceof PyInt li && r instanceof PyInt ri) {
             long lv = li.value();
@@ -1585,6 +1662,14 @@ public class Jython3Interpreter {
         throw PyErrors.error("TypeError", "'" + callable + "' is not callable");
     }
 
+    private void bindImportedName(String alias, PyObject value) {
+        if (currentLocals != null) {
+            currentLocals.put(alias, value);
+        } else {
+            globals.put(alias, value);
+        }
+    }
+
     private void importModule(String spec) {
         // ── from:pkg:item:alias  or  from:pkg:*  ──
         if (spec.startsWith("from:")) {
@@ -1599,28 +1684,33 @@ public class Jython3Interpreter {
             String alias = parts.length > 3 ? parts[3] : item;
             String fullName = pkg + "." + item;
 
-            try {
-                PyObject resolved = JavaBridge.resolveClassOrPackage(fullName, javaAccessPolicy);
-                if (resolved != null) {
-                    globals.put(alias, resolved);
-                    return;
-                }
-            } catch (InterpreterException ex) {
-                throw ex;
-            }
-
+            // Check built-in modules first before attempting Java class resolution
             PyModule builtinMod = resolveBuiltinModule(pkg);
             if (builtinMod != null) {
                 PyObject attr = builtinMod.attrs().get(item);
-                if (attr != null) { globals.put(alias, attr); return; }
+                if (attr != null) {
+                    bindImportedName(alias, attr);
+                    return;
+                }
                 throw PyErrors.error("ImportError", "cannot import name '" + item + "' from '" + pkg + "'");
+            }
+
+            if (pkg.contains(".") || isJavaRootPackage(pkg)) {
+                try {
+                    PyObject resolved = JavaBridge.resolveClassOrPackage(fullName, javaAccessPolicy);
+                    if (resolved != null) {
+                        bindImportedName(alias, resolved);
+                        return;
+                    }
+                } catch (InterpreterException ex) {
+                    throw ex;
+                }
             }
 
             PyModule mod = loadDiskModule(pkg);
             PyObject attr = mod.attrs().get(item);
             if (attr != null) {
-                if (currentLocals != null) currentLocals.put(alias, attr);
-                else globals.put(alias, attr);
+                bindImportedName(alias, attr);
                 return;
             }
             throw PyErrors.error("ImportError", "cannot import name '" + item + "' from '" + pkg + "'");
@@ -1633,8 +1723,7 @@ public class Jython3Interpreter {
 
         PyModule builtin = resolveBuiltinModule(pkg);
         if (builtin != null) {
-            if (currentLocals != null) currentLocals.put(alias, builtin);
-            else globals.put(alias, builtin);
+            bindImportedName(alias, builtin);
             return;
         }
 
@@ -1642,8 +1731,7 @@ public class Jython3Interpreter {
             try {
                 PyObject javaObj = JavaBridge.resolveClassOrPackage(pkg, javaAccessPolicy);
                 if (javaObj != null) {
-                    if (currentLocals != null) currentLocals.put(alias, javaObj);
-                    else globals.put(alias, javaObj);
+                    bindImportedName(alias, javaObj);
                     return;
                 }
             } catch (InterpreterException ex) {
@@ -1656,8 +1744,7 @@ public class Jython3Interpreter {
         }
 
         PyModule diskMod = loadDiskModule(pkg);
-        if (currentLocals != null) currentLocals.put(alias, diskMod);
-        else globals.put(alias, diskMod);
+        bindImportedName(alias, diskMod);
     }
 
     /**
@@ -1693,11 +1780,7 @@ public class Jython3Interpreter {
         }
 
         CompiledCode moduleCode = compile(content);
-        Map<String, PyObject> moduleScope = new HashMap<>();
-        // Inject built-ins and standard types into module globals
-        for (var e : globals.entrySet()) {
-            moduleScope.putIfAbsent(e.getKey(), e.getValue());
-        }
+        Map<String, PyObject> moduleScope = new HashMap<>(builtinSymbols);
 
         PyModule module = new PyModule(pkg, moduleScope);
         moduleCache.put(pkg, new ModuleEntry(module, ModuleState.INITIALIZING));

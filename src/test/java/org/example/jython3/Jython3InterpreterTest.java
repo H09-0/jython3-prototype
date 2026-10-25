@@ -2350,6 +2350,130 @@ class Jython3InterpreterTest {
         }
     }
 
+    @Test void testCallerGlobalsDoNotLeakIntoImportedModule() throws IOException {
+        Path modFile = Path.of("modules", "isolated_mod.py");
+        try {
+            // Module tries to access a caller-defined global without defining or importing it
+            Files.writeString(modFile, "saw_caller_secret = False\ntry:\n    x = caller_secret\n    saw_caller_secret = True\nexcept NameError:\n    saw_caller_secret = False\n");
+            py.exec("""
+                caller_secret = "top-secret-token"
+                import isolated_mod
+                leak_occurred = isolated_mod.saw_caller_secret
+                """);
+            assertEquals("", err());
+            assertEquals("False", py.getGlobal("leak_occurred").toString());
+        } finally {
+            Files.deleteIfExists(modFile);
+        }
+    }
+
+    @Test void testFromImportInsideFunctionBindsLocallyWithoutLeakingToGlobals() {
+        py.exec("""
+            def f():
+                from math import sqrt
+                return sqrt(81)
+
+            res = f()
+            """);
+        assertEquals("", err());
+        assertEquals("9.0", py.getGlobal("res").toString());
+        assertNull(py.getGlobal("sqrt"), "from math import sqrt inside function must not leak to global scope");
+    }
+
+    @Test void testInfiniteLoopIsTerminatedByInstructionBudget() {
+        // Create an interpreter with a tight instruction limit
+        var tightLimits = org.example.jython3.security.ExecutionLimits.builder()
+                .maxInstructions(5000)
+                .build();
+        Jython3Interpreter interp = new Jython3Interpreter(
+                AllowlistPolicy.trusted(),
+                org.example.jython3.security.HostAccessPolicy.PERMISSIVE,
+                tightLimits);
+
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            interp.eval("""
+                while True:
+                    pass
+                """);
+        });
+        assertEquals("TimeoutError", e.typeName());
+        assertTrue(e.getMessage().contains("Instruction budget exceeded"));
+    }
+
+    @Test void testInfiniteLoopIsTerminatedByTimeout() {
+        var tightLimits = org.example.jython3.security.ExecutionLimits.builder()
+                .timeout(java.time.Duration.ofMillis(100))
+                .build();
+        Jython3Interpreter interp = new Jython3Interpreter(
+                AllowlistPolicy.trusted(),
+                org.example.jython3.security.HostAccessPolicy.PERMISSIVE,
+                tightLimits);
+
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            interp.eval("""
+                while True:
+                    pass
+                """);
+        });
+        assertEquals("TimeoutError", e.typeName());
+        assertTrue(e.getMessage().contains("Execution timed out"));
+    }
+
+    @Test void testExcessiveRepetitionRejectedBeforeAllocation() {
+        var tightLimits = org.example.jython3.security.ExecutionLimits.builder()
+                .maxStringLength(1000)
+                .maxCollectionSize(500)
+                .build();
+        Jython3Interpreter interp = new Jython3Interpreter(
+                AllowlistPolicy.trusted(),
+                org.example.jython3.security.HostAccessPolicy.PERMISSIVE,
+                tightLimits);
+
+        // String repetition exceeding limit
+        InterpreterException strErr = assertThrows(InterpreterException.class, () -> {
+            interp.eval("s = 'abc' * 500"); // 1500 chars > 1000
+        });
+        assertEquals("OverflowError", strErr.typeName());
+
+        // List repetition exceeding limit
+        InterpreterException listErr = assertThrows(InterpreterException.class, () -> {
+            interp.eval("l = [1, 2] * 300"); // 600 items > 500
+        });
+        assertEquals("OverflowError", listErr.typeName());
+    }
+
+    @Test void testExtremeExponentiationRejected() {
+        var tightLimits = org.example.jython3.security.ExecutionLimits.builder()
+                .maxExponent(100)
+                .build();
+        Jython3Interpreter interp = new Jython3Interpreter(
+                AllowlistPolicy.trusted(),
+                org.example.jython3.security.HostAccessPolicy.PERMISSIVE,
+                tightLimits);
+
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            interp.eval("x = 2 ** 500");
+        });
+        assertEquals("ValueError", e.typeName());
+        assertTrue(e.getMessage().contains("Exponent exceeds maximum allowed limit"));
+    }
+
+    @Test void testOversizedSourceTextRejectedBeforeParsing() {
+        var tightLimits = org.example.jython3.security.ExecutionLimits.builder()
+                .maxSourceLength(50)
+                .build();
+        Jython3Interpreter interp = new Jython3Interpreter(
+                AllowlistPolicy.trusted(),
+                org.example.jython3.security.HostAccessPolicy.PERMISSIVE,
+                tightLimits);
+
+        InterpreterException e = assertThrows(InterpreterException.class, () -> {
+            interp.eval("a = 1\n# " + "A".repeat(100));
+        });
+        assertEquals("ValueError", e.typeName());
+        assertTrue(e.getMessage().contains("Source text exceeds maximum allowed length"));
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

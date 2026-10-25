@@ -16,4 +16,13 @@ public record Frame(CompiledCode code, int returnPc,
                     Map<String, PyObject> locals, Deque<PyObject> stack,
                     Deque<ExceptHandler> exceptHandlers,
                     Deque<PyObject> activeExceptions,
-                    String funcName, String file, int line) {}
+                    String funcName, String file, int line,
+                    Map<String, PyObject> globals) {
+    public Frame(CompiledCode code, int returnPc,
+                 Map<String, PyObject> locals, Deque<PyObject> stack,
+                 Deque<ExceptHandler> exceptHandlers,
+                 Deque<PyObject> activeExceptions,
+                 String funcName, String file, int line) {
+        this(code, returnPc, locals, stack, exceptHandlers, activeExceptions, funcName, file, line, null);
+    }
+}
