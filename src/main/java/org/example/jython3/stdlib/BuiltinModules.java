@@ -240,14 +240,32 @@ public class BuiltinModules {
     public static PyModule time() {
         Map<String, PyObject> attrs = new HashMap<>();
         attrs.put("time", fn("time", args -> new PyFloat(System.currentTimeMillis() / 1000.0)));
-        attrs.put("time_ns", fn("time_ns", args -> new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(System.nanoTime()))));
+        attrs.put("time_ns", fn("time_ns", args -> {
+            java.time.Instant now = java.time.Instant.now();
+            java.math.BigInteger nanos = java.math.BigInteger.valueOf(now.getEpochSecond())
+                    .multiply(java.math.BigInteger.valueOf(1_000_000_000L))
+                    .add(java.math.BigInteger.valueOf(now.getNano()));
+            return new org.example.jython3.runtime.BigInt(nanos);
+        }));
         attrs.put("sleep", fn("sleep", args -> {
             if (args.length == 0) throw PyErrors.error("TypeError", "sleep() takes at least 1 argument");
             double secs = toDouble(args[0]);
+            if (Double.isNaN(secs)) {
+                throw PyErrors.error("ValueError", "Invalid value NaN (not a number)");
+            }
+            if (Double.isInfinite(secs)) {
+                throw PyErrors.error("OverflowError", "cannot convert float infinity to integer");
+            }
+            if (secs < 0.0) {
+                throw PyErrors.error("ValueError", "sleep length must be non-negative");
+            }
+            double millisDouble = secs * 1000.0;
+            if (millisDouble > Long.MAX_VALUE - 1000) {
+                throw PyErrors.error("OverflowError", "sleep length is too large");
+            }
             try {
-                long millis = (long) (secs * 1000);
-                int nanos = (int) ((secs * 1000 - millis) * 1_000_000);
-                if (millis < 0) throw PyErrors.error("ValueError", "sleep length must be non-negative");
+                long millis = (long) millisDouble;
+                int nanos = (int) ((millisDouble - millis) * 1_000_000);
                 Thread.sleep(millis, Math.max(0, Math.min(999999, nanos)));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -262,35 +280,61 @@ public class BuiltinModules {
 
     // ─── random ───────────────────────────────────────────────────────────
 
-    private static final java.util.Random RNG = new java.util.Random();
-
     public static PyModule random() {
+        // Each module instance gets its own isolated RNG instance
+        java.util.Random rng = new java.util.Random();
         Map<String, PyObject> attrs = new HashMap<>();
-        attrs.put("random", fn("random", args -> new PyFloat(RNG.nextDouble())));
+        attrs.put("random", fn("random", args -> new PyFloat(rng.nextDouble())));
         attrs.put("randint", fn("randint", args -> {
-            if (args.length < 2) throw PyErrors.error("TypeError", "randint() takes exactly 2 arguments");
-            int a = (int) toDouble(args[0]);
-            int b = (int) toDouble(args[1]);
+            if (args.length != 2) throw PyErrors.error("TypeError", "randint() takes exactly 2 arguments (" + args.length + " given)");
+            if (!(args[0] instanceof PyInt || args[0] instanceof org.example.jython3.runtime.BigInt) ||
+                !(args[1] instanceof PyInt || args[1] instanceof org.example.jython3.runtime.BigInt)) {
+                throw PyErrors.error("TypeError", "randint() arguments must be integers");
+            }
+            long a = ((Number) (args[0] instanceof PyInt pi ? pi.value() : ((org.example.jython3.runtime.BigInt) args[0]).value().longValue())).longValue();
+            long b = ((Number) (args[1] instanceof PyInt pi ? pi.value() : ((org.example.jython3.runtime.BigInt) args[1]).value().longValue())).longValue();
             if (a > b) throw PyErrors.error("ValueError", "empty range for randint(" + a + ", " + b + ")");
-            return new PyInt(a + RNG.nextInt(b - a + 1));
+            long range = (b - a) + 1;
+            if (range <= 0) {
+                // Arithmetic overflow: range exceeds Long.MAX_VALUE
+                java.math.BigInteger bigA = java.math.BigInteger.valueOf(a);
+                java.math.BigInteger bigB = java.math.BigInteger.valueOf(b);
+                java.math.BigInteger bigRange = bigB.subtract(bigA).add(java.math.BigInteger.ONE);
+                java.math.BigInteger randOffset = new java.math.BigInteger(bigRange.bitLength(), rng);
+                while (randOffset.compareTo(bigRange) >= 0) {
+                    randOffset = new java.math.BigInteger(bigRange.bitLength(), rng);
+                }
+                return new org.example.jython3.runtime.BigInt(bigA.add(randOffset));
+            }
+            long res = a + (long) (rng.nextDouble() * range);
+            if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
+                return new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(res));
+            }
+            return new PyInt((int) res);
         }));
         attrs.put("choice", fn("choice", args -> {
             if (args.length == 0) throw PyErrors.error("TypeError", "choice() missing 1 required argument");
             if (args[0] instanceof PyList list) {
                 if (list.items().isEmpty()) throw PyErrors.error("IndexError", "Cannot choose from an empty sequence");
-                return list.items().get(RNG.nextInt(list.items().size()));
+                return list.items().get(rng.nextInt(list.items().size()));
             }
             if (args[0] instanceof PyStr s) {
-                if (s.value().isEmpty()) throw PyErrors.error("IndexError", "Cannot choose from an empty sequence");
-                return new PyStr(String.valueOf(s.value().charAt(RNG.nextInt(s.value().length()))));
+                String strVal = s.value();
+                if (strVal.isEmpty()) throw PyErrors.error("IndexError", "Cannot choose from an empty sequence");
+                // Unicode codepoint-safe choice (handles surrogate pairs like emojis properly)
+                int[] codePoints = strVal.codePoints().toArray();
+                int chosenCodePoint = codePoints[rng.nextInt(codePoints.length)];
+                return new PyStr(new String(Character.toChars(chosenCodePoint)));
             }
             throw PyErrors.error("TypeError", "object is not subscriptable or sequence");
         }));
         attrs.put("seed", fn("seed", args -> {
             if (args.length > 0 && args[0] instanceof PyInt i) {
-                RNG.setSeed(i.value());
+                rng.setSeed(i.value());
+            } else if (args.length > 0 && args[0] instanceof org.example.jython3.runtime.BigInt bi) {
+                rng.setSeed(bi.value().longValue());
             } else {
-                RNG.setSeed(System.currentTimeMillis());
+                rng.setSeed(System.currentTimeMillis());
             }
             return new PyNull();
         }));

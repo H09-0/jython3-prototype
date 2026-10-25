@@ -7,7 +7,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyException;
+import org.example.jython3.runtime.PyJavaClass;
+import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyObject;
+import org.example.jython3.security.AllowlistPolicy;
 
 /**
  * Comprehensive test suite for Jython3Interpreter (Phase 5 – Functions & Call Stack).
@@ -2104,18 +2107,31 @@ class Jython3InterpreterTest {
         py.exec("""
             import time
             t1 = time.time()
-            mono = time.monotonic()
-            perf = time.perf_counter()
+            mono1 = time.monotonic()
+            perf1 = time.perf_counter()
             time.sleep(0.01)
             t2 = time.time()
-            elapsed_positive = t2 >= t1
-            mono_positive = mono > 0
-            perf_positive = perf > 0
+            mono2 = time.monotonic()
+            perf2 = time.perf_counter()
+            t_ns = time.time_ns()
+
+            time_progresses = t2 >= t1
+            mono_progresses = mono2 >= mono1
+            perf_progresses = perf2 >= perf1
+            # Epoch nanoseconds should be well past year 2020 (1.5e18 nanos)
+            t_ns_valid = t_ns > 1500000000000000000
             """);
         assertEquals("", err());
-        assertEquals("True", py.getGlobal("elapsed_positive").toString());
-        assertEquals("True", py.getGlobal("mono_positive").toString());
-        assertEquals("True", py.getGlobal("perf_positive").toString());
+        assertEquals("True", py.getGlobal("time_progresses").toString());
+        assertEquals("True", py.getGlobal("mono_progresses").toString());
+        assertEquals("True", py.getGlobal("perf_progresses").toString());
+        assertEquals("True", py.getGlobal("t_ns_valid").toString());
+    }
+
+    @Test void testTimeSleepValidation() {
+        assertThrows(InterpreterException.class, () -> py.eval("import time; time.sleep(-0.0001)"));
+        assertThrows(InterpreterException.class, () -> py.eval("import time; time.sleep(float('nan'))"));
+        assertThrows(InterpreterException.class, () -> py.eval("import time; time.sleep(float('inf'))"));
     }
 
     @Test void testRandomModuleFunctions() {
@@ -2125,14 +2141,37 @@ class Jython3InterpreterTest {
             r = random.random()
             ri = random.randint(10, 20)
             ch = random.choice(["alpha", "beta", "gamma"])
+            emoji_ch = random.choice("😀😃😄")
             in_range_float = 0.0 <= r <= 1.0
             in_range_int = 10 <= ri <= 20
             valid_choice = ch in ["alpha", "beta", "gamma"]
+            valid_emoji = emoji_ch in ["😀", "😃", "😄"]
             """);
         assertEquals("", err());
         assertEquals("True", py.getGlobal("in_range_float").toString());
         assertEquals("True", py.getGlobal("in_range_int").toString());
         assertEquals("True", py.getGlobal("valid_choice").toString());
+        assertEquals("True", py.getGlobal("valid_emoji").toString());
+    }
+
+    @Test void testRandomRandintValidation() {
+        // Disallow floats
+        assertThrows(InterpreterException.class, () -> py.eval("import random; random.randint(1.5, 3.5)"));
+        // Range validation
+        assertThrows(InterpreterException.class, () -> py.eval("import random; random.randint(10, 5)"));
+    }
+
+    @Test void testModuleContainingRestrictedWrapperIsSanitizedWhenInjected() {
+        // Host creates a PyModule containing a trusted wrapper for java.io.File
+        var attrs = new java.util.HashMap<String, PyObject>();
+        attrs.put("FileClass", new PyJavaClass(java.io.File.class, AllowlistPolicy.trusted()));
+        PyModule hostModule = new PyModule("trusted_host_mod", attrs);
+
+        // Inject into Sandboxed interpreter
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        assertThrows(InterpreterException.class, () -> {
+            sandboxed.setGlobal("injected_mod", hostModule);
+        });
     }
 
     /**

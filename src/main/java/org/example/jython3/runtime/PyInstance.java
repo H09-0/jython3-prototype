@@ -43,6 +43,10 @@ public final class PyInstance implements PyObject {
         fields.put(name, val);
     }
 
+    public Map<String, PyObject> fields() {
+        return fields;
+    }
+
     public boolean hasField(String name) {
         return fields.containsKey(name) || pyClass.hasMember(name);
     }

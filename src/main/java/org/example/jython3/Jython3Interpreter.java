@@ -462,6 +462,34 @@ public class Jython3Interpreter {
             }
             return new PyDict(sanitizedMap);
         }
+        if (val instanceof PyModule mod) {
+            var sanitizedAttrs = new HashMap<String, PyObject>();
+            for (var entry : mod.attrs().entrySet()) {
+                sanitizedAttrs.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy));
+            }
+            return new PyModule(mod.name(), sanitizedAttrs);
+        }
+        if (val instanceof PyFunction fn) {
+            var sanitizedClosure = new HashMap<String, PyObject>();
+            for (var entry : fn.closure().entrySet()) {
+                sanitizedClosure.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy));
+            }
+            var newFn = new PyFunction(fn.name(), fn.params(), fn.code(), sanitizedClosure);
+            return newFn;
+        }
+        if (val instanceof PyClass cls) {
+            var sanitizedMembers = new HashMap<String, PyObject>();
+            for (var entry : cls.members().entrySet()) {
+                sanitizedMembers.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy));
+            }
+            return new PyClass(cls.name(), cls.baseClass(), sanitizedMembers, cls.getBases());
+        }
+        if (val instanceof PyInstance inst) {
+            for (var entry : inst.fields().entrySet()) {
+                entry.setValue(sanitizeForPolicy(entry.getValue(), policy));
+            }
+            return inst;
+        }
         return val;
     }
 
@@ -516,6 +544,7 @@ public class Jython3Interpreter {
                     else if (v instanceof Integer i) stack.push(new PyInt(i));
                     else if (v instanceof Double d) stack.push(new PyFloat(d));
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
+                    else if (v instanceof org.example.jython3.runtime.BigInt bi) stack.push(bi);
                     else if (v instanceof PyFunction f) stack.push(f);
                     else if (v instanceof CompiledCode cc) stack.push(new PyCompiledCodeWrapper(cc));
                     else throw PyErrors.error("RuntimeError", "unknown constant: " + v);

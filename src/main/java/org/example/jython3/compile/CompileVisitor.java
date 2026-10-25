@@ -704,7 +704,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitParen(Jython3Parser.ParenContext c) { visit(c.expr()); return null; }
-    @Override public Void visitInt(Jython3Parser.IntContext c) { b.emit(OpCode.LOAD_CONST, Integer.valueOf(c.INT().getText())); return null; }
+    @Override public Void visitInt(Jython3Parser.IntContext c) {
+        String text = c.INT().getText();
+        try {
+            b.emit(OpCode.LOAD_CONST, Integer.valueOf(text));
+        } catch (NumberFormatException nfe) {
+            b.emit(OpCode.LOAD_CONST, new org.example.jython3.runtime.BigInt(new java.math.BigInteger(text)));
+        }
+        return null;
+    }
     @Override public Void visitFloat(Jython3Parser.FloatContext c) { b.emit(OpCode.LOAD_CONST, Double.valueOf(c.FLOAT().getText())); return null; }
     @Override public Void visitStr(Jython3Parser.StrContext c) {
         String raw = c.STRING().getText();

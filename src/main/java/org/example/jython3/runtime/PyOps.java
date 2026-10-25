@@ -9,12 +9,13 @@ public final class PyOps {
     private PyOps() {}
 
     public static boolean isNumeric(PyObject o) {
-        return o instanceof PyInt || o instanceof PyFloat || o instanceof PyBool;
+        return o instanceof PyInt || o instanceof PyFloat || o instanceof PyBool || o instanceof BigInt;
     }
 
     public static double toDouble(PyObject o) {
         return switch (o) {
             case PyInt i -> i.value();
+            case BigInt bi -> bi.value().doubleValue();
             case PyFloat f -> f.value();
             case PyBool b -> b.value() ? 1.0 : 0.0;
             case PyStr s -> {
@@ -81,6 +82,15 @@ public final class PyOps {
     }
 
     public static int compareObjects(PyObject a, PyObject b) {
+        if (a instanceof BigInt ba && b instanceof BigInt bb) {
+            return ba.value().compareTo(bb.value());
+        }
+        if (a instanceof BigInt ba && b instanceof PyInt bi) {
+            return ba.value().compareTo(java.math.BigInteger.valueOf(bi.value()));
+        }
+        if (a instanceof PyInt ai && b instanceof BigInt bb) {
+            return java.math.BigInteger.valueOf(ai.value()).compareTo(bb.value());
+        }
         if (isNumeric(a) && isNumeric(b)) return Double.compare(toDouble(a), toDouble(b));
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().compareTo(bs.value());
         throw PyErrors.error("TypeError", "'<' not supported between instances of '" + typeName(a) + "' and '" + typeName(b) + "'");
