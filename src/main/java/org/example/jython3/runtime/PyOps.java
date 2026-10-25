@@ -65,9 +65,14 @@ public final class PyOps {
         if (a instanceof PyNull && b instanceof PyNull) return true;
         if (a instanceof PyBool ab && b instanceof PyBool bb) return ab.value() == bb.value();
         if (a instanceof PyInt ai && b instanceof PyInt bi) return ai.value() == bi.value();
-        if (a instanceof PyFloat af && b instanceof PyFloat bf) return af.value() == bf.value();
+        if (a instanceof BigInt ba && b instanceof BigInt bb) return ba.value().equals(bb.value());
+        if (a instanceof BigInt ba && b instanceof PyInt bi) return ba.value().equals(java.math.BigInteger.valueOf(bi.value()));
+        if (a instanceof PyInt ai && b instanceof BigInt bb) return java.math.BigInteger.valueOf(ai.value()).equals(bb.value());
+        if (a instanceof BigInt ba && b instanceof PyFloat bf) return equalsBigIntAndFloat(ba, bf);
+        if (a instanceof PyFloat af && b instanceof BigInt bb) return equalsBigIntAndFloat(bb, af);
+        if (a instanceof PyFloat af && b instanceof PyFloat bf) return Double.compare(af.value(), bf.value()) == 0;
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().equals(bs.value());
-        if (isNumeric(a) && isNumeric(b)) return toDouble(a) == toDouble(b);
+        if (isNumeric(a) && isNumeric(b)) return Double.compare(toDouble(a), toDouble(b)) == 0;
         if (a instanceof PyList al && b instanceof PyList bl) {
             if (al.items().size() != bl.items().size()) return false;
             for (int i = 0; i < al.items().size(); i++) {
@@ -81,6 +86,18 @@ public final class PyOps {
         return false;
     }
 
+    private static boolean equalsBigIntAndFloat(BigInt bi, PyFloat pf) {
+        double d = pf.value();
+        if (Double.isNaN(d) || Double.isInfinite(d)) return false;
+        try {
+            java.math.BigDecimal bdFromFloat = new java.math.BigDecimal(d);
+            java.math.BigDecimal bdFromBigInt = new java.math.BigDecimal(bi.value());
+            return bdFromBigInt.compareTo(bdFromFloat) == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public static int compareObjects(PyObject a, PyObject b) {
         if (a instanceof BigInt ba && b instanceof BigInt bb) {
             return ba.value().compareTo(bb.value());
@@ -91,9 +108,27 @@ public final class PyOps {
         if (a instanceof PyInt ai && b instanceof BigInt bb) {
             return java.math.BigInteger.valueOf(ai.value()).compareTo(bb.value());
         }
+        if (a instanceof BigInt ba && b instanceof PyFloat bf) {
+            return compareBigIntAndFloat(ba, bf);
+        }
+        if (a instanceof PyFloat af && b instanceof BigInt bb) {
+            return -compareBigIntAndFloat(bb, af);
+        }
         if (isNumeric(a) && isNumeric(b)) return Double.compare(toDouble(a), toDouble(b));
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().compareTo(bs.value());
         throw PyErrors.error("TypeError", "'<' not supported between instances of '" + typeName(a) + "' and '" + typeName(b) + "'");
+    }
+
+    private static int compareBigIntAndFloat(BigInt bi, PyFloat pf) {
+        double d = pf.value();
+        if (Double.isNaN(d)) {
+            throw PyErrors.error("ValueError", "cannot compare with NaN");
+        }
+        if (d == Double.POSITIVE_INFINITY) return -1;
+        if (d == Double.NEGATIVE_INFINITY) return 1;
+        java.math.BigDecimal bdFloat = new java.math.BigDecimal(d);
+        java.math.BigDecimal bdInt = new java.math.BigDecimal(bi.value());
+        return bdInt.compareTo(bdFloat);
     }
 
     public static boolean pyContains(PyObject container, PyObject item) {

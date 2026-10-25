@@ -291,26 +291,33 @@ public class BuiltinModules {
                 !(args[1] instanceof PyInt || args[1] instanceof org.example.jython3.runtime.BigInt)) {
                 throw PyErrors.error("TypeError", "randint() arguments must be integers");
             }
-            long a = ((Number) (args[0] instanceof PyInt pi ? pi.value() : ((org.example.jython3.runtime.BigInt) args[0]).value().longValue())).longValue();
-            long b = ((Number) (args[1] instanceof PyInt pi ? pi.value() : ((org.example.jython3.runtime.BigInt) args[1]).value().longValue())).longValue();
-            if (a > b) throw PyErrors.error("ValueError", "empty range for randint(" + a + ", " + b + ")");
-            long range = (b - a) + 1;
-            if (range <= 0) {
-                // Arithmetic overflow: range exceeds Long.MAX_VALUE
-                java.math.BigInteger bigA = java.math.BigInteger.valueOf(a);
-                java.math.BigInteger bigB = java.math.BigInteger.valueOf(b);
-                java.math.BigInteger bigRange = bigB.subtract(bigA).add(java.math.BigInteger.ONE);
-                java.math.BigInteger randOffset = new java.math.BigInteger(bigRange.bitLength(), rng);
-                while (randOffset.compareTo(bigRange) >= 0) {
-                    randOffset = new java.math.BigInteger(bigRange.bitLength(), rng);
-                }
-                return new org.example.jython3.runtime.BigInt(bigA.add(randOffset));
+            java.math.BigInteger a = (args[0] instanceof PyInt pi)
+                    ? java.math.BigInteger.valueOf(pi.value())
+                    : ((org.example.jython3.runtime.BigInt) args[0]).value();
+            java.math.BigInteger b = (args[1] instanceof PyInt pi)
+                    ? java.math.BigInteger.valueOf(pi.value())
+                    : ((org.example.jython3.runtime.BigInt) args[1]).value();
+
+            if (a.compareTo(b) > 0) {
+                throw PyErrors.error("ValueError", "empty range for randint(" + a + ", " + b + ")");
             }
-            long res = a + (long) (rng.nextDouble() * range);
-            if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
-                return new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(res));
+
+            // range = b - a + 1
+            java.math.BigInteger range = b.subtract(a).add(java.math.BigInteger.ONE);
+
+            // Rejection sampling for uniform distribution without bias or overflow
+            java.math.BigInteger randOffset;
+            int bits = range.bitLength();
+            do {
+                randOffset = new java.math.BigInteger(bits, rng);
+            } while (randOffset.compareTo(range) >= 0);
+
+            java.math.BigInteger res = a.add(randOffset);
+            if (res.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
+                res.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
+                return new PyInt(res.intValue());
             }
-            return new PyInt((int) res);
+            return new org.example.jython3.runtime.BigInt(res);
         }));
         attrs.put("choice", fn("choice", args -> {
             if (args.length == 0) throw PyErrors.error("TypeError", "choice() missing 1 required argument");
@@ -332,7 +339,8 @@ public class BuiltinModules {
             if (args.length > 0 && args[0] instanceof PyInt i) {
                 rng.setSeed(i.value());
             } else if (args.length > 0 && args[0] instanceof org.example.jython3.runtime.BigInt bi) {
-                rng.setSeed(bi.value().longValue());
+                // Incorporate full big integer entropy by hashing its byte array
+                rng.setSeed(java.util.Arrays.hashCode(bi.value().toByteArray()));
             } else {
                 rng.setSeed(System.currentTimeMillis());
             }

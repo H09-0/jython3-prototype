@@ -2174,6 +2174,56 @@ class Jython3InterpreterTest {
         });
     }
 
+    @Test void testCircularReferenceListSanitization() {
+        var list = new org.example.jython3.runtime.PyList(new java.util.ArrayList<>());
+        list.items().add(list); // self-referencing list
+
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        assertDoesNotThrow(() -> {
+            sandboxed.setGlobal("circular_list", list);
+        });
+        PyObject retrieved = sandboxed.getGlobal("circular_list");
+        assertInstanceOf(org.example.jython3.runtime.PyList.class, retrieved);
+    }
+
+    @Test void testClassInheritingRestrictedWrapperIsRejectedWhenInjected() {
+        // Class hierarchy with trusted wrapper in base
+        var members = new java.util.HashMap<String, PyObject>();
+        members.put("FileClass", new PyJavaClass(java.io.File.class, AllowlistPolicy.trusted()));
+        org.example.jython3.runtime.PyClass baseCls = new org.example.jython3.runtime.PyClass("TrustedBase", null, members);
+        org.example.jython3.runtime.PyClass subCls = new org.example.jython3.runtime.PyClass("SubCls", baseCls, new java.util.HashMap<>());
+
+        Jython3Interpreter sandboxed = new Jython3Interpreter(org.example.jython3.security.SandboxedPolicy.get());
+        assertThrows(InterpreterException.class, () -> {
+            sandboxed.setGlobal("SubCls", subCls);
+        });
+    }
+
+    @Test void testRandomRandintLargeRangeBeyond64Bit() {
+        py.exec("""
+            import random
+            low = 18446744073709551616
+            high = 18446744073709551618
+            val = random.randint(low, high)
+            is_valid = val >= low and val <= high
+            """);
+        assertEquals("", err());
+        assertEquals("True", py.getGlobal("is_valid").toString());
+    }
+
+    @Test void testExactBigIntAndFloatEqualityAndComparison() {
+        py.exec("""
+            # 9007199254740993 cannot be represented accurately as 64-bit float 9007199254740992.0
+            eq_result = (9007199254740993 == 9007199254740992.0)
+            gt_result = (9007199254740993 > 9007199254740992.0)
+            lt_result = (9007199254740993 < 9007199254740992.0)
+            """);
+        assertEquals("", err());
+        assertEquals("False", py.getGlobal("eq_result").toString());
+        assertEquals("True", py.getGlobal("gt_result").toString());
+        assertEquals("False", py.getGlobal("lt_result").toString());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

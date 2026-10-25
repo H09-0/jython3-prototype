@@ -431,64 +431,96 @@ public class Jython3Interpreter {
 
     /**
      * Ensures any injected host object or wrapper adheres to this interpreter's policy.
-     * Recursively verifies collections (PyList, PyDict) and retargets wrappers.
+     * Recursively verifies collections (PyList, PyDict), functions, modules, classes,
+     * and instances, retargets wrappers, and handles circular references safely via IdentityHashMap.
      */
     private static PyObject sanitizeForPolicy(PyObject val, JavaAccessPolicy policy) {
+        return sanitizeForPolicy(val, policy, new java.util.IdentityHashMap<>());
+    }
+
+    private static PyObject sanitizeForPolicy(PyObject val, JavaAccessPolicy policy,
+                                              java.util.Map<PyObject, PyObject> visited) {
         if (val == null || val instanceof PyNull) return val;
+        PyObject seen = visited.get(val);
+        if (seen != null) return seen;
+
         if (val instanceof PyJavaClass jc) {
             if (!policy.canAccessClass(jc.clazz().getName())) {
                 throw JavaBridge.denied(jc.clazz().getName());
             }
-            return new PyJavaClass(jc.clazz(), policy);
+            PyJavaClass res = new PyJavaClass(jc.clazz(), policy);
+            visited.put(val, res);
+            return res;
         }
         if (val instanceof PyJavaObject jo) {
             if (!policy.canAccessClass(jo.object().getClass().getName())) {
                 throw JavaBridge.denied(jo.object().getClass().getName());
             }
-            return new PyJavaObject(jo.object(), policy);
+            PyJavaObject res = new PyJavaObject(jo.object(), policy);
+            visited.put(val, res);
+            return res;
         }
         if (val instanceof PyList list) {
             var sanitizedItems = new ArrayList<PyObject>();
+            var res = new PyList(sanitizedItems);
+            visited.put(val, res);
             for (PyObject item : list.items()) {
-                sanitizedItems.add(sanitizeForPolicy(item, policy));
+                sanitizedItems.add(sanitizeForPolicy(item, policy, visited));
             }
-            return new PyList(sanitizedItems);
+            return res;
         }
         if (val instanceof PyDict dict) {
             var sanitizedMap = new LinkedHashMap<PyObject, PyObject>();
+            var res = new PyDict(sanitizedMap);
+            visited.put(val, res);
             for (var entry : dict.map().entrySet()) {
-                sanitizedMap.put(sanitizeForPolicy(entry.getKey(), policy),
-                                 sanitizeForPolicy(entry.getValue(), policy));
+                sanitizedMap.put(sanitizeForPolicy(entry.getKey(), policy, visited),
+                                 sanitizeForPolicy(entry.getValue(), policy, visited));
             }
-            return new PyDict(sanitizedMap);
+            return res;
         }
         if (val instanceof PyModule mod) {
             var sanitizedAttrs = new HashMap<String, PyObject>();
+            var res = new PyModule(mod.name(), sanitizedAttrs);
+            visited.put(val, res);
             for (var entry : mod.attrs().entrySet()) {
-                sanitizedAttrs.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy));
+                sanitizedAttrs.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
             }
-            return new PyModule(mod.name(), sanitizedAttrs);
+            return res;
         }
         if (val instanceof PyFunction fn) {
             var sanitizedClosure = new HashMap<String, PyObject>();
+            var res = new PyFunction(fn.name(), fn.params(), fn.code(), sanitizedClosure);
+            visited.put(val, res);
             for (var entry : fn.closure().entrySet()) {
-                sanitizedClosure.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy));
+                sanitizedClosure.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
             }
-            var newFn = new PyFunction(fn.name(), fn.params(), fn.code(), sanitizedClosure);
-            return newFn;
+            return res;
         }
         if (val instanceof PyClass cls) {
             var sanitizedMembers = new HashMap<String, PyObject>();
-            for (var entry : cls.members().entrySet()) {
-                sanitizedMembers.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy));
+            var sanitizedBases = new ArrayList<PyClass>();
+            PyClass sanitizedBase = cls.baseClass() != null
+                    ? (PyClass) sanitizeForPolicy(cls.baseClass(), policy, visited)
+                    : null;
+            var res = new PyClass(cls.name(), sanitizedBase, sanitizedMembers, sanitizedBases);
+            visited.put(val, res);
+            for (PyClass b : cls.getBases()) {
+                sanitizedBases.add((PyClass) sanitizeForPolicy(b, policy, visited));
             }
-            return new PyClass(cls.name(), cls.baseClass(), sanitizedMembers, cls.getBases());
+            for (var entry : cls.members().entrySet()) {
+                sanitizedMembers.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
+            }
+            return res;
         }
         if (val instanceof PyInstance inst) {
+            PyClass sanitizedCls = (PyClass) sanitizeForPolicy(inst.pyClass(), policy, visited);
+            var res = new PyInstance(sanitizedCls);
+            visited.put(val, res);
             for (var entry : inst.fields().entrySet()) {
-                entry.setValue(sanitizeForPolicy(entry.getValue(), policy));
+                res.setField(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
             }
-            return inst;
+            return res;
         }
         return val;
     }
