@@ -2583,6 +2583,37 @@ class Jython3InterpreterTest {
         assertEquals("True", py.getGlobal("is_pos").toString());
     }
 
+    @Test void testIntegerDivisionAndModuloByZeroExactMessages() {
+        // PyInt // 0
+        InterpreterException pyIntDiv0 = assertThrows(InterpreterException.class, () -> py.eval("x = 1 // 0"));
+        assertEquals("ZeroDivisionError", pyIntDiv0.typeName());
+        assertEquals("integer division or modulo by zero", ((PyException) pyIntDiv0.value()).message());
+
+        // PyInt % 0
+        InterpreterException pyIntMod0 = assertThrows(InterpreterException.class, () -> py.eval("x = 1 % 0"));
+        assertEquals("ZeroDivisionError", pyIntMod0.typeName());
+        assertEquals("integer modulo by zero", ((PyException) pyIntMod0.value()).message());
+
+        // BigInt // 0
+        InterpreterException bigIntDiv0 = assertThrows(InterpreterException.class, () -> py.eval("x = 100000000000000000000 // 0"));
+        assertEquals("ZeroDivisionError", bigIntDiv0.typeName());
+        assertEquals("integer division or modulo by zero", ((PyException) bigIntDiv0.value()).message());
+
+        // BigInt % 0
+        InterpreterException bigIntMod0 = assertThrows(InterpreterException.class, () -> py.eval("x = 100000000000000000000 % 0"));
+        assertEquals("ZeroDivisionError", bigIntMod0.typeName());
+        assertEquals("integer modulo by zero", ((PyException) bigIntMod0.value()).message());
+
+        // Mixed PyInt / BigInt zero divisors
+        InterpreterException mixedDiv0 = assertThrows(InterpreterException.class, () -> py.eval("x = 1 // (100000000000000000000 - 100000000000000000000)"));
+        assertEquals("ZeroDivisionError", mixedDiv0.typeName());
+        assertEquals("integer division or modulo by zero", ((PyException) mixedDiv0.value()).message());
+
+        InterpreterException mixedMod0 = assertThrows(InterpreterException.class, () -> py.eval("x = 1 % (100000000000000000000 - 100000000000000000000)"));
+        assertEquals("ZeroDivisionError", mixedMod0.typeName());
+        assertEquals("integer modulo by zero", ((PyException) mixedMod0.value()).message());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

@@ -28,6 +28,11 @@ public class CoreDifferentialTest {
         assertMatchesCPython("a = 100000000000000000000; b = 3; print(a // -b, a % -b)");
         assertMatchesCPython("a = 100000000000000000000; b = 3; print(-a // b, -a % b)");
         assertMatchesCPython("a = 100000000000000000000; b = 3; print(-a // -b, -a % -b)");
+        // Division and modulo by zero differential checks: catch ZeroDivisionError
+        assertMatchesCPython("try:\n    x = 1 // 0\nexcept ZeroDivisionError:\n    print('div0_caught')");
+        assertMatchesCPython("try:\n    x = 1 % 0\nexcept ZeroDivisionError:\n    print('mod0_caught')");
+        assertMatchesCPython("try:\n    x = 100000000000000000000 // 0\nexcept ZeroDivisionError:\n    print('big_div0_caught')");
+        assertMatchesCPython("try:\n    x = 100000000000000000000 % 0\nexcept ZeroDivisionError:\n    print('big_mod0_caught')");
     }
 
     @Test

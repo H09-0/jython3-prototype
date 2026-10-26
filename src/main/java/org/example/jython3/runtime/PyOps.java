@@ -41,7 +41,7 @@ public final class PyOps {
      */
     public static BigInteger floorMod(BigInteger a, BigInteger b) {
         if (b.equals(BigInteger.ZERO)) {
-            throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
+            throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
         }
         BigInteger r = a.remainder(b);
         if (!r.equals(BigInteger.ZERO) && (a.signum() ^ b.signum()) < 0) {
