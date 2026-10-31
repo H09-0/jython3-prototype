@@ -100,6 +100,45 @@ jython3 my_script.py arg1 arg2
 
 ---
 
+## Field Testing Results (v0.10.2-alpha)
+
+A comprehensive field test was conducted by running identical Python scripts
+through the `jython3` CLI and CPython 3.12.3, comparing outputs with `diff`.
+
+### ✅ Fully CPython-Identical (33 / 48 features)
+
+| Area | Status |
+|:-----|:------:|
+| Integer & BigInt arithmetic (all operators, all sign combinations) | ✅ |
+| Float arithmetic & true division | ✅ |
+| String operations (concat, slice, methods, `in`) | ✅ |
+| List operations (CRUD, slice, methods, iteration) | ✅ |
+| Dict operations (CRUD, `del`, `.get()`, `.keys()`, iteration) | ✅ |
+| Control flow (`if`/`elif`/`else`, `for`, `while`, `break`, `continue`) | ✅ |
+| Functions (def, return, recursion, closures, nested, higher-order) | ✅ |
+| Exception handling (`try`/`except`/`finally`, `raise`, tuple-except) | ✅ |
+| Classes & OOP (inheritance, class vars, method chaining) | ✅ |
+| 20+ built-in functions (print, len, sorted, map, filter, …) | ✅ |
+| stdlib: math, time, json, random, os, io | ✅ |
+| Edge cases: None, falsy values, chained comparisons, deep recursion | ✅ |
+
+### 🔴 Known Bugs (4 issues)
+
+| ID | Bug | Root Cause |
+|:--:|:----|:-----------|
+| C1 | `break` in nested `for` loops → infinite loop | Compiler does not pop inner iterator from VM stack before break-jump |
+| H1 | `isinstance(42, int)` → `False` | Built-in types are `PyBuiltinFunction`, not `PyClass`; isinstance only checks `PyClass` |
+| H2 | `True + True` → `2.0` (float) | `PyBool` not unwrapped to `PyInt` before arithmetic dispatch |
+| H3 | `"%d %s" % (10, "hi")` → `"10 10"` | Formatter uses only the first tuple element for all placeholders |
+
+### 🟡 Not Yet Implemented (7 features)
+
+`lambda` · list comprehensions · f-strings · default arguments · tuple unpacking · `global`/`nonlocal` · chained assignment
+
+> 📄 **[Full Report with Root-Cause Analysis →](docs/FIELD_TEST_REPORT.md)**
+
+---
+
 ## Architecture at a Glance
 
 The interpreter compiles Python source text into a compact 32-bit bytecode format executed by an optimized stack machine:
@@ -127,6 +166,7 @@ Stack Machine Loop (Jython3Interpreter.run())
 To explore in-depth technical documentation, please consult the dedicated documentation guides:
 
 - 📖 **[Project Structure](docs/PROJECT_STRUCTURE.md)**: Full codebase tree and package responsibilities.
+- 🧪 **[Field Test Report](docs/FIELD_TEST_REPORT.md)**: Comprehensive testing results with root-cause analysis for all known issues.
 - 🎯 **[Compatibility Matrix](docs/COMPATIBILITY.md)**: Feature-by-feature comparison against CPython 3.14 (T0–T3 tiers).
 - 🗺️ **[Development Roadmap](docs/ROADMAP.md)**: Current milestones and upcoming architectural phases.
 - 🏗️ **[Architecture & VM Specification](docs/ARCHITECTURE.md)**: Bytecode encoding, call frame lifecycle, and dispatch.
