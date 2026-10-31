@@ -2528,6 +2528,74 @@ class Jython3InterpreterTest {
         assertThrows(InterpreterException.class, () -> py.eval("[1, 2, 3][::0]"));
     }
 
+    @Test void testSliceRejectsFloatBounds() {
+        // Float start
+        InterpreterException e1 = assertThrows(InterpreterException.class,
+                () -> { py.eval("f = 1.0"); py.eval("x = [1, 2, 3][f:2]"); });
+        assertEquals("TypeError", e1.typeName());
+        // Float stop
+        InterpreterException e2 = assertThrows(InterpreterException.class,
+                () -> { py.eval("f = 2.0"); py.eval("x = [1, 2, 3][1:f]"); });
+        assertEquals("TypeError", e2.typeName());
+        // Float step
+        InterpreterException e3 = assertThrows(InterpreterException.class,
+                () -> { py.eval("f = 1.0"); py.eval("x = [1, 2, 3][::f]"); });
+        assertEquals("TypeError", e3.typeName());
+    }
+
+    @Test void testSliceBigIntBoundsNormalize() {
+        py.exec("""
+            seq = [1, 2, 3, 4, 5]
+            big = 10 ** 100
+            nbig = -big
+            r1 = seq[big:]
+            r2 = seq[nbig:]
+            r3 = seq[:big]
+            r4 = seq[:nbig]
+            """);
+        assertEquals("", err());
+        assertEquals("[]", py.getGlobal("r1").toString());
+        assertEquals("[1, 2, 3, 4, 5]", py.getGlobal("r2").toString());
+        assertEquals("[1, 2, 3, 4, 5]", py.getGlobal("r3").toString());
+        assertEquals("[]", py.getGlobal("r4").toString());
+    }
+
+    @Test void testSliceEdgeCasesMatchCPython() {
+        py.exec("""
+            seq = [1, 2, 3, 4, 5]
+            r_all = seq[:]
+            r_step1 = seq[::1]
+            r_rev = seq[::-1]
+            r_rev2 = seq[::-2]
+            r_big_start = seq[100:]
+            r_neg_big = seq[-100:]
+            """);
+        assertEquals("", err());
+        assertEquals("[1, 2, 3, 4, 5]", py.getGlobal("r_all").toString());
+        assertEquals("[1, 2, 3, 4, 5]", py.getGlobal("r_step1").toString());
+        assertEquals("[5, 4, 3, 2, 1]", py.getGlobal("r_rev").toString());
+        assertEquals("[5, 3, 1]", py.getGlobal("r_rev2").toString());
+        assertEquals("[]", py.getGlobal("r_big_start").toString());
+        assertEquals("[1, 2, 3, 4, 5]", py.getGlobal("r_neg_big").toString());
+    }
+
+    @Test void testSliceStringWithBigIntBounds() {
+        py.exec("""
+            s = "abcdef"
+            big = 10 ** 100
+            nbig = -big
+            r1 = s[big:]
+            r2 = s[nbig:]
+            r3 = s[:big]
+            r4 = s[:nbig]
+            """);
+        assertEquals("", err());
+        assertEquals("", py.getGlobal("r1").toString());
+        assertEquals("abcdef", py.getGlobal("r2").toString());
+        assertEquals("abcdef", py.getGlobal("r3").toString());
+        assertEquals("", py.getGlobal("r4").toString());
+    }
+
     @Test void testBigIntFloorDivAndModuloSignCombinations() {
         py.exec("""
             a = 100000000000000000000

@@ -85,4 +85,25 @@ public class CoreDifferentialTest {
         assertMatchesCPython("print('Python3😀🚀'[6:])");
         assertMatchesCPython("print('Python3😀🚀'[::-1])");
     }
+
+    @Test
+    void testSlicingEdgeCasesDifferential() {
+        // Empty results from out-of-range bounds
+        assertMatchesCPython("print([1, 2, 3][100:])");
+        assertMatchesCPython("print([1, 2, 3][-100:])");
+        // BigInt bounds — should clamp to sequence edges
+        assertMatchesCPython("big = 10 ** 100; print([1, 2, 3][big:])");
+        assertMatchesCPython("big = 10 ** 100; print([1, 2, 3][-big:])");
+        assertMatchesCPython("big = 10 ** 100; print([1, 2, 3][:big])");
+        assertMatchesCPython("big = 10 ** 100; print([1, 2, 3][:-big])");
+        // Float bounds — should raise TypeError
+        assertMatchesCPython("try:\n    x = [1, 2, 3][1.0:2]\nexcept TypeError:\n    print('float_start_rejected')");
+        assertMatchesCPython("try:\n    x = [1, 2, 3][1:2.0]\nexcept TypeError:\n    print('float_stop_rejected')");
+        assertMatchesCPython("try:\n    x = [1, 2, 3][::1.0]\nexcept TypeError:\n    print('float_step_rejected')");
+        // Step zero
+        assertMatchesCPython("try:\n    x = [1, 2, 3][::0]\nexcept ValueError:\n    print('step_zero_rejected')");
+        // String slicing with BigInt
+        assertMatchesCPython("big = 10 ** 100; print('abcdef'[big:])");
+        assertMatchesCPython("big = 10 ** 100; print('abcdef'[-big:])");
+    }
 }
