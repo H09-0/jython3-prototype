@@ -122,16 +122,16 @@ through the `jython3` CLI and CPython 3.12.3, comparing outputs with `diff`.
 | stdlib: math, time, json, random, os, io | ✅ |
 | Edge cases: None, falsy values, chained comparisons, deep recursion | ✅ |
 
-### 🔴 Known Bugs (4 issues)
+### ✅ Resolved in Milestone 1 (all 4 defects fixed)
 
-| ID | Bug | Root Cause |
-|:--:|:----|:-----------|
-| C1 | `break` in nested `for` loops → infinite loop | Compiler does not pop inner iterator from VM stack before break-jump |
-| H1 | `isinstance(42, int)` → `False` | Built-in types are `PyBuiltinFunction`, not `PyClass`; isinstance only checks `PyClass` |
-| H2 | `True + True` → `2.0` (float) | `PyBool` not unwrapped to `PyInt` before arithmetic dispatch |
-| H3 | `"%d %s" % (10, "hi")` → `"10 10"` | Formatter uses only the first tuple element for all placeholders |
+| ID | Bug | Root Cause | Status |
+|:--:|:----|:-----------|:------:|
+| C1 | `break` in nested `for` loops → infinite loop | Compiler did not pop inner iterator from VM stack before break-jump | ✅ **FIXED** (`e4a38b3`) |
+| H1 | `isinstance(42, int)` → `False` | Built-in types were `PyBuiltinFunction`, not recognized by isinstance | ✅ **FIXED** (`b2a8869`) |
+| H2 | `True + True` → `2.0` (float) | `PyBool` not unwrapped to `PyInt` before arithmetic dispatch | ✅ **FIXED** (`1fbea33`) |
+| H3 | `"%d %s" % (10, "hi")` → `"10 10"` | Formatter consumed same argument for multiple specifiers | ✅ **FIXED** (`351f9c7`) |
 
-### 🟡 Not Yet Implemented (7 features)
+### 🟡 Not Yet Implemented (Planned for Phase III)
 
 `lambda` · list comprehensions · f-strings · default arguments · tuple unpacking · `global`/`nonlocal` · chained assignment
 

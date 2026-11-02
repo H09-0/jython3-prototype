@@ -325,7 +325,7 @@ public final class BuiltinFunctions {
         // hash(obj)
         define.accept("hash", new PyBuiltinFunction("hash", args -> {
             checkArgCount("hash", args, 1);
-            return new PyInt(args[0].hashCode());
+            return new PyInt(new org.example.jython3.runtime.PyKey(args[0]).hashCode());
         }));
 
         // id(obj)
