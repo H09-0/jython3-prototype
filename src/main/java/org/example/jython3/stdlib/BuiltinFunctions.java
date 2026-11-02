@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.function.BiConsumer;
 
 import org.example.jython3.bridge.JavaBridge;
+import org.example.jython3.runtime.BigInt;
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBuiltinFunction;
@@ -288,25 +289,29 @@ public final class BuiltinFunctions {
         // filter(func, iterable)
         define.accept("filter", new PyBuiltinFunction("filter", args -> filter(caller, args)));
 
-        // isinstance(obj, type_name_or_class)
+        // tuple([iterable])
+        define.accept("tuple", new PyBuiltinFunction("tuple", args -> {
+            if (args.length == 0) return new PyList(new ArrayList<>());
+            checkArgCount("tuple", args, 1);
+            if (args[0] instanceof PyList list) return new PyList(new ArrayList<>(list.items()));
+            if (args[0] instanceof PyStr s) {
+                var items = new ArrayList<PyObject>();
+                s.value().codePoints().forEach(cp -> items.add(new PyStr(new String(Character.toChars(cp)))));
+                return new PyList(items);
+            }
+            throw PyErrors.error("TypeError", "'" + typeName(args[0]) + "' object is not iterable");
+        }));
+
+        // isinstance(obj, type_or_tuple)
         define.accept("isinstance", new PyBuiltinFunction("isinstance", args -> {
             checkArgCount("isinstance", args, 2);
-            PyObject obj = args[0];
-            PyObject typeArg = args[1];
-            if (typeArg instanceof PyClass cls) {
-                if (obj instanceof PyException pe) {
-                    return PyBool.of(PyErrors.matches(pe, cls));
-                }
-                if (obj instanceof PyInstance inst) {
-                    return PyBool.of(inst.isInstanceOf(cls));
-                }
-                if (obj instanceof PyClass objClass) {
-                    return PyBool.of(objClass.isSubclassOf(cls));
-                }
-            }
-            String tn = typeName(obj);
-            String target = (typeArg instanceof PyStr s) ? s.value() : typeArg.toString();
-            return PyBool.of(tn.equalsIgnoreCase(target));
+            return PyBool.of(checkIsInstance(args[0], args[1]));
+        }));
+
+        // issubclass(class, classinfo)
+        define.accept("issubclass", new PyBuiltinFunction("issubclass", args -> {
+            checkArgCount("issubclass", args, 2);
+            return PyBool.of(checkIsSubclass(args[0], args[1]));
         }));
 
         // repr(obj)
@@ -457,5 +462,86 @@ public final class BuiltinFunctions {
             if (isTruthy(val)) result.add(item);
         }
         return new PyList(result);
+    }
+
+    private static boolean checkIsInstance(PyObject obj, PyObject typeArg) {
+        // Tuple of types: isinstance(x, (A, B))
+        if (typeArg instanceof PyList tupleLike) {
+            for (PyObject item : tupleLike.items()) {
+                if (checkIsInstance(obj, item)) return true;
+            }
+            return false;
+        }
+
+        // User-defined class or exception class
+        if (typeArg instanceof PyClass cls) {
+            if (obj instanceof PyException pe) {
+                return PyErrors.matches(pe, cls);
+            }
+            if (obj instanceof PyInstance inst) {
+                return inst.isInstanceOf(cls);
+            }
+            if (obj instanceof PyClass objClass) {
+                return objClass.isSubclassOf(cls);
+            }
+            return false;
+        }
+
+        // Built-in types registered as PyBuiltinFunction constructors
+        if (typeArg instanceof PyBuiltinFunction bf) {
+            return switch (bf.name()) {
+                // In Python, bool is a subclass of int: isinstance(True, int) is True
+                case "int"    -> (obj instanceof PyInt || obj instanceof BigInt || obj instanceof PyBool);
+                case "bool"   -> (obj instanceof PyBool);
+                case "float"  -> (obj instanceof PyFloat);
+                case "str"    -> (obj instanceof PyStr);
+                case "list"   -> (obj instanceof PyList);
+                case "dict"   -> (obj instanceof PyDict);
+                case "tuple"  -> (obj instanceof PyList); // shared internal representation until Phase II
+                case "object" -> true;
+                default       -> false;
+            };
+        }
+
+        // Fallback for string type name comparison
+        if (typeArg instanceof PyStr s) {
+            return typeName(obj).equalsIgnoreCase(s.value());
+        }
+
+        throw PyErrors.error("TypeError",
+                "isinstance() arg 2 must be a type, a tuple of types, or a union");
+    }
+
+    private static boolean checkIsSubclass(PyObject derived, PyObject target) {
+        // Tuple of targets: issubclass(C, (A, B))
+        if (target instanceof PyList tupleLike) {
+            for (PyObject item : tupleLike.items()) {
+                if (checkIsSubclass(derived, item)) return true;
+            }
+            return false;
+        }
+
+        // User-defined classes
+        if (derived instanceof PyClass c1 && target instanceof PyClass c2) {
+            return c1.isSubclassOf(c2);
+        }
+
+        // Built-in types
+        if (derived instanceof PyBuiltinFunction b1 && target instanceof PyBuiltinFunction b2) {
+            String dName = b1.name();
+            String tName = b2.name();
+            if (dName.equals(tName)) return true;
+            // In Python, bool is a subclass of int
+            if ("bool".equals(dName) && "int".equals(tName)) return true;
+            if ("object".equals(tName)) return true;
+            return false;
+        }
+
+        if (target instanceof PyBuiltinFunction b2 && "object".equals(b2.name())) {
+            return derived instanceof PyClass || derived instanceof PyBuiltinFunction;
+        }
+
+        throw PyErrors.error("TypeError",
+                "issubclass() arg 1 must be a class, and arg 2 must be a class, a tuple of classes, or a union");
     }
 }

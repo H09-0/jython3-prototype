@@ -2624,6 +2624,54 @@ class Jython3InterpreterTest {
         assertEquals("[0, 100]", py.getGlobal("out").toString());
     }
 
+    @Test void testBuiltinTypeIsinstanceAndIssubclass() {
+        py.exec("""
+            # Built-in scalar types
+            r_int = isinstance(42, int)
+            r_bigint = isinstance(10 ** 40, int)
+            r_float = isinstance(3.14, float)
+            r_str = isinstance("hello", str)
+            r_bool = isinstance(True, bool)
+            r_bool_int = isinstance(True, int)   # Python: bool is subclass of int
+            r_int_bool = isinstance(42, bool)     # int is NOT bool
+
+            # Collections
+            r_list = isinstance([1, 2], list)
+            r_dict = isinstance({"a": 1}, dict)
+            r_tuple = isinstance(tuple([1, 2]), tuple)
+
+            # Tuple of types
+            r_any1 = isinstance(42, (int, str))
+            r_any2 = isinstance(42, (str, list))
+
+            # issubclass
+            s_bool_int = issubclass(bool, int)
+            s_int_bool = issubclass(int, bool)
+            s_int_int = issubclass(int, int)
+            s_tuple = issubclass(bool, (int, str))
+            """);
+        assertEquals("", err());
+        assertEquals("True", py.getGlobal("r_int").toString());
+        assertEquals("True", py.getGlobal("r_bigint").toString());
+        assertEquals("True", py.getGlobal("r_float").toString());
+        assertEquals("True", py.getGlobal("r_str").toString());
+        assertEquals("True", py.getGlobal("r_bool").toString());
+        assertEquals("True", py.getGlobal("r_bool_int").toString());
+        assertEquals("False", py.getGlobal("r_int_bool").toString());
+
+        assertEquals("True", py.getGlobal("r_list").toString());
+        assertEquals("True", py.getGlobal("r_dict").toString());
+        assertEquals("True", py.getGlobal("r_tuple").toString());
+
+        assertEquals("True", py.getGlobal("r_any1").toString());
+        assertEquals("False", py.getGlobal("r_any2").toString());
+
+        assertEquals("True", py.getGlobal("s_bool_int").toString());
+        assertEquals("False", py.getGlobal("s_int_bool").toString());
+        assertEquals("True", py.getGlobal("s_int_int").toString());
+        assertEquals("True", py.getGlobal("s_tuple").toString());
+    }
+
     @Test void testNestedForInWhileBreak() {
         py.exec("""
             out = []

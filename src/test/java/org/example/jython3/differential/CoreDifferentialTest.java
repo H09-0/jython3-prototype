@@ -137,4 +137,23 @@ public class CoreDifferentialTest {
                     print(a, b)
             """);
     }
+
+    @Test
+    void testBuiltinTypesDifferential() {
+        assertMatchesCPython("print(isinstance(42, int))");
+        assertMatchesCPython("print(isinstance(10**30, int))");
+        assertMatchesCPython("print(isinstance(True, bool))");
+        assertMatchesCPython("print(isinstance(True, int))");
+        assertMatchesCPython("print(isinstance(42, bool))");
+        assertMatchesCPython("print(isinstance(3.14, float))");
+        assertMatchesCPython("print(isinstance('hi', str))");
+        assertMatchesCPython("print(isinstance([1, 2], list))");
+        assertMatchesCPython("print(isinstance({'a': 1}, dict))");
+        assertMatchesCPython("print(isinstance(42, (int, str)))");
+        assertMatchesCPython("print(isinstance(42, (str, list)))");
+        assertMatchesCPython("print(issubclass(bool, int))");
+        assertMatchesCPython("print(issubclass(int, bool))");
+        assertMatchesCPython("print(issubclass(int, int))");
+        assertMatchesCPython("print(issubclass(bool, (int, str)))");
+    }
 }
