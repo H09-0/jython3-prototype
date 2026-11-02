@@ -165,6 +165,7 @@ Stack Machine Loop (Jython3Interpreter.run())
 
 To explore in-depth technical documentation, please consult the dedicated documentation guides:
 
+- 🧭 **[Project Direction](docs/PROJECT_DIRECTION.md)**: Official technical identity, the five guiding principles, and Phase I–VI roadmap.
 - 📖 **[Project Structure](docs/PROJECT_STRUCTURE.md)**: Full codebase tree and package responsibilities.
 - 🧪 **[Field Test Report](docs/FIELD_TEST_REPORT.md)**: Comprehensive testing results with root-cause analysis for all known issues.
 - 🎯 **[Compatibility Matrix](docs/COMPATIBILITY.md)**: Feature-by-feature comparison against CPython 3.14 (T0–T3 tiers).
