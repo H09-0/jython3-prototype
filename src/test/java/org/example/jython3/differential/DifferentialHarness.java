@@ -29,23 +29,38 @@ public final class DifferentialHarness {
     ) {}
 
     private static String cpythonPath = null;
+    private static String cpythonVersion = null;
     private static boolean cpythonChecked = false;
 
     public static synchronized String findCPython() {
         if (!cpythonChecked) {
             cpythonChecked = true;
-            // Check for python3.14 or python3
-            for (String candidate : new String[]{"python3.14", "python3"}) {
+            // Check for python3.14, python3.13, or python3 in that order
+            for (String candidate : new String[]{"python3.14", "python3.13", "python3"}) {
                 try {
                     Process p = new ProcessBuilder(candidate, "--version").start();
                     if (p.waitFor(2, TimeUnit.SECONDS) && p.exitValue() == 0) {
                         cpythonPath = candidate;
+                        var r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8));
+                        cpythonVersion = r.readLine();
+                        if (cpythonVersion == null || cpythonVersion.isEmpty()) {
+                            var er = new BufferedReader(new InputStreamReader(p.getErrorStream(), StandardCharsets.UTF_8));
+                            cpythonVersion = er.readLine();
+                        }
                         break;
                     }
                 } catch (Exception ignored) {}
             }
         }
         return cpythonPath;
+    }
+
+    /**
+     * Returns the detected CPython version string (e.g. "Python 3.12.3" or "Python 3.14.0a1").
+     */
+    public static synchronized String getCPythonVersion() {
+        findCPython();
+        return cpythonVersion != null ? cpythonVersion : "Not available";
     }
 
     public static ExecutionResult runCPython(String script) {

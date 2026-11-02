@@ -1,12 +1,23 @@
 package org.example.jython3.differential;
 
 import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.example.jython3.differential.DifferentialHarness.assertMatchesCPython;
 
 /**
  * Executes differential tests comparing Jython 3 semantics directly with CPython.
  */
 public class CoreDifferentialTest {
+
+    @Test
+    void testBaselineAudit() {
+        String cpyVer = DifferentialHarness.getCPythonVersion();
+        String cpyPath = DifferentialHarness.findCPython();
+        System.out.println("[DifferentialBaseline] CPython executable: " + cpyPath);
+        System.out.println("[DifferentialBaseline] CPython version:    " + cpyVer);
+        System.out.println("[DifferentialBaseline] Jython version:     v0.10.2-alpha");
+        assertTrue(cpyPath != null, "A CPython binary must be available for differential conformance");
+    }
 
     @Test
     void testTrueDivisionDifferential() {

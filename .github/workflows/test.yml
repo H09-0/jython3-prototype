@@ -6,6 +6,7 @@ on:
 
 jobs:
   test:
+    name: Unit & Integration Tests (Java 21)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,3 +19,39 @@ jobs:
         run: ./gradlew runScript -Pargs=test.py --console=plain
       - name: Smoke test (demo.py)
         run: ./gradlew runScript -Pargs=demo.py --console=plain
+
+  differential:
+    name: CPython Differential Conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up CPython (target: 3.14-dev / 3.13 fallback)
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.14-dev
+            3.13
+          allow-prereleases: true
+
+      - name: Record Environment Baseline
+        run: |
+          echo "==================== BASELINE AUDIT ===================="
+          echo "Git commit:    $(git rev-parse HEAD)"
+          echo "Git branch:    $(git rev-parse --abbrev-ref HEAD)"
+          echo "Java version:  $(java -version 2>&1 | head -1)"
+          echo "Python path:   $(which python3)"
+          echo "Python version: $(python3 --version 2>&1)"
+          echo "Gradle:        $(./gradlew --version | grep Gradle)"
+          echo "========================================================"
+
+      - name: Run Differential Tests
+        run: |
+          chmod +x gradlew
+          ./gradlew test --tests 'org.example.jython3.differential.*' --info
