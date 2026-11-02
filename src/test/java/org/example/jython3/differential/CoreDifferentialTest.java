@@ -117,4 +117,24 @@ public class CoreDifferentialTest {
         assertMatchesCPython("big = 10 ** 100; print('abcdef'[big:])");
         assertMatchesCPython("big = 10 ** 100; print('abcdef'[-big:])");
     }
+
+    @Test
+    void testNestedControlFlowDifferential() {
+        assertMatchesCPython("""
+            for i in range(3):
+                for j in range(3):
+                    if j == 1:
+                        break
+                    print(i, j)
+            """);
+        assertMatchesCPython("""
+            for a in range(2):
+                for b in range(3):
+                    if b == 1:
+                        continue
+                    if b == 2:
+                        break
+                    print(a, b)
+            """);
+    }
 }

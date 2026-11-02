@@ -16,6 +16,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         final java.util.List<Integer> breakPatches = new java.util.ArrayList<>();
         int continueTarget = -1; // pc of loop-start / FOR_ITER
         int depth;               // loopStack.size() while this loop is active
+        boolean isForLoop;       // true if this is a 'for' loop with an iterator on the stack
     }
     private final java.util.Deque<LoopContext> loopStack = new java.util.ArrayDeque<>();
 
@@ -263,6 +264,11 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         if (!loopStack.isEmpty()) {
             LoopContext target = loopStack.peek();
             emitScopeExits(target.depth, false);
+            // In a 'for' loop, the PyIterator sits on the stack throughout the body.
+            // When breaking, we must pop it so enclosing scopes / outer loops find a clean stack.
+            if (target.isForLoop) {
+                b.emit(OpCode.POP_TOP);
+            }
             int idx = b.size();
             b.emitRaw(OpCode.JUMP, 0); // target patched after loop ends
             target.breakPatches.add(idx);
@@ -431,6 +437,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         // Push loop context so break/continue know where to jump
         var ctx = new LoopContext();
         ctx.continueTarget = loopStart;
+        ctx.isForLoop = false;
         loopStack.push(ctx);
         ctx.depth = loopStack.size();
         visit(c.suite());
@@ -455,6 +462,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         // Push loop context: continue → jump back to FOR_ITER
         var ctx = new LoopContext();
         ctx.continueTarget = loopTarget;
+        ctx.isForLoop = true;
         loopStack.push(ctx);
         ctx.depth = loopStack.size();
         visit(c.suite());

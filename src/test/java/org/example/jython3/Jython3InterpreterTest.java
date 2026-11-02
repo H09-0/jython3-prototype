@@ -2596,6 +2596,49 @@ class Jython3InterpreterTest {
         assertEquals("", py.getGlobal("r4").toString());
     }
 
+    @Test void testNestedForLoopBreakDoesNotCorruptStack() {
+        py.exec("""
+            out = []
+            for i in range(3):
+                for j in range(3):
+                    if j == 1:
+                        break
+                    out.append(i * 10 + j)
+            """);
+        assertEquals("", err());
+        assertEquals("[0, 10, 20]", py.getGlobal("out").toString());
+    }
+
+    @Test void testDeeplyNestedLoopsWithBreakAndContinue() {
+        py.exec("""
+            out = []
+            for a in range(2):
+                for b in range(3):
+                    if b == 1:
+                        continue
+                    if b == 2:
+                        break
+                    out.append(a * 100 + b)
+            """);
+        assertEquals("", err());
+        assertEquals("[0, 100]", py.getGlobal("out").toString());
+    }
+
+    @Test void testNestedForInWhileBreak() {
+        py.exec("""
+            out = []
+            n = 0
+            while n < 2:
+                for k in range(5):
+                    if k == 1:
+                        break
+                    out.append(n * 10 + k)
+                n = n + 1
+            """);
+        assertEquals("", err());
+        assertEquals("[0, 10]", py.getGlobal("out").toString());
+    }
+
     @Test void testBigIntFloorDivAndModuloSignCombinations() {
         py.exec("""
             a = 100000000000000000000
