@@ -234,16 +234,78 @@ public final class PyOps {
     }
 
     public static String pyStringFormat(String fmt, PyObject args) {
-        String result = fmt;
+        List<PyObject> argList;
         if (args instanceof PyList list) {
-            for (var item : list.items()) {
-                result = result.replaceFirst("%s", item.toString());
-                result = result.replaceFirst("%d", item.toString());
-            }
+            argList = list.items();
         } else {
-            result = result.replaceFirst("%s", args.toString());
-            result = result.replaceFirst("%d", args.toString());
+            argList = List.of(args);
         }
-        return result;
+
+        var sb = new StringBuilder();
+        int argIdx = 0;
+        int n = fmt.length();
+        int i = 0;
+
+        while (i < n) {
+            char ch = fmt.charAt(i);
+            if (ch == '%') {
+                if (i + 1 < n && fmt.charAt(i + 1) == '%') {
+                    sb.append('%');
+                    i += 2;
+                    continue;
+                }
+
+                int specStart = i;
+                i++; // skip '%'
+
+                // Optional flags / width / precision: [0-9.+-]
+                while (i < n && (Character.isDigit(fmt.charAt(i)) || fmt.charAt(i) == '.' || fmt.charAt(i) == '-' || fmt.charAt(i) == '+')) {
+                    i++;
+                }
+
+                if (i >= n) {
+                    throw PyErrors.error("ValueError", "incomplete format");
+                }
+
+                char conv = fmt.charAt(i);
+                i++; // consume conversion char
+
+                if (argIdx >= argList.size()) {
+                    throw PyErrors.error("TypeError", "not enough arguments for format string");
+                }
+
+                PyObject arg = argList.get(argIdx++);
+                String subSpec = fmt.substring(specStart, i);
+
+                switch (conv) {
+                    case 's' -> sb.append(arg instanceof PyStr s ? s.value() : arg.toString());
+                    case 'r' -> {
+                        if (arg instanceof PyStr s) sb.append("'").append(s.value()).append("'");
+                        else sb.append(arg.toString());
+                    }
+                    case 'd', 'i' -> {
+                        if (arg instanceof PyInt pi) sb.append(pi.value());
+                        else if (arg instanceof PyBool pb) sb.append(pb.value() ? 1 : 0);
+                        else if (arg instanceof BigInt bi) sb.append(bi.value().toString());
+                        else if (arg instanceof PyFloat pf) sb.append((long) pf.value());
+                        else throw PyErrors.error("TypeError", "%d format: a real number is required, not " + typeName(arg));
+                    }
+                    case 'f', 'F' -> {
+                        double val = toDouble(arg);
+                        sb.append(String.format(java.util.Locale.US, subSpec, val));
+                    }
+                    default -> sb.append(arg.toString());
+                }
+            } else {
+                sb.append(ch);
+                i++;
+            }
+        }
+
+        if (argIdx < argList.size()) {
+            throw PyErrors.error("TypeError", "not all arguments converted during string formatting");
+        }
+
+        return sb.toString();
     }
 }

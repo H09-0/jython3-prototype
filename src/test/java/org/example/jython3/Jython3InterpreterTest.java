@@ -2702,6 +2702,29 @@ class Jython3InterpreterTest {
         assertEquals("[1, 2]", py.getGlobal("r_list_mul_true").toString());
     }
 
+    @Test void testStringFormattingMultipleArgumentsAndBigInt() {
+        py.exec("""
+            s1 = "%d %s" % (10, "hi")
+            s2 = "%s is %d years old (%.1f)" % ("Alice", 30, 95.5)
+            s3 = "%d%%" % 100
+            s4 = "%d" % (10 ** 30)
+            s5 = "%d" % True
+            s6 = "%r" % "hello"
+            """);
+        assertEquals("", err());
+        assertEquals("10 hi", py.getGlobal("s1").toString());
+        assertEquals("Alice is 30 years old (95.5)", py.getGlobal("s2").toString());
+        assertEquals("100%", py.getGlobal("s3").toString());
+        assertEquals("1000000000000000000000000000000", py.getGlobal("s4").toString());
+        assertEquals("1", py.getGlobal("s5").toString());
+        assertEquals("'hello'", py.getGlobal("s6").toString());
+    }
+
+    @Test void testStringFormattingErrorCases() {
+        assertThrows(InterpreterException.class, () -> py.eval("'%d %d' % 1"));
+        assertThrows(InterpreterException.class, () -> py.eval("'%d' % (1, 2)"));
+    }
+
     @Test void testNestedForInWhileBreak() {
         py.exec("""
             out = []

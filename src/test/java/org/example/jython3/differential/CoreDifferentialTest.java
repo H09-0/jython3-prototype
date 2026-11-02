@@ -172,4 +172,16 @@ public class CoreDifferentialTest {
         assertMatchesCPython("print('ab' * False)");
         assertMatchesCPython("print([1, 2] * True)");
     }
+
+    @Test
+    void testStringFormattingDifferential() {
+        assertMatchesCPython("print('%d %s' % (10, 'hi'))");
+        assertMatchesCPython("print('%s is %d years old (%.1f)' % ('Alice', 30, 95.5))");
+        assertMatchesCPython("print('%d%% done' % 100)");
+        assertMatchesCPython("print('%d' % (10 ** 25))");
+        assertMatchesCPython("print('%d' % True)");
+        assertMatchesCPython("print('%r' % 'hello')");
+        assertMatchesCPython("try:\n    print('%d %d' % 1)\nexcept TypeError:\n    print('too_few_caught')");
+        assertMatchesCPython("try:\n    print('%d' % (1, 2))\nexcept TypeError:\n    print('too_many_caught')");
+    }
 }
