@@ -2672,6 +2672,36 @@ class Jython3InterpreterTest {
         assertEquals("True", py.getGlobal("s_tuple").toString());
     }
 
+    @Test void testBooleanIntegerArithmeticSemantics() {
+        py.exec("""
+            r_add = True + True
+            r_add_type = type(r_add)
+            r_mul = True * 5
+            r_sub = True - True
+            r_neg = -True
+            r_truediv = True / 2
+            r_floordiv = True // 2
+            r_mod = True % 2
+            r_mixed_float = True + 0.5
+            r_str_mul_true = "ab" * True
+            r_str_mul_false = "ab" * False
+            r_list_mul_true = [1, 2] * True
+            """);
+        assertEquals("", err());
+        assertEquals("2", py.getGlobal("r_add").toString());
+        assertEquals("<class 'int'>", py.getGlobal("r_add_type").toString());
+        assertEquals("5", py.getGlobal("r_mul").toString());
+        assertEquals("0", py.getGlobal("r_sub").toString());
+        assertEquals("-1", py.getGlobal("r_neg").toString());
+        assertEquals("0.5", py.getGlobal("r_truediv").toString());
+        assertEquals("0", py.getGlobal("r_floordiv").toString());
+        assertEquals("1", py.getGlobal("r_mod").toString());
+        assertEquals("1.5", py.getGlobal("r_mixed_float").toString());
+        assertEquals("ab", py.getGlobal("r_str_mul_true").toString());
+        assertEquals("", py.getGlobal("r_str_mul_false").toString());
+        assertEquals("[1, 2]", py.getGlobal("r_list_mul_true").toString());
+    }
+
     @Test void testNestedForInWhileBreak() {
         py.exec("""
             out = []

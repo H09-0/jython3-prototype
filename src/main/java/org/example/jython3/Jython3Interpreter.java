@@ -797,7 +797,7 @@ public class Jython3Interpreter {
                 case SUBTRACT -> binarySubtract();
                 case MULTIPLY -> binaryMultiply();
                 case DIVIDE -> {
-                    var r = stack.pop(); var l = stack.pop();
+                    var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
                     if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r);
                         if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "division by zero");
@@ -808,7 +808,7 @@ public class Jython3Interpreter {
                     }
                 }
                 case FLOOR_DIVIDE -> {
-                    var r = stack.pop(); var l = stack.pop();
+                    var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
                     if (l instanceof PyInt li && r instanceof PyInt ri) {
                         if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
                         stack.push(new PyInt(Math.floorDiv(li.value(), ri.value())));
@@ -834,29 +834,33 @@ public class Jython3Interpreter {
                     var r = stack.pop(); var l = stack.pop();
                     if (l instanceof PyStr fmt) {
                         stack.push(new PyStr(pyStringFormat(fmt.value(), r)));
-                    } else if (l instanceof PyInt li && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
-                        stack.push(new PyInt(Math.floorMod(li.value(), ri.value())));
-                    } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
-                        java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
-                        java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
-                        java.math.BigInteger rem = PyOps.floorMod(ba, bb);
-                        if (rem.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
-                            rem.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                            stack.push(new PyInt(rem.intValue()));
-                        } else {
-                            stack.push(new BigInt(rem));
-                        }
-                    } else if (isNumeric(l) && isNumeric(r)) {
-                        double rv = toDouble(r), lv = toDouble(l);
-                        if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
-                        stack.push(new PyFloat(lv - Math.floor(lv / rv) * rv));
                     } else {
-                        throw PyErrors.error("TypeError", "unsupported operand types for %");
+                        l = unwrapBool(l);
+                        r = unwrapBool(r);
+                        if (l instanceof PyInt li && r instanceof PyInt ri) {
+                            if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
+                            stack.push(new PyInt(Math.floorMod(li.value(), ri.value())));
+                        } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+                            java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+                            java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+                            java.math.BigInteger rem = PyOps.floorMod(ba, bb);
+                            if (rem.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
+                                rem.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
+                                stack.push(new PyInt(rem.intValue()));
+                            } else {
+                                stack.push(new BigInt(rem));
+                            }
+                        } else if (isNumeric(l) && isNumeric(r)) {
+                            double rv = toDouble(r), lv = toDouble(l);
+                            if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
+                            stack.push(new PyFloat(lv - Math.floor(lv / rv) * rv));
+                        } else {
+                            throw PyErrors.error("TypeError", "unsupported operand types for %");
+                        }
                     }
                 }
                 case POWER -> {
-                    var r = stack.pop(); var l = stack.pop();
+                    var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
                     if (isNumeric(l) && isNumeric(r)) {
                         // Integer exact exponentiation
                         if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
@@ -892,7 +896,7 @@ public class Jython3Interpreter {
                     }
                 }
                 case UNARY_MINUS -> {
-                    var v = stack.pop();
+                    var v = unwrapBool(stack.pop());
                     if (v instanceof PyInt i) {
                         long negated = -(long) i.value();
                         if (negated > Integer.MAX_VALUE || negated < Integer.MIN_VALUE) {
@@ -1430,8 +1434,12 @@ public class Jython3Interpreter {
 
     // ─── Arithmetic helpers ───────────────────────────────────────────────
 
+    private static PyObject unwrapBool(PyObject o) {
+        return (o instanceof PyBool b) ? new PyInt(b.value() ? 1 : 0) : o;
+    }
+
     private void binaryAdd() {
-        var r = stack.pop(); var l = stack.pop();
+        var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
         if (l instanceof PyStr ls && r instanceof PyStr rs) {
             stack.push(new PyStr(ls.value() + rs.value()));
         } else if (l instanceof PyList ll && r instanceof PyList rl) {
@@ -1465,7 +1473,7 @@ public class Jython3Interpreter {
     }
 
     private void binarySubtract() {
-        var r = stack.pop(); var l = stack.pop();
+        var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
         if (l instanceof PyInt li && r instanceof PyInt ri) {
             long lv = li.value();
             long rv = ri.value();
@@ -1493,7 +1501,7 @@ public class Jython3Interpreter {
     }
 
     private void binaryMultiply() {
-        var r = stack.pop(); var l = stack.pop();
+        var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
         if (l instanceof PyStr s && r instanceof PyInt n) {
             long newLen = (long) s.value().length() * Math.max(0, n.value());
             if (newLen > executionLimits.maxStringLength()) {

@@ -156,4 +156,20 @@ public class CoreDifferentialTest {
         assertMatchesCPython("print(issubclass(int, int))");
         assertMatchesCPython("print(issubclass(bool, (int, str)))");
     }
+
+    @Test
+    void testBooleanArithmeticDifferential() {
+        assertMatchesCPython("print(True + True)");
+        assertMatchesCPython("print(isinstance(True + True, int))");
+        assertMatchesCPython("print(isinstance(True + True, bool))");
+        assertMatchesCPython("print(True * 5)");
+        assertMatchesCPython("print(True + 0.5)");
+        assertMatchesCPython("print(True / 2)");
+        assertMatchesCPython("print(True // 2)");
+        assertMatchesCPython("print(True % 2)");
+        assertMatchesCPython("print(-True)");
+        assertMatchesCPython("print('ab' * True)");
+        assertMatchesCPython("print('ab' * False)");
+        assertMatchesCPython("print([1, 2] * True)");
+    }
 }
