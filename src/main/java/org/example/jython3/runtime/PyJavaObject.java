@@ -24,7 +24,8 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         // Instance methods
         List<Method> allMethods = new ArrayList<>();
         for (Method m : clazz.getMethods()) {
-            if (m.getName().equals(name) && !Modifier.isStatic(m.getModifiers())) {
+            if (m.getName().equals(name) && !Modifier.isStatic(m.getModifiers())
+                    && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
                 allMethods.add(m);
             }
         }
@@ -40,7 +41,7 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         // Instance fields
         try {
             Field f = clazz.getField(name);
-            if (!Modifier.isStatic(f.getModifiers())) {
+            if (!Modifier.isStatic(f.getModifiers()) && Modifier.isPublic(f.getModifiers()) && !f.isSynthetic()) {
                 if (!policy.canReadField(clazz.getName(), name)) {
                     throw JavaBridge.denied("field '" + name + "'");
                 }
@@ -54,8 +55,10 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         String cap = Character.toUpperCase(name.charAt(0)) + name.substring(1);
         try {
             Method getter = clazz.getMethod("get" + cap);
+            if (!Modifier.isPublic(getter.getModifiers()) || getter.isSynthetic()) {
+                throw new NoSuchMethodException();
+            }
             requireMethodAccess(clazz, getter);
-            getter.setAccessible(true);
             return JavaBridge.toPyObject(getter.invoke(object), policy);
         } catch (NoSuchMethodException e) {
             // Try the boolean-style accessor below.
@@ -64,8 +67,10 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         }
         try {
             Method isser = clazz.getMethod("is" + cap);
+            if (!Modifier.isPublic(isser.getModifiers()) || isser.isSynthetic()) {
+                throw new NoSuchMethodException();
+            }
             requireMethodAccess(clazz, isser);
-            isser.setAccessible(true);
             return JavaBridge.toPyObject(isser.invoke(object), policy);
         } catch (NoSuchMethodException e) {
             // Neither accessor exists; report a Python AttributeError below.
@@ -103,7 +108,8 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         boolean settersExist = false;
         boolean permittedSetterSeen = false;
         for (Method m : clazz.getMethods()) {
-            if (m.getName().equals(setterName) && m.getParameterCount() == 1 && !Modifier.isStatic(m.getModifiers())) {
+            if (m.getName().equals(setterName) && m.getParameterCount() == 1
+                    && !Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
                 settersExist = true;
                 if (!policy.canCallMethod(clazz.getName(), setterName,
                         JavaDescriptors.of(m.getParameterTypes()))) {
@@ -111,7 +117,6 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
                 }
                 permittedSetterSeen = true;
                 try {
-                    m.setAccessible(true);
                     Object javaArg = JavaBridge.toJavaObject(val, m.getParameterTypes()[0], policy);
                     m.invoke(object, javaArg);
                     return;

@@ -356,4 +356,39 @@ class JavaAccessPolicyTest {
                 org.example.jython3.security.ExecutionLimits.TRUSTED);
         assertSame(org.example.jython3.security.ExecutionLimits.TRUSTED, explicit.executionLimits());
     }
+
+    @Test
+    void reflectionAndModuleTypesAreForbiddenInAllowlist() {
+        AllowlistPolicy trusted = AllowlistPolicy.trusted();
+        assertFalse(trusted.canAccessClass("java.lang.Class"));
+        assertFalse(trusted.canAccessClass("java.lang.Module"));
+        assertFalse(trusted.canAccessClass("java.lang.ModuleLayer"));
+        assertFalse(trusted.canAccessClass("java.lang.Package"));
+        assertFalse(trusted.canAccessClass("java.lang.reflect.Method"));
+        assertFalse(trusted.canAccessClass("java.lang.reflect.Field"));
+        assertFalse(trusted.canAccessClass("java.lang.reflect.Constructor"));
+    }
+
+    @Test
+    void broadPackagesAreExcludedFromAllowlist() {
+        AllowlistPolicy trusted = AllowlistPolicy.trusted();
+        assertFalse(trusted.canAccessClass("java.net.Socket"));
+        assertFalse(trusted.canAccessClass("java.net.URL"));
+        assertFalse(trusted.canAccessClass("java.awt.Color"));
+        assertFalse(trusted.canAccessClass("java.nio.file.Files"));
+        // Explicitly allowed safe classes remain accessible
+        assertTrue(trusted.canAccessClass("java.io.File"));
+        assertTrue(trusted.canAccessClass("java.io.InputStream"));
+    }
+
+    @Test
+    void javaBridgeRejectsWrappingReflectionObjects() {
+        JavaAccessPolicy policy = AllowlistPolicy.trusted();
+        assertThrows(InterpreterException.class, () ->
+                JavaBridge.toPyObject(String.class, policy));
+        assertThrows(InterpreterException.class, () ->
+                JavaBridge.toPyObject(JavaAccessPolicyTest.class.getClassLoader(), policy));
+        assertThrows(InterpreterException.class, () ->
+                JavaBridge.toPyObject(JavaAccessPolicyTest.class.getModule(), policy));
+    }
 }

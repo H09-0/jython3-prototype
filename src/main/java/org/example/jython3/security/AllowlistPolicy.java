@@ -19,13 +19,9 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
     public static final Set<String> ALLOWED_PACKAGES = Set.of(
             "java.lang",
             "java.util",
-            "java.io",
             "java.math",
             "java.text",
-            "java.time",
-            "java.nio",
-            "java.net",
-            "java.awt");
+            "java.time");
 
     public static final Set<String> ALLOWED_CLASSES = Set.of(
             "java.lang.String",
@@ -73,7 +69,11 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
             "java.lang.ThreadGroup",
             "java.lang.ThreadLocal",
             "java.lang.InheritableThreadLocal",
-            // Class loading and reflection
+            // Class loading and reflection structures
+            "java.lang.Class",
+            "java.lang.Module",
+            "java.lang.ModuleLayer",
+            "java.lang.Package",
             "java.lang.ClassLoader",
             "java.security.SecureClassLoader",
             "java.net.URLClassLoader",
@@ -81,6 +81,11 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
             "java.lang.invoke.MethodHandles$Lookup",
             "java.lang.invoke.MethodHandle",
             "java.lang.invoke.VarHandle",
+            "java.lang.reflect.Method",
+            "java.lang.reflect.Field",
+            "java.lang.reflect.Constructor",
+            "java.lang.reflect.Member",
+            "java.lang.reflect.AccessibleObject",
             // Java Object Deserialization hazards
             "java.io.ObjectInputStream",
             "java.io.ObjectOutputStream",

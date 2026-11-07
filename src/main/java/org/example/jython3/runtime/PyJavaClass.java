@@ -35,7 +35,8 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
         // Static methods
         List<Method> allStaticMethods = new ArrayList<>();
         for (Method m : clazz.getMethods()) {
-            if (m.getName().equals(name) && Modifier.isStatic(m.getModifiers())) {
+            if (m.getName().equals(name) && Modifier.isStatic(m.getModifiers())
+                    && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
                 allStaticMethods.add(m);
             }
         }
@@ -48,7 +49,7 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
         // Static fields
         try {
             Field f = clazz.getField(name);
-            if (Modifier.isStatic(f.getModifiers())) {
+            if (Modifier.isStatic(f.getModifiers()) && Modifier.isPublic(f.getModifiers()) && !f.isSynthetic()) {
                 if (!policy.canReadField(clazz.getName(), name)) {
                     throw JavaBridge.denied("field '" + name + "'");
                 }
@@ -60,7 +61,7 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
 
         // Inner / Nested classes
         for (Class<?> inner : clazz.getClasses()) {
-            if (inner.getSimpleName().equals(name)) {
+            if (inner.getSimpleName().equals(name) && Modifier.isPublic(inner.getModifiers())) {
                 if (!policy.canAccessClass(inner.getName())) throw JavaBridge.denied(inner.getName());
                 return new PyJavaClass(inner, policy);
             }

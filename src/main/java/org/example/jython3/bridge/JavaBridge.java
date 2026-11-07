@@ -2,6 +2,7 @@ package org.example.jython3.bridge;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -129,6 +130,15 @@ public class JavaBridge {
 
         // Check if the object class is accessible under the given policy before wrapping
         if (!policy.canAccessClass(obj.getClass().getName())) {
+            throw denied(obj.getClass().getName());
+        }
+
+        // Reject dangerous reflection and classloading types completely from entering Python
+        if (obj instanceof Class<?> || obj instanceof ClassLoader
+                || obj instanceof java.lang.reflect.Member
+                || obj instanceof java.lang.reflect.AccessibleObject
+                || obj instanceof java.lang.Module
+                || obj instanceof java.lang.ModuleLayer) {
             throw denied(obj.getClass().getName());
         }
 
@@ -279,6 +289,7 @@ public class JavaBridge {
         int bestScore = -1;
 
         for (Method m : methods) {
+            if (!Modifier.isPublic(m.getModifiers()) || m.isSynthetic()) continue;
             Class<?>[] params = m.getParameterTypes();
             if (params.length != args.length) continue;
 
@@ -294,7 +305,6 @@ public class JavaBridge {
                     "no matching Java method '" + name + "' for argument types (" + signature(args) + ")");
         }
 
-        best.setAccessible(true);
         var match = new MethodMatch(best, best.getParameterTypes());
         METHOD_CACHE.put(cacheKey, match);
         return match;
@@ -309,6 +319,7 @@ public class JavaBridge {
         int bestScore = -1;
 
         for (Constructor<?> c : clazz.getConstructors()) {
+            if (!Modifier.isPublic(c.getModifiers()) || c.isSynthetic()) continue;
             Class<?>[] params = c.getParameterTypes();
             if (params.length != args.length) continue;
 
@@ -324,7 +335,6 @@ public class JavaBridge {
                     "no matching Java constructor for class '" + clazz.getName() + "' with (" + signature(args) + ")");
         }
 
-        best.setAccessible(true);
         var match = new ConstructorMatch(best, best.getParameterTypes());
         CONSTRUCTOR_CACHE.put(cacheKey, match);
         return match;
