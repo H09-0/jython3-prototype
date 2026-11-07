@@ -434,14 +434,10 @@ public final class BuiltinFunctions {
         }
         if (o instanceof PyDict d) return new PyIterator(new ArrayList<>(d.map().keySet()), 0);
         if (o instanceof PyGenerator gen) {
-            var items = new ArrayList<PyObject>();
-            while (!gen.isDone()) items.add(gen.next());
-            return new PyIterator(items, 0);
+            return PyIterator.fromGenerator(gen);
         }
         if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
-            var items = new ArrayList<PyObject>();
-            for (Object item : iterable) items.add(JavaBridge.toPyObject(item, policy));
-            return new PyIterator(items, 0);
+            return PyIterator.fromJavaIterable(iterable, policy, null);
         }
         throw PyErrors.error("TypeError", "'" + typeName(o) + "' object is not iterable");
     }

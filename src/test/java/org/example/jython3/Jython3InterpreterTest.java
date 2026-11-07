@@ -2917,6 +2917,50 @@ class Jython3InterpreterTest {
         assertEquals("['🚀', 'c', 'b', 'a']", py.getGlobal("s_reversed").toString());
     }
 
+    @Test void testLazyJavaIterableIteration() {
+        // An infinite iterable that would crash/hang if eagerly evaluated
+        Iterable<Integer> infinite = () -> new java.util.Iterator<>() {
+            private int current = 0;
+            @Override public boolean hasNext() { return true; }
+            @Override public Integer next() { return current++; }
+        };
+        var permitTest = new org.example.jython3.security.JavaAccessPolicy() {
+            @Override public boolean canAccessClass(String b) { return true; }
+            @Override public boolean canConstructClass(String b, String d) { return true; }
+            @Override public boolean canCallMethod(String o, String n, String d) { return true; }
+            @Override public boolean canReadField(String o, String n) { return true; }
+            @Override public boolean canWriteField(String o, String n) { return true; }
+        };
+        var custom = new Jython3Interpreter(permitTest, org.example.jython3.security.HostAccessPolicy.PERMISSIVE, org.example.jython3.security.ExecutionLimits.TRUSTED);
+        custom.setGlobal("infinite_stream", org.example.jython3.bridge.JavaBridge.toPyObject(infinite, permitTest));
+        custom.exec("""
+            out = []
+            for x in infinite_stream:
+                if x >= 5:
+                    break
+                out.append(x)
+            """);
+        assertEquals("", err());
+        assertEquals("[0, 1, 2, 3, 4]", custom.getGlobal("out").toString());
+    }
+
+    @Test void testLazyGeneratorIterationWithBreak() {
+        py.exec("""
+            def countdown(n):
+                while n > 0:
+                    yield n
+                    n -= 1
+
+            out = []
+            for x in countdown(100):
+                if x == 97:
+                    break
+                out.append(x)
+            """);
+        assertEquals("", err());
+        assertEquals("[100, 99, 98]", py.getGlobal("out").toString());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

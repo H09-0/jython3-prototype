@@ -1269,20 +1269,9 @@ public class Jython3Interpreter {
                     } else if (o instanceof PyDict d) {
                         stack.push(new PyIterator(new ArrayList<>(d.map().keySet()), 0));
                     } else if (o instanceof PyGenerator gen) {
-                        // Eagerly drain the generator into a list then wrap as iterator
-                        var items = new ArrayList<PyObject>();
-                        while (!gen.isDone()) {
-                            try { items.add(gen.next()); }
-                            catch (InterpreterException ie) {
-                                if ("StopIteration".equals(ie.typeName())) break;
-                                throw ie;
-                            }
-                        }
-                        stack.push(new PyIterator(items, 0));
+                        stack.push(PyIterator.fromGenerator(gen));
                     } else if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
-                        var items = new ArrayList<PyObject>();
-                        for (Object item : iterable) items.add(JavaBridge.toPyObject(item, jo.policy()));
-                        stack.push(new PyIterator(items, 0));
+                        stack.push(PyIterator.fromJavaIterable(iterable, jo.policy(), currentContext));
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(o) + "' is not iterable");
                     }
