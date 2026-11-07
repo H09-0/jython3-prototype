@@ -2882,6 +2882,41 @@ class Jython3InterpreterTest {
         assertEquals("float division by zero", ((PyException) zd2.value()).message());
     }
 
+    @Test void testUnicodeCodePointSemanticsUnified() {
+        py.exec("""
+            s = "Python3😀🚀"
+            l = len(s)
+            c0 = s[0]
+            c_emoji1 = s[7]
+            c_emoji2 = s[8]
+            c_last = s[-1]
+            c_second_last = s[-2]
+            s_slice = s[0:7]
+            s_emoji_slice = s[7:]
+            s_rev = s[::-1]
+            as_list = list("😀🚀")
+            chars = []
+            for ch in "😀🚀":
+                chars.append(ch)
+            s_sorted = sorted("cba🚀😀")
+            s_reversed = list(reversed("abc🚀"))
+            """);
+        assertEquals("", err());
+        assertEquals("9", py.getGlobal("l").toString());
+        assertEquals("P", py.getGlobal("c0").toString());
+        assertEquals("😀", py.getGlobal("c_emoji1").toString());
+        assertEquals("🚀", py.getGlobal("c_emoji2").toString());
+        assertEquals("🚀", py.getGlobal("c_last").toString());
+        assertEquals("😀", py.getGlobal("c_second_last").toString());
+        assertEquals("Python3", py.getGlobal("s_slice").toString());
+        assertEquals("😀🚀", py.getGlobal("s_emoji_slice").toString());
+        assertEquals("🚀😀3nohtyP", py.getGlobal("s_rev").toString());
+        assertEquals("['😀', '🚀']", py.getGlobal("as_list").toString());
+        assertEquals("['😀', '🚀']", py.getGlobal("chars").toString());
+        assertEquals("['a', 'b', 'c', '😀', '🚀']", py.getGlobal("s_sorted").toString());
+        assertEquals("['🚀', 'c', 'b', 'a']", py.getGlobal("s_reversed").toString());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

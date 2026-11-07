@@ -358,12 +358,9 @@ public class BuiltinModules {
                 return list.items().get(rng.nextInt(list.items().size()));
             }
             if (args[0] instanceof PyStr s) {
-                String strVal = s.value();
-                if (strVal.isEmpty()) throw PyErrors.error("IndexError", "Cannot choose from an empty sequence");
-                // Unicode codepoint-safe choice (handles surrogate pairs like emojis properly)
-                int[] codePoints = strVal.codePoints().toArray();
-                int chosenCodePoint = codePoints[rng.nextInt(codePoints.length)];
-                return new PyStr(new String(Character.toChars(chosenCodePoint)));
+                int count = s.codePointCount();
+                if (count == 0) throw PyErrors.error("IndexError", "Cannot choose from an empty sequence");
+                return new PyStr(s.getCodePointAt(rng.nextInt(count)));
             }
             throw PyErrors.error("TypeError", "object is not subscriptable or sequence");
         }));

@@ -201,4 +201,14 @@ public class CoreDifferentialTest {
         assertMatchesCPython("try:\n    print(1 / 0.0)\nexcept ZeroDivisionError:\n    print('float_div0_caught')");
         assertMatchesCPython("try:\n    print(1.0 / 0)\nexcept ZeroDivisionError:\n    print('float_div0_caught2')");
     }
+
+    @Test
+    void testUnicodeDifferential() {
+        assertMatchesCPython("s = 'Python3😀🚀'; print(len(s), s[0], s[7], s[8], s[-1], s[-2])");
+        assertMatchesCPython("s = 'Python3😀🚀'; print(s[0:7], s[7:], s[::-1])");
+        assertMatchesCPython("print(list('😀🚀'))");
+        assertMatchesCPython("out = []\nfor c in '😀🚀':\n    out.append(c)\nprint(out)");
+        assertMatchesCPython("print(sorted('cba🚀😀'))");
+        assertMatchesCPython("print(list(reversed('abc🚀')))");
+    }
 }

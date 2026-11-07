@@ -50,7 +50,7 @@ public final class BuiltinFunctions {
         define.accept("len", new PyBuiltinFunction("len", args -> {
             checkArgCount("len", args, 1);
             PyObject o = args[0];
-            if (o instanceof PyStr s) return new PyInt((int) s.value().codePoints().count());
+            if (o instanceof PyStr s) return new PyInt(s.codePointCount());
             if (o instanceof PyList l) return new PyInt(l.items().size());
             if (o instanceof PyDict d) return new PyInt(d.map().size());
             if (o instanceof PyInstance inst) {
@@ -173,9 +173,7 @@ public final class BuiltinFunctions {
             PyObject o = args[0];
             if (o instanceof PyList l) return new PyList(new ArrayList<>(l.items()));
             if (o instanceof PyStr s) {
-                var items = new ArrayList<PyObject>();
-                for (char ch : s.value().toCharArray()) items.add(new PyStr(String.valueOf(ch)));
-                return new PyList(items);
+                return new PyList(s.toCodePointList());
             }
             if (o instanceof PyDict d) return new PyList(new ArrayList<>(d.map().keySet()));
             throw PyErrors.error("TypeError", "'" + typeName(o) + "' object is not iterable");
@@ -217,8 +215,11 @@ public final class BuiltinFunctions {
         // sorted(iterable)
         define.accept("sorted", new PyBuiltinFunction("sorted", args -> {
             checkArgCount("sorted", args, 1);
-            if (!(args[0] instanceof PyList list)) throw PyErrors.error("TypeError", "sorted() argument must be iterable");
-            var items = new ArrayList<>(list.items());
+            List<PyObject> items;
+            if (args[0] instanceof PyList list) items = new ArrayList<>(list.items());
+            else if (args[0] instanceof PyStr s) items = s.toCodePointList();
+            else if (args[0] instanceof PyDict d) items = new ArrayList<>(d.map().keySet());
+            else throw PyErrors.error("TypeError", "sorted() argument must be iterable");
             items.sort(PyOps::compareObjects);
             return new PyList(items);
         }));
@@ -226,8 +227,11 @@ public final class BuiltinFunctions {
         // reversed(iterable)
         define.accept("reversed", new PyBuiltinFunction("reversed", args -> {
             checkArgCount("reversed", args, 1);
-            if (!(args[0] instanceof PyList list)) throw PyErrors.error("TypeError", "reversed() argument must be iterable");
-            var items = new ArrayList<>(list.items());
+            List<PyObject> items;
+            if (args[0] instanceof PyList list) items = new ArrayList<>(list.items());
+            else if (args[0] instanceof PyStr s) items = s.toCodePointList();
+            else if (args[0] instanceof PyDict d) items = new ArrayList<>(d.map().keySet());
+            else throw PyErrors.error("TypeError", "reversed() argument must be iterable");
             Collections.reverse(items);
             return new PyList(items);
         }));
@@ -298,9 +302,7 @@ public final class BuiltinFunctions {
             checkArgCount("tuple", args, 1);
             if (args[0] instanceof PyList list) return new PyList(new ArrayList<>(list.items()));
             if (args[0] instanceof PyStr s) {
-                var items = new ArrayList<PyObject>();
-                s.value().codePoints().forEach(cp -> items.add(new PyStr(new String(Character.toChars(cp)))));
-                return new PyList(items);
+                return new PyList(s.toCodePointList());
             }
             throw PyErrors.error("TypeError", "'" + typeName(args[0]) + "' object is not iterable");
         }));
@@ -428,9 +430,7 @@ public final class BuiltinFunctions {
         if (o instanceof PyIterator it) return it;
         if (o instanceof PyList list) return new PyIterator(list.items(), 0);
         if (o instanceof PyStr s) {
-            var chars = new ArrayList<PyObject>();
-            for (char ch : s.value().toCharArray()) chars.add(new PyStr(String.valueOf(ch)));
-            return new PyIterator(chars, 0);
+            return s.codePointIterator();
         }
         if (o instanceof PyDict d) return new PyIterator(new ArrayList<>(d.map().keySet()), 0);
         if (o instanceof PyGenerator gen) {

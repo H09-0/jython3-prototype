@@ -1196,7 +1196,7 @@ public class Jython3Interpreter {
                         }
                         stack.push(new PyList(resList));
                     } else if (ctr instanceof PyStr s && idx instanceof org.example.jython3.runtime.PySlice slice) {
-                        int[] codePoints = s.value().codePoints().toArray();
+                        int[] codePoints = s.codePoints();
                         var indices = slice.computeIndices(codePoints.length);
                         if (indices.length() > executionLimits.maxStringLength()) {
                             throw PyErrors.error("OverflowError", "Slice result exceeds maximum string length: " + executionLimits.maxStringLength());
@@ -1217,12 +1217,7 @@ public class Jython3Interpreter {
                         if (val == null) throw PyErrors.error("KeyError", String.valueOf(idx));
                         stack.push(val);
                     } else if (ctr instanceof PyStr s && idx instanceof PyInt ix) {
-                        int[] codePoints = s.value().codePoints().toArray();
-                        int i = ix.value();
-                        if (i < 0) i += codePoints.length;
-                        if (i < 0 || i >= codePoints.length)
-                            throw PyErrors.error("IndexError", "string index out of range");
-                        stack.push(new PyStr(new String(Character.toChars(codePoints[i]))));
+                        stack.push(new PyStr(s.getCodePointAt(ix.value())));
                     } else if (ctr instanceof PyInstance inst) {
                         PyObject getitem = inst.getField("__getitem__");
                         if (getitem != null) {
@@ -1271,9 +1266,7 @@ public class Jython3Interpreter {
                     if (o instanceof PyIterator iter) stack.push(iter);
                     else if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0));
                     else if (o instanceof PyStr s) {
-                        var chars = new ArrayList<PyObject>();
-                        for (char ch : s.value().toCharArray()) chars.add(new PyStr(String.valueOf(ch)));
-                        stack.push(new PyIterator(chars, 0));
+                        stack.push(s.codePointIterator());
                     } else if (o instanceof PyDict d) {
                         stack.push(new PyIterator(new ArrayList<>(d.map().keySet()), 0));
                     } else if (o instanceof PyGenerator gen) {
