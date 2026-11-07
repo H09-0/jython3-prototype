@@ -2826,6 +2826,62 @@ class Jython3InterpreterTest {
         assertEquals("integer modulo by zero", ((PyException) mixedMod0.value()).message());
     }
 
+    @Test void testBigIntAndFloatExactConversionAndDivision() {
+        py.exec("""
+            # Ratio of two BigInts where quotient fits in double
+            r_ratio1 = (10 ** 400) / (10 ** 300)
+            r_ratio2 = (10 ** 300) / (10 ** 400)
+            r_ratio_small = 3 / (10 ** 400)
+            r_zero = 0 / (10 ** 400)
+            """);
+        assertEquals("", err());
+        assertEquals("1e+100", py.getGlobal("r_ratio1").toString());
+        assertEquals("1e-100", py.getGlobal("r_ratio2").toString());
+        assertEquals("0.0", py.getGlobal("r_ratio_small").toString());
+        assertEquals("0.0", py.getGlobal("r_zero").toString());
+
+        // Large ratio exceeding float range must raise OverflowError
+        InterpreterException of1 = assertThrows(InterpreterException.class, () -> py.eval("x = (10 ** 400) / 3"));
+        assertEquals("OverflowError", of1.typeName());
+        assertEquals("integer division result too large for a float", ((PyException) of1.value()).message());
+
+        InterpreterException of2 = assertThrows(InterpreterException.class, () -> py.eval("x = (10 ** 1000) / 3"));
+        assertEquals("OverflowError", of2.typeName());
+        assertEquals("integer division result too large for a float", ((PyException) of2.value()).message());
+
+        // Direct int-to-float conversion of oversized BigInt must raise OverflowError
+        InterpreterException of3 = assertThrows(InterpreterException.class, () -> py.eval("x = float(10 ** 400)"));
+        assertEquals("OverflowError", of3.typeName());
+        assertEquals("int too large to convert to float", ((PyException) of3.value()).message());
+
+        // Mixed float/BigInt operations must raise OverflowError if BigInt exceeds float range
+        InterpreterException of4 = assertThrows(InterpreterException.class, () -> py.eval("x = (10 ** 400) * 1.0"));
+        assertEquals("OverflowError", of4.typeName());
+        assertEquals("int too large to convert to float", ((PyException) of4.value()).message());
+
+        InterpreterException of5 = assertThrows(InterpreterException.class, () -> py.eval("x = (10 ** 400) + 1.0"));
+        assertEquals("OverflowError", of5.typeName());
+        assertEquals("int too large to convert to float", ((PyException) of5.value()).message());
+
+        // Float exponentiation overflow
+        InterpreterException of6 = assertThrows(InterpreterException.class, () -> py.eval("x = 2.0 ** 1024"));
+        assertEquals("OverflowError", of6.typeName());
+
+        // Negative exponent with oversized base
+        InterpreterException of7 = assertThrows(InterpreterException.class, () -> py.eval("x = (10 ** 400) ** -1"));
+        assertEquals("OverflowError", of7.typeName());
+        assertEquals("int too large to convert to float", ((PyException) of7.value()).message());
+
+        // Float zero division exact messages
+        InterpreterException zd1 = assertThrows(InterpreterException.class, () -> py.eval("x = 1 / 0.0"));
+        assertEquals("ZeroDivisionError", zd1.typeName());
+        assertEquals("float division by zero", ((PyException) zd1.value()).message());
+
+        InterpreterException zd2 = assertThrows(InterpreterException.class, () -> py.eval("x = 1.0 / 0"));
+        assertEquals("ZeroDivisionError", zd2.typeName());
+        assertEquals("float division by zero", ((PyException) zd2.value()).message());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.

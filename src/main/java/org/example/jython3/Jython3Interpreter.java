@@ -798,9 +798,13 @@ public class Jython3Interpreter {
                 case MULTIPLY -> binaryMultiply();
                 case DIVIDE -> {
                     var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
-                    if (isNumeric(l) && isNumeric(r)) {
+                    if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+                        java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+                        java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+                        stack.push(new PyFloat(PyOps.trueDivideIntegers(ba, bb)));
+                    } else if (isNumeric(l) && isNumeric(r)) {
                         double rv = toDouble(r);
-                        if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "division by zero");
+                        if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float division by zero");
                         double lv = toDouble(l);
                         stack.push(new PyFloat(lv / rv));
                     } else {
@@ -871,9 +875,13 @@ public class Jython3Interpreter {
                             }
                             if (exp.compareTo(java.math.BigInteger.ZERO) < 0) {
                                 // Negative exponent produces float: 2 ** -3 -> 0.125
-                                double baseD = base.doubleValue();
+                                double baseD = toDouble(l instanceof PyInt ? l : new BigInt(base));
                                 double expD = exp.doubleValue();
-                                stack.push(new PyFloat(Math.pow(baseD, expD)));
+                                double res = Math.pow(baseD, expD);
+                                if (Double.isInfinite(res) && !Double.isInfinite(baseD)) {
+                                    throw PyErrors.error("OverflowError", "(34, 'Numerical result out of range')");
+                                }
+                                stack.push(new PyFloat(res));
                             } else {
                                 int expInt = exp.intValueExact();
                                 java.math.BigInteger res = base.pow(expInt);
@@ -889,7 +897,12 @@ public class Jython3Interpreter {
                             if (exp > executionLimits.maxExponent()) {
                                 throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
                             }
-                            stack.push(new PyFloat(Math.pow(toDouble(l), exp)));
+                            double base = toDouble(l);
+                            double res = Math.pow(base, exp);
+                            if (Double.isInfinite(res) && !Double.isInfinite(base)) {
+                                throw PyErrors.error("OverflowError", "(34, 'Numerical result out of range')");
+                            }
+                            stack.push(new PyFloat(res));
                         }
                     } else {
                         throw PyErrors.error("TypeError", "unsupported operand types for **");

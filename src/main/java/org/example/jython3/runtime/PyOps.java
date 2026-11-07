@@ -1,6 +1,8 @@
 package org.example.jython3.runtime;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.MathContext;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -50,6 +52,41 @@ public final class PyOps {
         return r;
     }
 
+    /**
+     * Python 3 true division for integers: a / b.
+     * Computes the quotient with exact precision and converts to float.
+     * Raises ZeroDivisionError if b is zero.
+     * Raises OverflowError if the quotient exceeds the IEEE 754 float range.
+     */
+    public static double trueDivideIntegers(BigInteger a, BigInteger b) {
+        if (b.equals(BigInteger.ZERO)) {
+            throw PyErrors.error("ZeroDivisionError", "division by zero");
+        }
+        if (a.equals(BigInteger.ZERO)) {
+            return 0.0;
+        }
+        boolean negative = (a.signum() ^ b.signum()) < 0;
+        BigInteger absA = a.abs();
+        BigInteger absB = b.abs();
+
+        int bitDiff = absA.bitLength() - absB.bitLength();
+        if (bitDiff > 1024) {
+            throw PyErrors.error("OverflowError", "integer division result too large for a float");
+        }
+        if (bitDiff < -1075) {
+            return negative ? -0.0 : 0.0;
+        }
+
+        BigDecimal bda = new BigDecimal(absA);
+        BigDecimal bdb = new BigDecimal(absB);
+        BigDecimal quotient = bda.divide(bdb, MathContext.DECIMAL64);
+        double res = quotient.doubleValue();
+        if (Double.isInfinite(res)) {
+            throw PyErrors.error("OverflowError", "integer division result too large for a float");
+        }
+        return negative ? -res : res;
+    }
+
     public static boolean isNumeric(PyObject o) {
         return o instanceof PyInt || o instanceof PyFloat || o instanceof PyBool || o instanceof BigInt;
     }
@@ -57,7 +94,13 @@ public final class PyOps {
     public static double toDouble(PyObject o) {
         return switch (o) {
             case PyInt i -> i.value();
-            case BigInt bi -> bi.value().doubleValue();
+            case BigInt bi -> {
+                double d = bi.value().doubleValue();
+                if (Double.isInfinite(d)) {
+                    throw PyErrors.error("OverflowError", "int too large to convert to float");
+                }
+                yield d;
+            }
             case PyFloat f -> f.value();
             case PyBool b -> b.value() ? 1.0 : 0.0;
             case PyStr s -> {

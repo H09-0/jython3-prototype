@@ -184,4 +184,21 @@ public class CoreDifferentialTest {
         assertMatchesCPython("try:\n    print('%d %d' % 1)\nexcept TypeError:\n    print('too_few_caught')");
         assertMatchesCPython("try:\n    print('%d' % (1, 2))\nexcept TypeError:\n    print('too_many_caught')");
     }
+
+    @Test
+    void testBigIntAndFloatOperationsDifferential() {
+        assertMatchesCPython("print((10 ** 400) / (10 ** 300))");
+        assertMatchesCPython("print((10 ** 300) / (10 ** 400))");
+        assertMatchesCPython("print(3 / (10 ** 400))");
+        assertMatchesCPython("print(0 / (10 ** 400))");
+        assertMatchesCPython("try:\n    print((10 ** 400) / 3)\nexcept OverflowError:\n    print('div_overflow_caught')");
+        assertMatchesCPython("try:\n    print((10 ** 1000) / 3)\nexcept OverflowError:\n    print('div_1000_overflow_caught')");
+        assertMatchesCPython("try:\n    print(float(10 ** 400))\nexcept OverflowError:\n    print('float_cast_overflow_caught')");
+        assertMatchesCPython("try:\n    print((10 ** 400) * 1.0)\nexcept OverflowError:\n    print('mul_float_overflow_caught')");
+        assertMatchesCPython("try:\n    print((10 ** 400) + 1.0)\nexcept OverflowError:\n    print('add_float_overflow_caught')");
+        assertMatchesCPython("try:\n    print(2.0 ** 1024)\nexcept OverflowError:\n    print('pow_float_overflow_caught')");
+        assertMatchesCPython("try:\n    print((10 ** 400) ** -1)\nexcept OverflowError:\n    print('neg_pow_overflow_caught')");
+        assertMatchesCPython("try:\n    print(1 / 0.0)\nexcept ZeroDivisionError:\n    print('float_div0_caught')");
+        assertMatchesCPython("try:\n    print(1.0 / 0)\nexcept ZeroDivisionError:\n    print('float_div0_caught2')");
+    }
 }

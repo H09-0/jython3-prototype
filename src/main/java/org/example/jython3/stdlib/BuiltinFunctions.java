@@ -80,6 +80,9 @@ public final class BuiltinFunctions {
         // str(obj)
         define.accept("str", new PyBuiltinFunction("str", args -> {
             checkArgCount("str", args, 1);
+            if (args[0] instanceof PyException pe) {
+                return new PyStr(pe.message());
+            }
             return new PyStr(args[0].toString());
         }));
 
