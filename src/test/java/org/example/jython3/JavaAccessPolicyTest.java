@@ -329,9 +329,31 @@ class JavaAccessPolicyTest {
         Jython3Interpreter trusted = Jython3Interpreter.trusted();
         assertSame(AllowlistPolicy.trusted(), trusted.javaAccessPolicy());
         assertSame(org.example.jython3.security.HostAccessPolicy.PERMISSIVE, trusted.hostAccessPolicy());
+        assertSame(org.example.jython3.security.ExecutionLimits.TRUSTED, trusted.executionLimits());
 
         Jython3Interpreter restricted = Jython3Interpreter.restricted();
         assertSame(DenyAllPolicy.INSTANCE, restricted.javaAccessPolicy());
         assertSame(org.example.jython3.security.HostAccessPolicy.DENY_ALL, restricted.hostAccessPolicy());
+        assertSame(org.example.jython3.security.ExecutionLimits.SANDBOXED, restricted.executionLimits());
+    }
+
+    @Test
+    void customJavaPolicyNeverInheritsTrustedExecutionLimitsByDefault() {
+        JavaAccessPolicy custom = new JavaAccessPolicy() {
+            @Override public boolean canAccessClass(String b) { return false; }
+            @Override public boolean canConstructClass(String b, String d) { return false; }
+            @Override public boolean canCallMethod(String o, String n, String d) { return false; }
+            @Override public boolean canReadField(String o, String n) { return false; }
+            @Override public boolean canWriteField(String o, String n) { return false; }
+        };
+        // Secure by default: custom policy without explicit limits must get SANDBOXED, never TRUSTED
+        Jython3Interpreter interp = new Jython3Interpreter(custom);
+        assertSame(org.example.jython3.security.ExecutionLimits.SANDBOXED, interp.executionLimits());
+
+        // Limits can be explicitly configured independently of Java policy
+        Jython3Interpreter explicit = new Jython3Interpreter(custom,
+                org.example.jython3.security.HostAccessPolicy.DENY_ALL,
+                org.example.jython3.security.ExecutionLimits.TRUSTED);
+        assertSame(org.example.jython3.security.ExecutionLimits.TRUSTED, explicit.executionLimits());
     }
 }

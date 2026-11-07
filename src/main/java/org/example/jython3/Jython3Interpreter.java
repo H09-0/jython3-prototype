@@ -72,7 +72,6 @@ import org.example.jython3.security.ExecutionContext;
 import org.example.jython3.security.ExecutionLimits;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.security.JavaAccessPolicy;
-import org.example.jython3.security.SandboxedPolicy;
 import org.example.jython3.stdlib.BuiltinFunctions;
 import org.example.jython3.stdlib.BuiltinModules;
 
@@ -230,13 +229,13 @@ public class Jython3Interpreter {
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy) {
         this(javaAccessPolicy,
              HostAccessPolicy.DENY_ALL,
-             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             ExecutionLimits.SANDBOXED,
              ExceptionTypeRegistry.standard());
     }
 
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy, HostAccessPolicy hostAccessPolicy) {
         this(javaAccessPolicy, hostAccessPolicy,
-             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             ExecutionLimits.SANDBOXED,
              ExceptionTypeRegistry.standard());
     }
 
@@ -273,14 +272,14 @@ public class Jython3Interpreter {
                               HostAccessPolicy hostAccessPolicy,
                               ExceptionTypeRegistry exceptionTypes) {
         this(javaAccessPolicy, hostAccessPolicy,
-             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             ExecutionLimits.SANDBOXED,
              exceptionTypes);
     }
 
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
                               ExceptionTypeRegistry exceptionTypes) {
         this(javaAccessPolicy, HostAccessPolicy.DENY_ALL,
-             javaAccessPolicy instanceof SandboxedPolicy ? ExecutionLimits.SANDBOXED : ExecutionLimits.TRUSTED,
+             ExecutionLimits.SANDBOXED,
              exceptionTypes);
     }
 
