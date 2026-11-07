@@ -26,7 +26,8 @@ public enum OpCode {
     BEGIN_EXCEPT_HANDLER(55), // marks the caught value as the active exception
     END_EXCEPT_HANDLER(56),   // restores the previously active exception
     DELETE_NAME_SILENT(57),   // deletes name if present, does not throw NameError if absent
-    BUILD_SLICE(58);          // raw arg: 2 (start, stop) or 3 (start, stop, step)
+    BUILD_SLICE(58),          // raw arg: 2 (start, stop) or 3 (start, stop, step)
+    BUILD_TUPLE(59);          // raw arg: element count on stack
 
     private final int code;
 

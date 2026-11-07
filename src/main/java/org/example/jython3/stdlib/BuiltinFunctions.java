@@ -31,6 +31,7 @@ import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
+import org.example.jython3.runtime.PyTuple;
 
 import static org.example.jython3.runtime.PyOps.checkArgCount;
 import static org.example.jython3.runtime.PyOps.compareObjects;
@@ -52,6 +53,7 @@ public final class BuiltinFunctions {
             PyObject o = args[0];
             if (o instanceof PyStr s) return new PyInt(s.codePointCount());
             if (o instanceof PyList l) return new PyInt(l.items().size());
+            if (o instanceof PyTuple t) return new PyInt(t.items().size());
             if (o instanceof PyDict d) return new PyInt(d.map().size());
             if (o instanceof PyInstance inst) {
                 if (inst.hasField("__len__")) {
@@ -298,12 +300,12 @@ public final class BuiltinFunctions {
 
         // tuple([iterable])
         define.accept("tuple", new PyBuiltinFunction("tuple", args -> {
-            if (args.length == 0) return new PyList(new ArrayList<>());
+            if (args.length == 0) return PyTuple.EMPTY;
             checkArgCount("tuple", args, 1);
-            if (args[0] instanceof PyList list) return new PyList(new ArrayList<>(list.items()));
-            if (args[0] instanceof PyStr s) {
-                return new PyList(s.toCodePointList());
-            }
+            if (args[0] instanceof PyTuple t) return t;
+            if (args[0] instanceof PyList list) return new PyTuple(list.items());
+            if (args[0] instanceof PyStr s) return new PyTuple(s.toCodePointList());
+            if (args[0] instanceof PyDict d) return new PyTuple(new ArrayList<>(d.map().keySet()));
             throw PyErrors.error("TypeError", "'" + typeName(args[0]) + "' object is not iterable");
         }));
 
@@ -429,6 +431,7 @@ public final class BuiltinFunctions {
     private static PyIterator toIterator(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
         if (o instanceof PyIterator it) return it;
         if (o instanceof PyList list) return new PyIterator(list.items(), 0);
+        if (o instanceof PyTuple tuple) return new PyIterator(tuple.items(), 0);
         if (o instanceof PyStr s) {
             return s.codePointIterator();
         }
@@ -465,6 +468,12 @@ public final class BuiltinFunctions {
 
     private static boolean checkIsInstance(PyObject obj, PyObject typeArg) {
         // Tuple of types: isinstance(x, (A, B))
+        if (typeArg instanceof PyTuple tuple) {
+            for (PyObject item : tuple.items()) {
+                if (checkIsInstance(obj, item)) return true;
+            }
+            return false;
+        }
         if (typeArg instanceof PyList tupleLike) {
             for (PyObject item : tupleLike.items()) {
                 if (checkIsInstance(obj, item)) return true;
@@ -496,7 +505,7 @@ public final class BuiltinFunctions {
                 case "str"    -> (obj instanceof PyStr);
                 case "list"   -> (obj instanceof PyList);
                 case "dict"   -> (obj instanceof PyDict);
-                case "tuple"  -> (obj instanceof PyList); // shared internal representation until Phase II
+                case "tuple"  -> (obj instanceof PyTuple);
                 case "object" -> true;
                 default       -> false;
             };
@@ -513,6 +522,12 @@ public final class BuiltinFunctions {
 
     private static boolean checkIsSubclass(PyObject derived, PyObject target) {
         // Tuple of targets: issubclass(C, (A, B))
+        if (target instanceof PyTuple tuple) {
+            for (PyObject item : tuple.items()) {
+                if (checkIsSubclass(derived, item)) return true;
+            }
+            return false;
+        }
         if (target instanceof PyList tupleLike) {
             for (PyObject item : tupleLike.items()) {
                 if (checkIsSubclass(derived, item)) return true;

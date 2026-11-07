@@ -240,4 +240,15 @@ public class CoreDifferentialTest {
         assertMatchesCPython("str_split_join", "print(','.join(['a', 'b', 'c']), 'a:b:c'.split(':'))");
         assertMatchesCPython("str_prefix_suffix", "print('hello'.startswith('hel'), 'world'.endswith('rld'), 'banana'.count('an'))");
     }
+
+    @Test
+    void testTupleDifferential() {
+        assertMatchesCPython("tup_literal", "print((), (1,), (1, 2))");
+        assertMatchesCPython("tup_ne_list", "print((1, 2) == [1, 2])");
+        assertMatchesCPython("tup_dict_key", "d = {(1, 2): 'val', ('a', 'b'): 99}; print(d[(1, 2)], d[('a', 'b')])");
+        assertMatchesCPython("tup_unhashable", "try:\n    d = {(1, [2]): 'err'}\nexcept TypeError:\n    print('unhashable_caught')");
+        assertMatchesCPython("tup_immutable", "try:\n    t = (1, 2); t[0] = 99\nexcept TypeError:\n    print('mutate_caught')");
+        assertMatchesCPython("tup_concat_repeat", "t = (1, 2); print(t + (3,), t * 2)");
+        assertMatchesCPython("tup_types", "t = (1, 2); print(isinstance(t, tuple), isinstance(t, list), isinstance([1, 2], tuple))");
+    }
 }

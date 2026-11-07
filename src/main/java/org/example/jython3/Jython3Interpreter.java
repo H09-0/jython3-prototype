@@ -65,6 +65,7 @@ import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
+import org.example.jython3.runtime.PyTuple;
 import org.example.jython3.runtime.SystemExit;
 import org.example.jython3.security.AllowlistPolicy;
 import org.example.jython3.security.DenyAllPolicy;
@@ -741,6 +742,8 @@ public class Jython3Interpreter {
                         if (i < 0 || i >= list.items().size())
                             throw PyErrors.error("IndexError", "list assignment index out of range");
                         list.items().set(i, val);
+                    } else if (container instanceof PyTuple) {
+                        throw PyErrors.error("TypeError", "'tuple' object does not support item assignment");
                     } else if (container instanceof PyDict dict) {
                         dict.put(key, val);
                     } else {
@@ -783,6 +786,8 @@ public class Jython3Interpreter {
                         if (i < 0 || i >= list.items().size())
                             throw PyErrors.error("IndexError", "list index out of range");
                         list.items().remove(i);
+                    } else if (container instanceof PyTuple) {
+                        throw PyErrors.error("TypeError", "'tuple' object doesn't support item deletion");
                     } else if (container instanceof PyDict dict) {
                         if (dict.remove(key) == null)
                             throw PyErrors.error("KeyError", String.valueOf(key));
@@ -1160,6 +1165,12 @@ public class Jython3Interpreter {
                     for (int i = 0; i < n; i++) items.addFirst(stack.pop());
                     stack.push(new PyList(items));
                 }
+                case BUILD_TUPLE -> {
+                    int n = ai;
+                    var items = new ArrayList<PyObject>(n);
+                    for (int i = 0; i < n; i++) items.addFirst(stack.pop());
+                    stack.push(new PyTuple(items));
+                }
                 case BUILD_DICT -> {
                     int n = ai;
                     var map = new LinkedHashMap<PyObject, PyObject>();
@@ -1194,6 +1205,16 @@ public class Jython3Interpreter {
                             resList.add(list.items().get(i));
                         }
                         stack.push(new PyList(resList));
+                    } else if (ctr instanceof PyTuple tuple && idx instanceof org.example.jython3.runtime.PySlice slice) {
+                        var indices = slice.computeIndices(tuple.items().size());
+                        if (indices.length() > executionLimits.maxCollectionSize()) {
+                            throw PyErrors.error("OverflowError", "Slice result exceeds maximum collection size: " + executionLimits.maxCollectionSize());
+                        }
+                        var resList = new ArrayList<PyObject>(indices.length());
+                        for (int i = indices.start(), count = 0; count < indices.length(); i += indices.step(), count++) {
+                            resList.add(tuple.items().get(i));
+                        }
+                        stack.push(new PyTuple(resList));
                     } else if (ctr instanceof PyStr s && idx instanceof org.example.jython3.runtime.PySlice slice) {
                         int[] codePoints = s.codePoints();
                         var indices = slice.computeIndices(codePoints.length);
@@ -1211,6 +1232,12 @@ public class Jython3Interpreter {
                         if (i < 0 || i >= list.items().size())
                             throw PyErrors.error("IndexError", "list index out of range");
                         stack.push(list.items().get(i));
+                    } else if (ctr instanceof PyTuple tuple && idx instanceof PyInt ix) {
+                        int i = ix.value();
+                        if (i < 0) i += tuple.items().size();
+                        if (i < 0 || i >= tuple.items().size())
+                            throw PyErrors.error("IndexError", "tuple index out of range");
+                        stack.push(tuple.items().get(i));
                     } else if (ctr instanceof PyDict dict) {
                         PyObject val = dict.get(idx);
                         if (val == null) throw PyErrors.error("KeyError", String.valueOf(idx));
@@ -1264,6 +1291,7 @@ public class Jython3Interpreter {
                     PyObject o = stack.pop();
                     if (o instanceof PyIterator iter) stack.push(iter);
                     else if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0));
+                    else if (o instanceof PyTuple tuple) stack.push(new PyIterator(tuple.items(), 0));
                     else if (o instanceof PyStr s) {
                         stack.push(s.codePointIterator());
                     } else if (o instanceof PyDict d) {
@@ -1338,7 +1366,19 @@ public class Jython3Interpreter {
                     // pushes the match result.
                     PyObject typeObj = stack.pop();
                     PyObject excValue = stack.peek();
-                    if (typeObj instanceof PyList tupleOrList) {
+                    if (typeObj instanceof PyTuple tuple) {
+                        boolean matched = false;
+                        for (PyObject item : tuple.items()) {
+                            if (!(item instanceof PyClass type) || !type.isExceptionType()) {
+                                throw PyErrors.error("TypeError",
+                                        "catching classes that do not inherit from BaseException is not allowed");
+                            }
+                            if (!matched && PyErrors.matches(excValue, type)) {
+                                matched = true;
+                            }
+                        }
+                        stack.push(PyBool.of(matched));
+                    } else if (typeObj instanceof PyList tupleOrList) {
                         // Python allows a tuple of exception types: except (E1, E2, ...):
                         boolean matched = false;
                         for (PyObject item : tupleOrList.items()) {
@@ -1440,6 +1480,14 @@ public class Jython3Interpreter {
             var items = new ArrayList<>(ll.items());
             items.addAll(rl.items());
             stack.push(new PyList(items));
+        } else if (l instanceof PyTuple lt && r instanceof PyTuple rt) {
+            var items = new ArrayList<>(lt.items());
+            items.addAll(rt.items());
+            stack.push(new PyTuple(items));
+        } else if (l instanceof PyTuple && !(r instanceof PyTuple)) {
+            throw PyErrors.error("TypeError", "can only concatenate tuple (not \"" + typeName(r) + "\") to tuple");
+        } else if (!(l instanceof PyTuple) && r instanceof PyTuple) {
+            throw PyErrors.error("TypeError", "can only concatenate " + typeName(l) + " (not \"tuple\") to " + typeName(l));
         } else if (l instanceof PyInt li && r instanceof PyInt ri) {
             long lv = li.value();
             long rv = ri.value();
@@ -1529,6 +1577,24 @@ public class Jython3Interpreter {
             long count = Math.max(0, n.value());
             for (long i = 0; i < count; i++) items.addAll(ll.items());
             stack.push(new PyList(items));
+        } else if (l instanceof PyTuple tt && r instanceof PyInt n) {
+            long count = Math.max(0, n.value());
+            long newSize = (long) tt.items().size() * count;
+            if (newSize > executionLimits.maxCollectionSize()) {
+                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
+            }
+            var items = new ArrayList<PyObject>();
+            for (long i = 0; i < count; i++) items.addAll(tt.items());
+            stack.push(new PyTuple(items));
+        } else if (l instanceof PyInt n && r instanceof PyTuple tt) {
+            long count = Math.max(0, n.value());
+            long newSize = (long) tt.items().size() * count;
+            if (newSize > executionLimits.maxCollectionSize()) {
+                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
+            }
+            var items = new ArrayList<PyObject>();
+            for (long i = 0; i < count; i++) items.addAll(tt.items());
+            stack.push(new PyTuple(items));
         } else if (l instanceof PyInt li && r instanceof PyInt ri) {
             long lv = li.value();
             long rv = ri.value();

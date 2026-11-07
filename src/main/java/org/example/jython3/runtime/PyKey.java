@@ -33,6 +33,13 @@ public final class PyKey {
         if (obj instanceof PyList || obj instanceof PyDict) {
             throw PyErrors.error("TypeError", "unhashable type: '" + PyOps.typeName(obj) + "'");
         }
+        if (obj instanceof PyTuple t) {
+            int hash = 1;
+            for (PyObject item : t.items()) {
+                hash = 31 * hash + computeHash(item);
+            }
+            return hash;
+        }
         if (obj instanceof PyNull) {
             return 0;
         }

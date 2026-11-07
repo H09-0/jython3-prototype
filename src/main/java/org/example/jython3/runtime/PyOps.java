@@ -140,6 +140,7 @@ public final class PyOps {
             case PyInstance inst -> true;
             case PyBoundMethod bm -> true;
             case PyList l -> !l.items().isEmpty();
+            case PyTuple t -> !t.items().isEmpty();
             case PyDict d -> !d.map().isEmpty();
             case PyIterator it -> true;
             case PyFloat f -> f.value() != 0.0;
@@ -173,6 +174,13 @@ public final class PyOps {
             if (al.items().size() != bl.items().size()) return false;
             for (int i = 0; i < al.items().size(); i++) {
                 if (!pyEquals(al.items().get(i), bl.items().get(i))) return false;
+            }
+            return true;
+        }
+        if (a instanceof PyTuple ta && b instanceof PyTuple tb) {
+            if (ta.items().size() != tb.items().size()) return false;
+            for (int i = 0; i < ta.items().size(); i++) {
+                if (!pyEquals(ta.items().get(i), tb.items().get(i))) return false;
             }
             return true;
         }
@@ -212,6 +220,14 @@ public final class PyOps {
         if (a instanceof PyFloat af && b instanceof BigInt bb) {
             return -compareBigIntAndFloat(bb, af);
         }
+        if (a instanceof PyTuple ta && b instanceof PyTuple tb) {
+            int len = Math.min(ta.items().size(), tb.items().size());
+            for (int i = 0; i < len; i++) {
+                int c = compareObjects(ta.items().get(i), tb.items().get(i));
+                if (c != 0) return c;
+            }
+            return Integer.compare(ta.items().size(), tb.items().size());
+        }
         if (isNumeric(a) && isNumeric(b)) return Double.compare(toDouble(a), toDouble(b));
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().compareTo(bs.value());
         throw PyErrors.error("TypeError", "'<' not supported between instances of '" + typeName(a) + "' and '" + typeName(b) + "'");
@@ -232,6 +248,10 @@ public final class PyOps {
             for (var el : list.items()) if (pyEquals(el, item)) return true;
             return false;
         }
+        if (container instanceof PyTuple tuple) {
+            for (var el : tuple.items()) if (pyEquals(el, item)) return true;
+            return false;
+        }
         if (container instanceof PyStr s && item instanceof PyStr sub) return s.value().contains(sub.value());
         if (container instanceof PyDict dict) return dict.map().containsKey(item);
         throw PyErrors.error("TypeError", "argument of type '" + typeName(container) + "' is not iterable");
@@ -246,6 +266,7 @@ public final class PyOps {
             case PyBool b -> "bool";
             case PyNull n -> "NoneType";
             case PyList l -> "list";
+            case PyTuple t -> "tuple";
             case PyDict d -> "dict";
             case PyFunction f -> "function";
             case PyClass c -> "type";
@@ -278,7 +299,9 @@ public final class PyOps {
 
     public static String pyStringFormat(String fmt, PyObject args) {
         List<PyObject> argList;
-        if (args instanceof PyList list) {
+        if (args instanceof PyTuple tuple) {
+            argList = tuple.items();
+        } else if (args instanceof PyList list) {
             argList = list.items();
         } else {
             argList = List.of(args);

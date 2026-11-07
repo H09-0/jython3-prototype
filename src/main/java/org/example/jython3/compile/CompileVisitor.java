@@ -762,7 +762,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         if (c.expr_list() != null) {
             for (var e : c.expr_list().expr()) { visit(e); n++; }
         }
-        b.emitRaw(OpCode.BUILD_LIST, n);
+        b.emitRaw(OpCode.BUILD_TUPLE, n);
         return null;
     }
 

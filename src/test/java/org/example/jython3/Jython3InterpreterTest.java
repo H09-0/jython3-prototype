@@ -2961,6 +2961,59 @@ class Jython3InterpreterTest {
         assertEquals("[100, 99, 98]", py.getGlobal("out").toString());
     }
 
+    @Test void testImmutablePyTupleSemantics() {
+        py.exec("""
+            t0 = ()
+            t1 = (42,)
+            t2 = (1, 2)
+            t_concat = t2 + (3, 4)
+            t_repeat = t2 * 2
+            t_slice = (10, 20, 30, 40)[1:3]
+            t_in = 2 in t2
+            t_notin = 99 in t2
+            t_ne_list = (t2 == [1, 2])
+            is_tup = isinstance(t2, tuple)
+            is_lst = isinstance(t2, list)
+            """);
+        assertEquals("", err());
+        assertEquals("()", py.getGlobal("t0").toString());
+        assertEquals("(42,)", py.getGlobal("t1").toString());
+        assertEquals("(1, 2)", py.getGlobal("t2").toString());
+        assertEquals("(1, 2, 3, 4)", py.getGlobal("t_concat").toString());
+        assertEquals("(1, 2, 1, 2)", py.getGlobal("t_repeat").toString());
+        assertEquals("(20, 30)", py.getGlobal("t_slice").toString());
+        assertEquals("True", py.getGlobal("t_in").toString());
+        assertEquals("False", py.getGlobal("t_notin").toString());
+        assertEquals("False", py.getGlobal("t_ne_list").toString());
+        assertEquals("True", py.getGlobal("is_tup").toString());
+        assertEquals("False", py.getGlobal("is_lst").toString());
+
+        // Tuples are immutable: mutating raises TypeError
+        InterpreterException ie = assertThrows(InterpreterException.class,
+                () -> py.eval("t = (1, 2); t[0] = 99"));
+        assertEquals("TypeError", ie.typeName());
+        assertEquals("'tuple' object does not support item assignment", ((PyException) ie.value()).message());
+    }
+
+    @Test void testTupleAsDictionaryKey() {
+        py.exec("""
+            d = {}
+            d[(1, 2)] = "coord1"
+            d[("a", "b")] = "string_pair"
+            val1 = d[(1, 2)]
+            val2 = d[("a", "b")]
+            """);
+        assertEquals("", err());
+        assertEquals("coord1", py.getGlobal("val1").toString());
+        assertEquals("string_pair", py.getGlobal("val2").toString());
+
+        // Tuple containing unhashable element cannot be used as key
+        InterpreterException ie = assertThrows(InterpreterException.class,
+                () -> py.eval("d = {}; d[(1, [2])] = 'invalid'"));
+        assertEquals("TypeError", ie.typeName());
+        assertEquals("unhashable type: 'list'", ((PyException) ie.value()).message());
+    }
+
     /**
      * Locks down the exact traceback layout before the exception model is
      * reworked. If this test changes, the change is intentional.
