@@ -15,7 +15,7 @@ public class CoreDifferentialTest {
         String cpyPath = DifferentialHarness.findCPython();
         System.out.println("[DifferentialBaseline] CPython executable: " + cpyPath);
         System.out.println("[DifferentialBaseline] CPython version:    " + cpyVer);
-        System.out.println("[DifferentialBaseline] Jython version:     v0.10.2-alpha");
+        System.out.println("[DifferentialBaseline] Jython version:     " + DifferentialHarness.JYTHON_VERSION);
         assertTrue(cpyPath != null, "A CPython binary must be available for differential conformance");
     }
 
@@ -210,5 +210,34 @@ public class CoreDifferentialTest {
         assertMatchesCPython("out = []\nfor c in '😀🚀':\n    out.append(c)\nprint(out)");
         assertMatchesCPython("print(sorted('cba🚀😀'))");
         assertMatchesCPython("print(list(reversed('abc🚀')))");
+    }
+
+    @Test
+    void testComparisonsDifferential() {
+        assertMatchesCPython("comp_lt", "print(1 < 2)");
+        assertMatchesCPython("comp_gt", "print(2 > 1)");
+        assertMatchesCPython("comp_le", "print(2 <= 2)");
+        assertMatchesCPython("comp_ge", "print(2 >= 2)");
+        assertMatchesCPython("comp_eq", "print(3 == 3)");
+        assertMatchesCPython("comp_ne", "print(3 != 4)");
+    }
+
+    @Test
+    void testDictOperationsDifferential() {
+        assertMatchesCPython("dict_get_default", """
+            d = {'a': 1}
+            print(d.get('a'), d.get('b'), d.get('b', 99))
+            """);
+        assertMatchesCPython("dict_keys_values", """
+            d = {'x': 10, 'y': 20}
+            print(sorted(d.keys()), sorted(d.values()))
+            """);
+    }
+
+    @Test
+    void testStringMethodsDifferential() {
+        assertMatchesCPython("str_case_strip", "print('hello world'.upper(), 'HELLO'.lower(), '  abc  '.strip())");
+        assertMatchesCPython("str_split_join", "print(','.join(['a', 'b', 'c']), 'a:b:c'.split(':'))");
+        assertMatchesCPython("str_prefix_suffix", "print('hello'.startswith('hel'), 'world'.endswith('rld'), 'banana'.count('an'))");
     }
 }
