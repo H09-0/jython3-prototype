@@ -1,35 +1,44 @@
 package org.example.jython3.runtime;
 
 import java.util.ArrayList;
+import java.util.Map;
 
 /**
  * Python generator object produced by calling a function that contains {@code yield}.
  *
- * <p>Implementation strategy: we eagerly evaluate the entire generator function once
- * at construction time, collecting all yielded values into an {@code ArrayList}.
- * This is equivalent to CPython's lazy approach for the subset of generators supported
- * by our interpreter (no {@code send()}, no {@code throw()}), and avoids the need to
- * pause / resume the bytecode VM across calls.
+ * <p>The generator may be created either with raw positional args (which the
+ * interpreter will bind when collecting yields) or with a pre-bound locals map
+ * (produced by {@code bindArgs()} when the function uses defaults/kwargs).
  *
- * <p>Iteration is then O(1) per {@code next()} call after the initial eager evaluation.
+ * <p>Implementation strategy: we eagerly evaluate the entire generator function
+ * the first time {@code next()} is called, collecting all yielded values into an
+ * {@code ArrayList}. This avoids the need to pause/resume the bytecode VM.
  */
 public final class PyGenerator implements PyObject {
 
     private final PyFunction fn;
-    private final PyObject[] args;
+    // Exactly one of these two is non-null:
+    private final PyObject[] rawArgs;        // raw positional args (simple case)
+    private final Map<String, PyObject> boundLocals;  // pre-bound locals (default/kw args case)
+
     private java.util.List<PyObject> yielded;
     private int index = 0;
     private boolean initialized = false;
 
+    /** Simple constructor — positional args only. */
     public PyGenerator(PyFunction fn, PyObject[] args) {
         this.fn = fn;
-        this.args = args;
+        this.rawArgs = args;
+        this.boundLocals = null;
     }
 
-    /**
-     * Lazily initializes the generator on the first {@code next()} call.
-     * Uses {@link PyCaller#CURRENT} to reuse the running interpreter instance.
-     */
+    /** Constructor with pre-bound locals (used when defaults/kwargs are present). */
+    public PyGenerator(PyFunction fn, Map<String, PyObject> boundLocals) {
+        this.fn = fn;
+        this.rawArgs = null;
+        this.boundLocals = boundLocals;
+    }
+
     private void ensureInitialized() {
         if (initialized) return;
         initialized = true;
@@ -39,12 +48,13 @@ public final class PyGenerator implements PyObject {
             yielded = new ArrayList<>();
             return;
         }
-        yielded = caller.collectYields(fn, args);
+        if (boundLocals != null) {
+            yielded = caller.collectYieldsWithLocals(fn, boundLocals);
+        } else {
+            yielded = caller.collectYields(fn, rawArgs);
+        }
     }
 
-    /**
-     * Returns the next yielded value, or throws {@code StopIteration} when exhausted.
-     */
     public PyObject next() {
         ensureInitialized();
         if (index >= yielded.size()) {

@@ -63,6 +63,7 @@ import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
+import org.example.jython3.runtime.PySet;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.PyTuple;
@@ -180,6 +181,8 @@ public class Jython3Interpreter {
     private Map<String, PyObject> currentGlobals = globals;
     private Deque<PyObject> stack;
     private Map<String, PyObject> currentLocals;
+    /** Set of variable names declared `global` in the current function frame. */
+    private java.util.Set<String> globalCells;
     private final Deque<Frame> callStack = new ArrayDeque<>();
     /** Per-frame exception handler stack — saved/restored on function call boundaries. */
     private Deque<ExceptHandler> exceptStack = new ArrayDeque<>();
@@ -264,6 +267,11 @@ public class Jython3Interpreter {
 
             @Override public List<PyObject> collectYields(PyFunction fn, PyObject[] args) {
                 return runGenerator(fn, args);
+            }
+
+            @Override public List<PyObject> collectYieldsWithLocals(PyFunction fn,
+                    java.util.Map<String, PyObject> locals) {
+                return runGeneratorWithLocals(fn, locals);
             }
         });
         registerBuiltins();
@@ -512,6 +520,10 @@ public class Jython3Interpreter {
      * not disturbed by the generator's return instruction.
      */
     private List<PyObject> runGenerator(PyFunction fn, PyObject[] args) {
+        return runGeneratorWithLocals(fn, bindArgs(fn, args, null, null));
+    }
+
+    private List<PyObject> runGeneratorWithLocals(PyFunction fn, Map<String, PyObject> initialLocals) {
         var collected = new ArrayList<PyObject>();
         var savedFrames = new ArrayDeque<>(callStack);
         var savedStack = stack;
@@ -522,14 +534,9 @@ public class Jython3Interpreter {
         var savedFunc = currentFunc;
         var savedLine = currentLine;
         try {
-            var locals = new HashMap<String, PyObject>();
-            if (fn.closure() != null) locals.putAll(fn.closure());
-            for (int i = 0; i < fn.params().size() && i < args.length; i++) {
-                locals.put(fn.params().get(i), args[i]);
-            }
             callStack.clear();
             stack = new ArrayDeque<>();
-            currentLocals = locals;
+            currentLocals = new HashMap<>(initialLocals);
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             currentFunc = fn.name();
@@ -706,7 +713,21 @@ public class Jython3Interpreter {
                     if (ai == NO_ARG) { stack.push(new PyNull()); break; }
                     Object v = pool[ai];
                     if (v == null) stack.push(new PyNull());
-                    else if (v instanceof String s) stack.push(new PyStr(s));
+                    else if (v instanceof String s) {
+                        // global/nonlocal declarations are encoded as special markers
+                        if (s.startsWith("@global:")) {
+                            // Register this name as a global cell in the current function scope
+                            String gName = s.substring(8);
+                            if (currentLocals != null && globalCells == null) {
+                                globalCells = new java.util.HashSet<>();
+                            }
+                            if (globalCells != null) globalCells.add(gName);
+                            break; // no stack push — declaration only
+                        } else if (s.startsWith("@nonlocal:")) {
+                            break; // nonlocal is handled via closure; skip marker
+                        }
+                        stack.push(new PyStr(s));
+                    }
                     else if (v instanceof Integer i) stack.push(new PyInt(i));
                     else if (v instanceof Double d) stack.push(new PyFloat(d));
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
@@ -718,7 +739,11 @@ public class Jython3Interpreter {
                 case LOAD_FAST -> {
                     String n = (String) pool[ai];
                     PyObject v = null;
-                    if (currentLocals != null) {
+                    // If declared global, read from global scope directly
+                    if (globalCells != null && globalCells.contains(n)) {
+                        v = globals.get(n);
+                        if (v == null) v = currentGlobals.get(n);
+                    } else if (currentLocals != null) {
                         v = currentLocals.get(n);
                     }
                     if (v == null) v = currentGlobals.get(n);
@@ -731,7 +756,19 @@ public class Jython3Interpreter {
                     if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     stack.push(v);
                 }
-                case STORE_FAST -> currentLocals.put((String) pool[ai], stack.pop());
+                case STORE_FAST -> {
+                    String storeName = (String) pool[ai];
+                    PyObject storeVal = stack.pop();
+                    // If this name was declared 'global', write to the global scope
+                    if (globalCells != null && globalCells.contains(storeName)) {
+                        globals.put(storeName, storeVal);
+                        currentGlobals.put(storeName, storeVal);
+                    } else if (currentLocals != null) {
+                        currentLocals.put(storeName, storeVal);
+                    } else {
+                        globals.put(storeName, storeVal);
+                    }
+                }
                 case STORE_SUBSCR -> {
                     PyObject val = stack.pop();
                     PyObject key = stack.pop();
@@ -970,13 +1007,13 @@ public class Jython3Interpreter {
                 }
 
                 // ── I/O ──
-                case PRINT -> System.out.println(stack.pop());
+                case PRINT -> System.out.println(pyPrintStr(stack.pop()));
                 case PRINT_MULTI -> {
                     PyList list = (PyList) stack.pop();
                     var sb = new StringBuilder();
                     for (int i = 0; i < list.items().size(); i++) {
                         if (i > 0) sb.append(' ');
-                        sb.append(list.items().get(i).toString());
+                        sb.append(pyPrintStr(list.items().get(i)));
                     }
                     System.out.println(sb);
                 }
@@ -989,6 +1026,34 @@ public class Jython3Interpreter {
                 case IMPORT_MODULE -> importModule((String) pool[ai]);
 
                 // ── Functions & Classes ──
+                case MAKE_FUNCTION_DEFAULTS -> {
+                    // Encoding: arg = (nDefaults << 2) | flags
+                    // flags: bit0=hasArgs, bit1=hasKwargs
+                    // Stack after LOAD_CONST(prototype): [prototype, def0, def1, ...defN-1]
+                    // MAKE_FUNCTION follows immediately after and stores the enriched fn.
+                    int encoded   = ai;
+                    int nDefaults = encoded >> 2;
+                    boolean hasArgs   = (encoded & 1) != 0;
+                    boolean hasKwargs = (encoded & 2) != 0;
+
+                    // Pop defaults off stack (pushed in order: first default on bottom)
+                    var defaults = new PyObject[nDefaults];
+                    for (int i = nDefaults - 1; i >= 0; i--) defaults[i] = stack.pop();
+
+                    // The prototype PyFunction is next on stack
+                    PyObject protoObj = stack.pop();
+                    if (!(protoObj instanceof PyFunction proto)) {
+                        throw PyErrors.error("SystemError", "MAKE_FUNCTION_DEFAULTS: expected PyFunction prototype on stack");
+                    }
+                    // Build enriched PyFunction with the evaluated defaults
+                    var enriched = new PyFunction(
+                            proto.name(), proto.params(), defaults,
+                            proto.argsParam(), proto.kwargsParam(),
+                            proto.code(), proto.closure());
+                    stack.push(enriched);
+                    // Note: the following MAKE_FUNCTION instruction will capture
+                    // closure and store the function — we fall through to it.
+                }
                 case MAKE_FUNCTION -> {
                     String funcName = (String) pool[ai];
                     PyObject fnObj = stack.pop();
@@ -1044,6 +1109,69 @@ public class Jython3Interpreter {
                         globals.put(className, pyClass);
                     }
                 }
+                case CALL_FUNCTION_KW -> {
+                    // pool[ai] = KwCallInfo{nPos, kwNames[]}
+                    // Stack: ... callable, pos0..posN-1, kw0..kwN-1
+                    var kwInfo = (org.example.jython3.compile.KwCallInfo) pool[ai];
+                    int nPos    = kwInfo.nPos();
+                    String[] kwNames = kwInfo.kwNames();
+                    int nKw = kwNames.length;
+                    // (debug removed)
+
+                    // Pop keyword values (last pushed = last in list)
+                    var kwValues = new PyObject[nKw];
+                    for (int i = nKw - 1; i >= 0; i--) kwValues[i] = stack.pop();
+
+                    // Pop positional args
+                    var posArgs = new PyObject[nPos];
+                    for (int i = nPos - 1; i >= 0; i--) posArgs[i] = stack.pop();
+
+                    PyObject callable = stack.pop();
+
+                    if (callable instanceof PyBoundMethod bm) {
+                        var callArgs = new PyObject[nPos + 1];
+                        callArgs[0] = bm.instance();
+                        System.arraycopy(posArgs, 0, callArgs, 1, nPos);
+                        stack.push(callPyCallableKw(bm.fn(), callArgs, kwNames, kwValues));
+                    } else if (callable instanceof PyFunction fn && containsYield(fn.code())) {
+                        var genLocals = bindArgs(fn, posArgs, kwNames, kwValues);
+                        stack.push(new PyGenerator(fn, genLocals));
+                    } else if (callable instanceof PyClass cls) {
+                        if (cls.isExceptionType()) {
+                            stack.push(exceptionValue(cls, posArgs));
+                        } else {
+                            var inst = new PyInstance(cls);
+                            PyObject initObj = cls.lookupMember("__init__");
+                            if (initObj instanceof PyFunction initFn) {
+                                var initArgs = new PyObject[nPos + 1];
+                                initArgs[0] = inst;
+                                System.arraycopy(posArgs, 0, initArgs, 1, nPos);
+                                callPyCallableKw(initFn, initArgs, kwNames, kwValues);
+                            }
+                            stack.push(inst);
+                        }
+                    } else if (callable instanceof PyFunction fn) {
+                        // Regular function call with keyword args — uses inline call path
+                        if (callStack.size() >= MAX_CALL_DEPTH) {
+                            throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+                        }
+                        callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells));
+                        globalCells = null; // new frame starts with no global declarations
+                        currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
+                        stack = new ArrayDeque<>();
+                        exceptStack = new ArrayDeque<>();
+                        activeExceptions = new ArrayDeque<>();
+                        currentFunc = fn.name();
+                        code = fn.code();
+                        bc = code.bytecode();
+                        pool = code.constPool();
+                        pc = 0;
+                        continue outer;
+                    } else {
+                        stack.push(callPyCallableKw(callable, posArgs, kwNames, kwValues));
+                    }
+                }
                 case CALL_FUNCTION -> {
                     int argc = ai;
                     var args = new PyObject[argc];
@@ -1056,7 +1184,8 @@ public class Jython3Interpreter {
                         System.arraycopy(args, 0, callArgs, 1, argc);
                         stack.push(callPyCallable(bm.fn(), callArgs));
                     } else if (callable instanceof PyFunction fn2 && containsYield(fn2.code())) {
-                        stack.push(new PyGenerator(fn2, args));
+                        var genLocals = bindArgs(fn2, args, null, null);
+                        stack.push(new PyGenerator(fn2, genLocals));
                     } else if (callable instanceof PyClass cls) {
                         if (cls.isExceptionType()) {
                             // Calling an exception class produces an exception
@@ -1076,21 +1205,16 @@ public class Jython3Interpreter {
                         }
                     } else if (callable instanceof PyFunction fn) {
                         if (containsYield(fn.code())) {
-                            stack.push(new PyGenerator(fn, args));
+                            var genLocals = bindArgs(fn, args, null, null);
+                            stack.push(new PyGenerator(fn, genLocals));
                         } else {
                             if (callStack.size() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals));
-                            var fl = new HashMap<String, PyObject>();
-                            if (fn.closure() != null) {
-                                fl.putAll(fn.closure());
-                            }
-                            for (int i = 0; i < fn.params().size() && i < argc; i++) {
-                                fl.put(fn.params().get(i), args[i]);
-                            }
-                            currentLocals = fl;
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells));
+                            globalCells = null; // new frame starts with no global declarations
+                            currentLocals = bindArgs(fn, args, null, null);
                             stack = new ArrayDeque<>();
                             exceptStack = new ArrayDeque<>();
                             activeExceptions = new ArrayDeque<>();
@@ -1147,6 +1271,7 @@ public class Jython3Interpreter {
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
                     if (cf.globals() != null) currentGlobals = cf.globals();
+                    globalCells = cf.globalCells(); // restore caller's global declarations
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
                     activeExceptions = cf.activeExceptions();
@@ -1332,6 +1457,8 @@ public class Jython3Interpreter {
                         stack.push(dictMethod(dict, attr));
                     } else if (obj instanceof PyList list) {
                         stack.push(listMethod(list, attr));
+                    } else if (obj instanceof PySet set) {
+                        stack.push(setMethod(set, attr));
                     } else if (obj instanceof PyStr s) {
                         stack.push(strMethod(s, attr));
                     } else if (obj instanceof PyJavaObject jo) {
@@ -1420,6 +1547,128 @@ public class Jython3Interpreter {
                     }
                 }
                 case HALT -> { return; }
+
+                // ── Sequence unpacking: a, b = iterable ──────────────────
+                case UNPACK_SEQUENCE -> {
+                    int count = ai;
+                    PyObject seq = stack.pop();
+                    // Collect elements from any iterable into a fixed-size list
+                    var elems = new java.util.ArrayList<PyObject>(count);
+                    if (seq instanceof PyList pl) {
+                        for (var e : pl.items()) elems.add(e);
+                    } else if (seq instanceof PyTuple pt) {
+                        for (var e : pt.items()) elems.add(e);
+                    } else if (seq instanceof PyStr s) {
+                        for (var e : s.toCodePointList()) elems.add(e);
+                    } else if (seq instanceof PyIterator it) {
+                        while (it.hasNext()) elems.add(it.next());
+                    } else {
+                        throw PyErrors.error("TypeError",
+                                "cannot unpack non-iterable " + typeName(seq) + " object");
+                    }
+                    if (elems.size() != count) {
+                        throw PyErrors.error("ValueError",
+                                "not enough values to unpack (expected " + count +
+                                ", got " + elems.size() + ")");
+                    }
+                    // Push in reverse order so first element is on top
+                    for (int i = count - 1; i >= 0; i--) stack.push(elems.get(i));
+                }
+
+                // ── global / nonlocal declarations ───────────────────────
+                // These are marker constants emitted by the compiler so the
+                // name resolver knows to route future STORE_FAST to globals.
+                // We handle them in the VM by pre-registering the name.
+                case LOAD_GLOBAL_NAME -> {
+                    String gName = (String) pool[ai];
+                    PyObject gv = currentGlobals.get(gName);
+                    if (gv == null) gv = globals.get(gName);
+                    if (gv == null) gv = builtinSymbols.get(gName);
+                    if (gv == null) throw PyErrors.error("NameError", "name '" + gName + "' is not defined");
+                    stack.push(gv);
+                }
+                case STORE_GLOBAL_NAME -> {
+                    String gName = (String) pool[ai];
+                    PyObject gv = stack.pop();
+                    if (currentGlobals != null) currentGlobals.put(gName, gv);
+                    globals.put(gName, gv);
+                }
+
+                // ── assert statement ─────────────────────────────────────
+                case ASSERT -> {
+                    // arg: 0=no msg, 1=has msg on stack
+                    // condition was already popped by JUMP_IF_TRUE_OR_POP
+                    if (ai == 1) {
+                        PyObject msg = stack.pop();
+                        throw PyErrors.error("AssertionError", msg.toString());
+                    } else {
+                        throw PyErrors.error("AssertionError", "");
+                    }
+                }
+
+                // ── List/Set comprehension accumulators ──────────────────
+                case LIST_COMP_INIT -> stack.push(new PyList(new ArrayList<>()));
+                case LIST_COMP_APPEND -> {
+                    PyObject val = stack.pop();
+                    if (stack.peek() instanceof PyList acc) acc.items().add(val);
+                }
+                case SET_COMP_INIT -> stack.push(new org.example.jython3.runtime.PySet(new java.util.LinkedHashSet<>()));
+                case SET_COMP_ADD -> {
+                    PyObject val = stack.pop();
+                    if (stack.peek() instanceof org.example.jython3.runtime.PySet acc) acc.add(val);
+                }
+                case BUILD_SET -> {
+                    int n = ai;
+                    var set = new java.util.LinkedHashSet<PyObject>();
+                    var items = new PyObject[n];
+                    for (int i = n - 1; i >= 0; i--) items[i] = stack.pop();
+                    for (var item : items) set.add(item);
+                    stack.push(new org.example.jython3.runtime.PySet(set));
+                }
+
+                // ── with statement ───────────────────────────────────────
+                case SETUP_WITH -> {
+                    // Stack: [context_manager]
+                    // After: [exit_fn, enter_result]
+                    PyObject cm = stack.pop();
+                    PyObject enterFn = getAttr(cm, "__enter__");
+                    PyObject exitFn  = getAttr(cm, "__exit__");
+                    if (enterFn == null) throw PyErrors.error("AttributeError", "__enter__ not found");
+                    if (exitFn  == null) throw PyErrors.error("AttributeError", "__exit__ not found");
+                    PyObject entered = callPyCallable(enterFn, new PyObject[0]);
+                    stack.push(exitFn);     // bottom: exit_fn
+                    stack.push(entered);    // top: __enter__ return value
+                }
+                case END_WITH -> {
+                    // Normal exit: call __exit__(None, None, None)
+                    // Stack: [exit_fn] (entered value already consumed by suite)
+                    // The suite may have consumed the entered value or not;
+                    // exit_fn is below it. We access it via a special pattern:
+                    // The compiler arranged stack as [exit_fn, entered_value]
+                    // After suite execution, only exit_fn should remain.
+                    // We stored exit_fn before entered, so it's under the entered value.
+                    // We need to pop both and call exit_fn.
+                    PyObject exitFn2 = stack.pop(); // This is exit_fn (bottom of WITH pair)
+                    callPyCallable(exitFn2, new PyObject[]{new PyNull(), new PyNull(), new PyNull()});
+                }
+                case WITH_EXCEPT_EXIT -> {
+                    // Exception path: stack has [..., exit_fn, exception_value]
+                    // Call __exit__(type, value, traceback)
+                    PyObject excVal  = stack.pop();
+                    PyObject exitFn3 = stack.pop();
+                    PyObject excType = excVal instanceof PyException pe
+                            ? pe.type() : new PyNull();
+                    PyObject result = callPyCallable(exitFn3,
+                            new PyObject[]{excType, excVal, new PyNull()});
+                    if (isTruthy(result)) {
+                        // Exception suppressed: jump after with
+                        stack.push(PyBool.TRUE);
+                    } else {
+                        // Exception NOT suppressed: keep excVal on stack for RERAISE
+                        stack.push(excVal);
+                        stack.push(PyBool.FALSE);
+                    }
+                }
             } // end switch
             } catch (InterpreterException ie) {
                 if (!exceptStack.isEmpty()) {
@@ -1684,6 +1933,23 @@ public class Jython3Interpreter {
         };
     }
 
+    private PyObject setMethod(PySet set, String method) {
+        return switch (method) {
+            case "add" -> new PyBuiltinFunction("set.add", args -> {
+                checkArgCount("set.add", args, 1);
+                set.add(args[0]);
+                return new PyNull();
+            });
+            default -> throw PyErrors.error("AttributeError", "'set' object has no attribute '" + method + "'");
+        };
+    }
+
+    private static String pyPrintStr(PyObject o) {
+        if (o == null) return "None";
+        if (o instanceof PyException pe) return pe.message();
+        return o.toString();
+    }
+
     private PyObject listMethod(PyList list, String method) {
         return switch (method) {
             case "append" -> new PyBuiltinFunction("list.append", args -> { checkArgCount("list.append", args, 1); list.items().add(args[0]); return new PyNull(); });
@@ -1775,24 +2041,62 @@ public class Jython3Interpreter {
     }
 
     private PyObject callPyCallable(PyObject callable, PyObject[] args) {
+        return callPyCallableKw(callable, args, null, null);
+    }
+
+    /**
+     * Retrieve an attribute from any PyObject, returning null if absent.
+     * Used internally by SETUP_WITH and LOAD_ATTR to avoid duplicate logic.
+     */
+    private PyObject getAttr(PyObject obj, String attr) {
+        if (obj instanceof PyInstance inst) {
+            PyObject v = inst.getField(attr);
+            if (v != null) return v;
+            PyClass cls = inst.pyClass();
+            PyObject cv = cls.lookupMember(attr);
+            if (cv instanceof PyFunction fn) return new PyBoundMethod(inst, fn);
+            return cv;
+        }
+        if (obj instanceof PyClass cls) return cls.lookupMember(attr);
+        if (obj instanceof PyModule mod) return mod.attrs().get(attr);
+        if (obj instanceof PyDict dict) return dictMethod(dict, attr);
+        if (obj instanceof PyList list) return listMethod(list, attr);
+        if (obj instanceof PySet set)   return setMethod(set, attr);
+        if (obj instanceof PyStr s)     return strMethod(s, attr);
+        return null;
+    }
+
+    /**
+     * Core call dispatcher with optional keyword arguments.
+     * Both CALL_FUNCTION and CALL_FUNCTION_KW paths route through here.
+     *
+     * @param kwNames  keyword argument names, or null/empty for positional-only
+     * @param kwValues keyword argument values parallel to kwNames
+     */
+    private PyObject callPyCallableKw(PyObject callable, PyObject[] posArgs,
+                                      String[] kwNames, PyObject[] kwValues) {
         if (callable instanceof PyBuiltinFunction bf) {
-            return bf.fn().apply(args);
+            // Built-ins only receive positional args; keyword args are unsupported at this layer.
+            // Keyword args to builtins (like print(end='')) require Sprint B stdlib rewrite.
+            return bf.fn().apply(posArgs);
         }
         if (callable instanceof PyBoundMethod bm) {
-            var callArgs = new PyObject[args.length + 1];
+            var callArgs = new PyObject[posArgs.length + 1];
             callArgs[0] = bm.instance();
-            System.arraycopy(args, 0, callArgs, 1, args.length);
-            return callPyCallable(bm.fn(), callArgs);
+            System.arraycopy(posArgs, 0, callArgs, 1, posArgs.length);
+            return callPyCallableKw(bm.fn(), callArgs, kwNames, kwValues);
         }
         if (callable instanceof PyJavaClass jc) {
-            return jc.newInstance(args);
+            return jc.newInstance(posArgs);
         }
         if (callable instanceof PyJavaMethod jm) {
-            return jm.invoke(args);
+            return jm.invoke(posArgs);
         }
         if (callable instanceof PyFunction fn) {
             if (containsYield(fn.code())) {
-                return new PyGenerator(fn, args);
+                // Generators: bind args to locals eagerly, store in generator
+                var genLocals = bindArgs(fn, posArgs, kwNames, kwValues);
+                return new PyGenerator(fn, genLocals);
             }
             var savedStack = stack;
             var savedLocals = currentLocals;
@@ -1801,14 +2105,7 @@ public class Jython3Interpreter {
             var savedFunc = currentFunc;
             var savedLine = currentLine;
 
-            var fl = new HashMap<String, PyObject>();
-            if (fn.closure() != null) {
-                fl.putAll(fn.closure());
-            }
-            for (int i = 0; i < fn.params().size() && i < args.length; i++)
-                fl.put(fn.params().get(i), args[i]);
-
-            currentLocals = fl;
+            currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
             stack = new ArrayDeque<>();
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
@@ -1825,6 +2122,107 @@ public class Jython3Interpreter {
             return result;
         }
         throw PyErrors.error("TypeError", "'" + callable + "' is not callable");
+    }
+
+    /**
+     * Python argument binding algorithm — CPython-compatible.
+     *
+     * <p>Algorithm:
+     * 1. Fill {@code params[0..n-1]} from positional args left to right.
+     * 2. Fill remaining param slots from keyword args by name.
+     * 3. Fill any still-empty trailing slots from {@code fn.defaults()} (right-aligned).
+     * 4. Collect extra positionals into {@code *argsParam} tuple.
+     * 5. Collect extra keywords into {@code **kwargsParam} dict.
+     * 6. Raise {@code TypeError} for missing required params or unexpected keywords.
+     *
+     * @param fn        the function being called
+     * @param posArgs   positional arguments from the call site
+     * @param kwNames   keyword argument names (may be null)
+     * @param kwValues  keyword argument values parallel to kwNames (may be null)
+     * @return locals map ready to be installed as the function frame
+     */
+    private Map<String, PyObject> bindArgs(PyFunction fn,
+                                           PyObject[] posArgs,
+                                           String[] kwNames,
+                                           PyObject[] kwValues) {
+        var fl = new HashMap<String, PyObject>();
+        // 1. Seed with closure
+        if (fn.closure() != null) fl.putAll(fn.closure());
+
+        List<String> params     = fn.params();
+        PyObject[]   defaults   = fn.defaults();
+        String       argsParam  = fn.argsParam();
+        String       kwargsParam = fn.kwargsParam();
+        int nParams   = params.size();
+        int nDefaults = defaults.length;
+        // Index at which defaults start (right-aligned)
+        int defaultStart = nParams - nDefaults;
+
+        // 2. Assign positional args to params
+        int nPos = posArgs.length;
+        int nFill = Math.min(nPos, nParams);
+        for (int i = 0; i < nFill; i++) fl.put(params.get(i), posArgs[i]);
+
+        // 3. Collect extra positionals into *args tuple (or error)
+        if (nPos > nParams) {
+            if (argsParam != null) {
+                var extra = new ArrayList<PyObject>(nPos - nParams);
+                for (int i = nParams; i < nPos; i++) extra.add(posArgs[i]);
+                fl.put(argsParam, new PyTuple(extra));
+            } else {
+                throw PyErrors.error("TypeError",
+                    fn.name() + "() takes " + nParams + " positional argument" +
+                    (nParams == 1 ? "" : "s") + " but " + nPos + " " +
+                    (nPos == 1 ? "was" : "were") + " given");
+            }
+        } else if (argsParam != null) {
+            fl.put(argsParam, PyTuple.EMPTY);  // *args receives empty tuple
+        }
+
+        // 4. Assign keyword args by name
+        var extraKw = new LinkedHashMap<PyObject, PyObject>();
+        if (kwNames != null) {
+            for (int i = 0; i < kwNames.length; i++) {
+                String kwName = kwNames[i];
+                if (params.contains(kwName)) {
+                    if (fl.containsKey(kwName)) {
+                        throw PyErrors.error("TypeError",
+                            fn.name() + "() got multiple values for argument '" + kwName + "'");
+                    }
+                    fl.put(kwName, kwValues[i]);
+                } else if (kwargsParam != null) {
+                    extraKw.put(new PyStr(kwName), kwValues[i]);
+                } else {
+                    throw PyErrors.error("TypeError",
+                        fn.name() + "() got an unexpected keyword argument '" + kwName + "'");
+                }
+            }
+        }
+        if (kwargsParam != null) {
+            fl.put(kwargsParam, new PyDict(extraKw));
+        }
+
+        // 5. Fill remaining params with defaults (right-aligned)
+        for (int i = nFill; i < nParams; i++) {
+            if (!fl.containsKey(params.get(i))) {
+                int di = i - defaultStart;
+                if (di >= 0 && di < nDefaults) {
+                    fl.put(params.get(i), defaults[di]);
+                } else {
+                    throw PyErrors.error("TypeError",
+                        fn.name() + "() missing required positional argument: '" + params.get(i) + "'");
+                }
+            }
+        }
+
+        return fl;
+    }
+
+    private String debugStack(Deque<PyObject> s, int n) {
+        var items = new java.util.ArrayDeque<>(s);
+        var parts = new java.util.ArrayList<String>();
+        for (int i = 0; i < n && !items.isEmpty(); i++) parts.add(String.valueOf(items.pop()));
+        return parts.toString();
     }
 
     private void bindImportedName(String alias, PyObject value) {

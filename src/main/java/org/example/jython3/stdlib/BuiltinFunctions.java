@@ -174,6 +174,7 @@ public final class BuiltinFunctions {
             checkArgCount("list", args, 1);
             PyObject o = args[0];
             if (o instanceof PyList l) return new PyList(new ArrayList<>(l.items()));
+            if (o instanceof PyTuple t) return new PyList(new ArrayList<>(t.items()));
             if (o instanceof PyStr s) {
                 return new PyList(s.toCodePointList());
             }
@@ -219,6 +220,7 @@ public final class BuiltinFunctions {
             checkArgCount("sorted", args, 1);
             List<PyObject> items;
             if (args[0] instanceof PyList list) items = new ArrayList<>(list.items());
+            else if (args[0] instanceof PyTuple t) items = new ArrayList<>(t.items());
             else if (args[0] instanceof PyStr s) items = s.toCodePointList();
             else if (args[0] instanceof PyDict d) items = new ArrayList<>(d.map().keySet());
             else throw PyErrors.error("TypeError", "sorted() argument must be iterable");

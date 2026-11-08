@@ -1,7 +1,9 @@
 package org.example.jython3.compile;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.example.jython3.Jython3BaseVisitor;
 import org.example.jython3.Jython3Parser;
@@ -129,20 +131,28 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     // ── print(args) ──
+    // print() is handled as a keyword — routes through the PRINT opcode for now.
+    // After Sprint B we'll unify with the builtin `print` function.
     @Override public Void visitPrint_stmt(Jython3Parser.Print_stmtContext c) {
-        if (c.arg_list() == null || c.arg_list().expr().isEmpty()) {
+        if (c.arg_list() == null || c.arg_list().arg_item().isEmpty()) {
             b.emit(OpCode.LOAD_CONST, "");
             b.emit(OpCode.PRINT);
         } else {
-            var exprs = c.arg_list().expr();
-            if (exprs.size() == 1) {
-                visit(exprs.get(0));
+            // Collect positional expressions only; keyword args in print() handled via CALL route
+            var posItems = c.arg_list().arg_item().stream()
+                    .filter(it -> it instanceof Jython3Parser.PositionalArgContext)
+                    .toList();
+            if (posItems.size() == 1) {
+                visit(((Jython3Parser.PositionalArgContext) posItems.get(0)).expr());
+                b.emit(OpCode.PRINT);
+            } else if (posItems.isEmpty()) {
+                b.emit(OpCode.LOAD_CONST, "");
                 b.emit(OpCode.PRINT);
             } else {
-                for (var e : exprs) {
-                    visit(e);
+                for (var item : posItems) {
+                    visit(((Jython3Parser.PositionalArgContext) item).expr());
                 }
-                b.emitRaw(OpCode.BUILD_LIST, exprs.size());
+                b.emitRaw(OpCode.BUILD_LIST, posItems.size());
                 b.emit(OpCode.PRINT_MULTI);
             }
         }
@@ -151,7 +161,69 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     @Override public Void visitAssign_stmt(Jython3Parser.Assign_stmtContext c) {
         visit(c.expr());
-        b.emit(OpCode.STORE_FAST, c.ID().getText());
+        // Handle chained assignment: a = b = expr  (emits DUP_TOP for all but last)
+        var ids = c.ID();
+        for (int i = 0; i < ids.size(); i++) {
+            if (i < ids.size() - 1) b.emit(OpCode.DUP_TOP);
+            b.emit(OpCode.STORE_FAST, ids.get(i).getText());
+        }
+        return null;
+    }
+
+    // ── Tuple unpacking: a, b = expr  or  (a, b) = expr ──────────────────────
+    @Override public Void visitTuple_assign_stmt(Jython3Parser.Tuple_assign_stmtContext c) {
+        // Compile the right-hand side.  rhs_tuple is either:
+        //   RhsTupleMany: multiple expressions  → build a tuple on the stack
+        //   RhsSingle:    single expression      → value already on stack
+        var rhs = c.rhs_tuple();
+        if (rhs instanceof Jython3Parser.RhsTupleManyContext many) {
+            int n = many.expr().size();
+            for (var e : many.expr()) visit(e);
+            b.emitRaw(OpCode.BUILD_TUPLE, n);
+        } else {
+            visit(((Jython3Parser.RhsSingleContext) rhs).expr());
+        }
+        int count = c.ID().size();
+        b.emitRaw(OpCode.UNPACK_SEQUENCE, count);
+        for (var id : c.ID()) b.emit(OpCode.STORE_FAST, id.getText());
+        return null;
+    }
+
+    // ── global / nonlocal ─────────────────────────────────────────────────────
+    @Override public Void visitGlobal_stmt(Jython3Parser.Global_stmtContext c) {
+        // Mark each name as global in this function's scope.
+        // The VM resolves LOAD_GLOBAL_NAME / STORE_GLOBAL_NAME at runtime.
+        for (var id : c.ID()) b.emit(OpCode.LOAD_CONST, "@global:" + id.getText());
+        return null;
+    }
+
+    @Override public Void visitNonlocal_stmt(Jython3Parser.Nonlocal_stmtContext c) {
+        // nonlocal is handled via closure capture; mark names as cell variables.
+        for (var id : c.ID()) b.emit(OpCode.LOAD_CONST, "@nonlocal:" + id.getText());
+        return null;
+    }
+
+    // ── assert ────────────────────────────────────────────────────────────────
+    @Override public Void visitAssert_stmt(Jython3Parser.Assert_stmtContext c) {
+        // assert expr [, msg]
+        // JUMP_IF_FALSE pops condition. If false -> raise AssertionError; if true -> skip
+        visit(c.expr(0));
+        int jumpFalse = b.size();
+        b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+
+        // Condition was True: skip over the AssertionError raising
+        int jumpOk = b.size();
+        b.emitRaw(OpCode.JUMP, 0);
+
+        // Condition was False: construct and throw AssertionError
+        b.patch(jumpFalse, b.size());
+        if (c.expr().size() > 1) {
+            visit(c.expr(1));
+            b.emitRaw(OpCode.ASSERT, 1);
+        } else {
+            b.emitRaw(OpCode.ASSERT, 0);
+        }
+        b.patch(jumpOk, b.size());
         return null;
     }
 
@@ -294,19 +366,10 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         if (c.expr() != null) {
             visit(c.expr());
             b.emit(OpCode.LOAD_ATTR, c.ID().getText());
-            int n = 0;
-            if (c.arg_list() != null) {
-                for (var e : c.arg_list().expr()) { visit(e); n++; }
-            }
-            b.emitRaw(OpCode.CALL_FUNCTION, n);
         } else {
             b.emit(OpCode.LOAD_FAST, c.ID().getText());
-            int n = 0;
-            if (c.arg_list() != null) {
-                for (var e : c.arg_list().expr()) { visit(e); n++; }
-            }
-            b.emitRaw(OpCode.CALL_FUNCTION, n);
         }
+        emitCall(c.arg_list());
         b.emit(OpCode.POP_TOP);
         return null;
     }
@@ -317,19 +380,67 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return null;
     }
 
-    private void compileFunctionDef(String name, Jython3Parser.Param_listContext paramList, Jython3Parser.SuiteContext suite) {
-        var params = new ArrayList<String>();
+    private void compileFunctionDef(String name,
+                                     Jython3Parser.Param_listContext paramList,
+                                     Jython3Parser.SuiteContext suite) {
+        // ── 1. Parse parameter list ──────────────────────────────────────────
+        var positional   = new ArrayList<String>();  // plain and default params
+        var defaultExprs = new ArrayList<Jython3Parser.ExprContext>();  // default value exprs
+        String argsParam   = null;  // *args name
+        String kwargsParam = null;  // **kwargs name
+
         if (paramList != null) {
-            for (var id : paramList.ID()) params.add(id.getText());
+            for (var item : paramList.param_item()) {
+                if (item instanceof Jython3Parser.SimpleParamContext sp) {
+                    if (!defaultExprs.isEmpty())
+                        throw new CompileError("non-default argument follows default argument");
+                    positional.add(sp.ID().getText());
+                } else if (item instanceof Jython3Parser.DefaultParamContext dp) {
+                    positional.add(dp.ID().getText());
+                    defaultExprs.add(dp.expr());
+                } else if (item instanceof Jython3Parser.ArgsParamContext ap) {
+                    argsParam = ap.ID().getText();
+                } else if (item instanceof Jython3Parser.KwargsParamContext kp) {
+                    kwargsParam = kp.ID().getText();
+                }
+            }
         }
+
+        // ── 2. Build the function prototype WITHOUT defaults baked in ────────
+        // Defaults are evaluated at definition time (outer scope), so we
+        // push them onto the stack now, before MAKE_FUNCTION_DEFAULTS.
+        int nDefaults = defaultExprs.size();
+        boolean hasArgs   = argsParam != null;
+        boolean hasKwargs = kwargsParam != null;
+        int flags = (hasArgs ? 1 : 0) | (hasKwargs ? 2 : 0);
+
+        // ── 3. Compile the function body ─────────────────────────────────────
         var fb = new CodeBuilder();
         var fv = new CompileVisitor(fb);
         fv.visit(suite);
         fb.emit(OpCode.LOAD_CONST, null);
         fb.emit(OpCode.RETURN_VALUE);
         fb.emit(OpCode.HALT);
-        b.emit(OpCode.LOAD_CONST, new PyFunction(name, params, fb.build()));
-        b.emit(OpCode.MAKE_FUNCTION, name);
+
+        // ── 4. Emit: load prototype → push defaults → MAKE_FUNCTION_DEFAULTS ──
+        // Build a prototype PyFunction that holds params/argsParam/kwargsParam/code.
+        // Defaults are attached by the VM when it processes MAKE_FUNCTION_DEFAULTS.
+        b.emit(OpCode.LOAD_CONST,
+               new PyFunction(name, positional, new org.example.jython3.runtime.PyObject[0],
+                              argsParam, kwargsParam, fb.build(), null));
+
+        if (nDefaults == 0 && !hasArgs && !hasKwargs) {
+            // Fast path: simple function, no advanced signature features
+            b.emit(OpCode.MAKE_FUNCTION, name);
+        } else {
+            // Evaluate each default value expression in the enclosing scope
+            for (var dExpr : defaultExprs) visit(dExpr);
+            // Encode: (nDefaults << 2) | flags
+            b.emitRaw(OpCode.MAKE_FUNCTION_DEFAULTS, (nDefaults << 2) | flags);
+            // MAKE_FUNCTION_DEFAULTS also captures closure & stores under name;
+            // but we still need to emit the name so the VM knows where to store it.
+            b.emit(OpCode.MAKE_FUNCTION, name);
+        }
     }
 
     @Override public Void visitDecorated_func_def(Jython3Parser.Decorated_func_defContext c) {
@@ -364,11 +475,12 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         cv.visit(c.suite());
         cb.emit(OpCode.HALT);
 
-        if (c.arg_list() != null && !c.arg_list().expr().isEmpty()) {
-            for (var e : c.arg_list().expr()) {
-                visit(e);
-            }
-            b.emitRaw(OpCode.BUILD_LIST, c.arg_list().expr().size());
+        if (c.arg_list() != null && !c.arg_list().arg_item().isEmpty()) {
+            var posItems = c.arg_list().arg_item().stream()
+                    .filter(it -> it instanceof Jython3Parser.PositionalArgContext)
+                    .toList();
+            for (var it : posItems) visit(((Jython3Parser.PositionalArgContext) it).expr());
+            b.emitRaw(OpCode.BUILD_LIST, posItems.size());
         } else {
             b.emit(OpCode.LOAD_CONST, null);
         }
@@ -738,13 +850,47 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     @Override public Void visitNoneLit(Jython3Parser.NoneLitContext c) { b.emit(OpCode.LOAD_CONST, null); return null; }
     @Override public Void visitId(Jython3Parser.IdContext c) { b.emit(OpCode.LOAD_FAST, c.ID().getText()); return null; }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Shared helper: compile a call arg list into positional + keyword args.
+    // Returns true if any keyword argument was present (needs CALL_FUNCTION_KW).
+    // ─────────────────────────────────────────────────────────────────────
+    private record CallArgs(int nPos, List<String> kwNames) {}
+
+    private CallArgs emitArgList(Jython3Parser.Arg_listContext argList) {
+        if (argList == null) return new CallArgs(0, List.of());
+        int nPos = 0;
+        var kwNames = new ArrayList<String>();
+        // First pass: positional args (must precede keyword args per Python grammar)
+        for (var item : argList.arg_item()) {
+            if (item instanceof Jython3Parser.PositionalArgContext pa) {
+                if (!kwNames.isEmpty())
+                    throw new CompileError("positional argument follows keyword argument");
+                visit(pa.expr());
+                nPos++;
+            } else if (item instanceof Jython3Parser.KeywordArgContext ka) {
+                kwNames.add(ka.ID().getText());
+                visit(ka.expr());
+            }
+        }
+        return new CallArgs(nPos, kwNames);
+    }
+
+    /** Emit a CALL_FUNCTION or CALL_FUNCTION_KW instruction for the given call. */
+    private void emitCall(Jython3Parser.Arg_listContext argList) {
+        var ca = emitArgList(argList);
+        if (ca.kwNames().isEmpty()) {
+            b.emitRaw(OpCode.CALL_FUNCTION, ca.nPos());
+        } else {
+            // Store KwCallInfo (nPos + kwNames) as a single const-pool entry.
+            // The opcode arg is the pool index — fits cleanly in 16 bits.
+            var info = new KwCallInfo(ca.nPos(), ca.kwNames().toArray(String[]::new));
+            b.emit(OpCode.CALL_FUNCTION_KW, info);  // uses emit(op, Object) → addConst → pool index
+        }
+    }
+
     @Override public Void visitFuncCall(Jython3Parser.FuncCallContext c) {
         b.emit(OpCode.LOAD_FAST, c.ID().getText());
-        int n = 0;
-        if (c.arg_list() != null) {
-            for (var e : c.arg_list().expr()) { visit(e); n++; }
-        }
-        b.emitRaw(OpCode.CALL_FUNCTION, n);
+        emitCall(c.arg_list());
         return null;
     }
 
@@ -869,11 +1015,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     @Override public Void visitAttrCall(Jython3Parser.AttrCallContext c) {
         visit(c.expr());
         b.emit(OpCode.LOAD_ATTR, c.ID().getText());
-        int n = 0;
-        if (c.arg_list() != null) {
-            for (var e : c.arg_list().expr()) { visit(e); n++; }
-        }
-        b.emitRaw(OpCode.CALL_FUNCTION, n);
+        emitCall(c.arg_list());
         return null;
     }
 
@@ -887,6 +1029,363 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         // an existing exception value (raise e). The VM decides which.
         visit(c.expr());
         b.emit(OpCode.RAISE);
+        return null;
+    }
+
+    // ── with statement ──────────────────────────────────────────────────────
+    /**
+     * Compiles:  with CM [as VAR]: suite
+     *
+     * Bytecode layout:
+     *   LOAD cm_expr
+     *   SETUP_WITH              ; calls __enter__; pushes (exit_fn, entered_value)
+     *   [STORE_FAST var | POP_TOP]
+     *   PUSH_EXCEPT_HANDLER  handler
+     *   <suite>
+     *   POP_EXCEPT_HANDLER
+     *   END_WITH                ; calls exit_fn(None, None, None)
+     *   JUMP after
+     *
+     *  handler:
+     *   WITH_EXCEPT_EXIT        ; calls exit_fn(type, value, tb); pushes bool
+     *   JUMP_IF_TRUE_OR_POP    after   ; True = exception suppressed
+     *   RERAISE
+     *
+     *  after:
+     */
+    @Override public Void visitWith_stmt(Jython3Parser.With_stmtContext c) {
+        visit(c.expr());
+        b.emit(OpCode.SETUP_WITH);         // calls __enter__; stack: [exit_fn, value]
+
+        // Bind or discard the __enter__ result
+        if (c.AS() != null) {
+            b.emit(OpCode.STORE_FAST, c.ID().getText());
+        } else {
+            b.emit(OpCode.POP_TOP);        // discard __enter__ value
+        }
+
+        // Register exception handler so we can call __exit__ on error
+        int pushIdx = b.size();
+        b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
+
+        visit(c.suite());
+
+        b.emit(OpCode.POP_EXCEPT_HANDLER);
+        b.emit(OpCode.END_WITH);           // normal exit: calls __exit__(None,None,None)
+        int jumpAfter = b.size();
+        b.emitRaw(OpCode.JUMP, 0);
+
+        // Exception handler path
+        b.patch(pushIdx, b.size());
+        b.emit(OpCode.WITH_EXCEPT_EXIT);   // calls __exit__(type,val,tb); result on stack
+        int suppressJump = b.size();
+        b.emitRaw(OpCode.JUMP_IF_TRUE_OR_POP, 0); // suppress if __exit__ returned True
+        b.emit(OpCode.RERAISE);
+
+        int afterWith = b.size();
+        b.patch(jumpAfter, afterWith);
+        b.patch(suppressJump, afterWith);
+        return null;
+    }
+
+    // ── lambda ────────────────────────────────────────────────────────────────
+    @Override public Void visitLambdaExpr(Jython3Parser.LambdaExprContext c) {
+        // lambda [params]: body_expr
+        // Compiled identically to a named anonymous function.
+        // The body is a single expression that is returned.
+        compileLambda(c.param_list(), c.expr());
+        return null;
+    }
+
+    /** Compile a lambda expression into an anonymous PyFunction. */
+    private void compileLambda(Jython3Parser.Param_listContext paramList,
+                               Jython3Parser.ExprContext bodyExpr) {
+        // Parse parameters (same as func_def)
+        var positional   = new ArrayList<String>();
+        var defaultExprs = new ArrayList<Jython3Parser.ExprContext>();
+        String argsParam   = null;
+        String kwargsParam = null;
+        if (paramList != null) {
+            for (var item : paramList.param_item()) {
+                if (item instanceof Jython3Parser.SimpleParamContext sp) {
+                    positional.add(sp.ID().getText());
+                } else if (item instanceof Jython3Parser.DefaultParamContext dp) {
+                    positional.add(dp.ID().getText());
+                    defaultExprs.add(dp.expr());
+                } else if (item instanceof Jython3Parser.ArgsParamContext ap) {
+                    argsParam = ap.ID().getText();
+                } else if (item instanceof Jython3Parser.KwargsParamContext kp) {
+                    kwargsParam = kp.ID().getText();
+                }
+            }
+        }
+        int nDefaults = defaultExprs.size();
+        boolean hasArgs   = argsParam != null;
+        boolean hasKwargs = kwargsParam != null;
+        // Compile body: single expression, return its value
+        var fb = new CodeBuilder();
+        var fv = new CompileVisitor(fb);
+        fv.visit(bodyExpr);
+        fb.emit(OpCode.RETURN_VALUE);
+        fb.emit(OpCode.HALT);
+        b.emit(OpCode.LOAD_CONST,
+               new PyFunction("<lambda>", positional, new org.example.jython3.runtime.PyObject[0],
+                              argsParam, kwargsParam, fb.build(), null));
+        if (nDefaults > 0 || hasArgs || hasKwargs) {
+            for (var dExpr : defaultExprs) visit(dExpr);
+            b.emitRaw(OpCode.MAKE_FUNCTION_DEFAULTS, (nDefaults << 2) | ((hasArgs ? 1 : 0) | (hasKwargs ? 2 : 0)));
+            // MAKE_FUNCTION_DEFAULTS enriches the prototype and pushes it back onto the stack!
+        }
+        // The lambda PyFunction remains on top of stack as an expression value.
+    }
+
+    // ── ternary / conditional expression ─────────────────────────────────
+    @Override public Void visitTernaryExpr(Jython3Parser.TernaryExprContext c) {
+        // expr0 if expr1 else expr2
+        visit(c.expr(1));                // condition
+        int jumpFalse = b.size();
+        b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+        visit(c.expr(0));                // true branch
+        int jumpEnd = b.size();
+        b.emitRaw(OpCode.JUMP, 0);
+        b.patch(jumpFalse, b.size());
+        visit(c.expr(2));                // false branch
+        b.patch(jumpEnd, b.size());
+        return null;
+    }
+
+    // ── unary plus ──────────────────────────────────────────────────────────────
+    @Override public Void visitUnaryPlus(Jython3Parser.UnaryPlusContext c) {
+        visit(c.expr()); // +x is a no-op for int/float; value unchanged
+        return null;
+    }
+
+    // ── f-strings ───────────────────────────────────────────────────────────────
+    /**
+     * Compiles f"...{expr}..." literals.
+     * Strategy: split the raw token at { } boundaries, emit each part as a
+     * string concatenation so the VM builds the final string at runtime.
+     * This avoids a dedicated opcode and reuses existing ADD infrastructure.
+     */
+    @Override public Void visitFStr(Jython3Parser.FStrContext c) {
+        String raw = c.FSTRING().getText();
+        // Strip the leading f/F prefix and quotes (f"...", f'...')
+        String inner = raw.substring(2, raw.length() - 1);
+        var parts = splitFString(inner);
+        if (parts.isEmpty()) {
+            b.emit(OpCode.LOAD_CONST, "");
+            return null;
+        }
+        boolean first = true;
+        for (var part : parts) {
+            if (part.isExpr()) {
+                // Pattern: load str() FIRST, then compile expr, then CALL_FUNCTION(1)
+                // Stack: [str_fn, value] -> CALL_FUNCTION(1) -> [str_result]
+                b.emit(OpCode.LOAD_FAST, "str");
+                try {
+                    var lexer  = new org.example.jython3.Jython3Lexer(
+                            org.antlr.v4.runtime.CharStreams.fromString(part.text()));
+                    lexer.removeErrorListeners();
+                    var tokens = new org.antlr.v4.runtime.CommonTokenStream(lexer);
+                    var parser = new org.example.jython3.Jython3Parser(tokens);
+                    parser.removeErrorListeners();
+                    visit(parser.expr());
+                    b.emitRaw(OpCode.CALL_FUNCTION, 1);
+                } catch (Exception ex) {
+                    b.emit(OpCode.POP_TOP); // pop the str_fn we pushed
+                    b.emit(OpCode.LOAD_CONST, "{" + part.text() + "}");
+                }
+            } else {
+                b.emit(OpCode.LOAD_CONST, StringEscapes.unescape(part.text()));
+            }
+            if (!first) b.emit(OpCode.ADD);
+            first = false;
+        }
+        return null;
+    }
+
+    /** One segment of an f-string: either a literal or an {expr}. */
+    private record FStringPart(String text, boolean isExpr) {}
+
+    /** Split the interior of an f-string into alternating literal / expr parts. */
+    private java.util.List<FStringPart> splitFString(String inner) {
+        var parts = new ArrayList<FStringPart>();
+        var sb = new StringBuilder();
+        int i = 0;
+        while (i < inner.length()) {
+            char ch = inner.charAt(i);
+            if (ch == '{') {
+                if (i + 1 < inner.length() && inner.charAt(i + 1) == '{') {
+                    sb.append('{'); i += 2; continue; // {{ escape
+                }
+                if (sb.length() > 0) { parts.add(new FStringPart(sb.toString(), false)); sb.setLength(0); }
+                int depth = 1; i++;
+                var exprBuf = new StringBuilder();
+                while (i < inner.length() && depth > 0) {
+                    char ec = inner.charAt(i);
+                    if (ec == '{') depth++;
+                    else if (ec == '}') { if (--depth == 0) break; }
+                    exprBuf.append(ec); i++;
+                }
+                i++; // skip closing }
+                parts.add(new FStringPart(exprBuf.toString().trim(), true));
+            } else if (ch == '}' && i + 1 < inner.length() && inner.charAt(i + 1) == '}') {
+                sb.append('}'); i += 2;
+            } else {
+                sb.append(ch); i++;
+            }
+        }
+        if (sb.length() > 0) parts.add(new FStringPart(sb.toString(), false));
+        return parts;
+    }
+
+    // ── comprehensions ────────────────────────────────────────────────────────────
+    // ── Unique counter for inline comprehension temporary accumulators ────
+    private int compCounter = 0;
+
+    /**
+     * List comprehension:  [expr FOR id IN iterable (IF cond)?]
+     *
+     * Clean variable-based compilation (avoids stack-depth juggling):
+     *   acc = []
+     *   for id in iterable:
+     *       if cond:
+     *           acc.append(expr)
+     *   TOS = acc
+     */
+    @Override public Void visitListComp(Jython3Parser.ListCompContext c) {
+        String accVar = "__comp_list_" + (compCounter++);
+        b.emitRaw(OpCode.BUILD_LIST, 0);
+        b.emit(OpCode.STORE_FAST, accVar);
+
+        visit(c.expr(1));                    // iterable
+        b.emit(OpCode.GET_ITER);
+        int loopTop = b.size();
+        int forIter = b.size();
+        b.emitRaw(OpCode.FOR_ITER, 0);
+        b.emit(OpCode.STORE_FAST, c.ID().getText());
+
+        // Optional IF filter
+        int filterJump = -1;
+        if (c.expr().size() == 3) {
+            visit(c.expr(2));
+            filterJump = b.size();
+            b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+        }
+
+        // acc.append(expr)
+        b.emit(OpCode.LOAD_FAST, accVar);
+        b.emit(OpCode.LOAD_ATTR, "append");
+        visit(c.expr(0));
+        b.emitRaw(OpCode.CALL_FUNCTION, 1);
+        b.emit(OpCode.POP_TOP); // discard None returned by append
+
+        if (filterJump >= 0) {
+            b.patch(filterJump, b.size());
+        }
+        b.emitRaw(OpCode.JUMP, loopTop);
+        int afterLoop = b.size();
+        b.patch(forIter, afterLoop);
+
+        // Result: load acc onto stack
+        b.emit(OpCode.LOAD_FAST, accVar);
+        return null;
+    }
+
+    /**
+     * Dict comprehension: {key_expr: val_expr FOR id IN iterable (IF cond)?}
+     *
+     * Clean variable-based compilation:
+     *   acc = {}
+     *   for id in iterable:
+     *       if cond:
+     *           acc[key] = val
+     *   TOS = acc
+     */
+    @Override public Void visitDictComp(Jython3Parser.DictCompContext c) {
+        String accVar = "__comp_dict_" + (compCounter++);
+        b.emitRaw(OpCode.BUILD_DICT, 0);
+        b.emit(OpCode.STORE_FAST, accVar);
+
+        visit(c.expr(2));                    // iterable
+        b.emit(OpCode.GET_ITER);
+        int loopTop = b.size();
+        int forIter = b.size();
+        b.emitRaw(OpCode.FOR_ITER, 0);
+        b.emit(OpCode.STORE_FAST, c.ID().getText());
+
+        // Optional IF filter
+        int filterJump = -1;
+        if (c.expr().size() == 4) {
+            visit(c.expr(3));
+            filterJump = b.size();
+            b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+        }
+
+        // acc[key] = val
+        b.emit(OpCode.LOAD_FAST, accVar);    // container
+        visit(c.expr(0));                    // key
+        visit(c.expr(1));                    // val
+        b.emit(OpCode.STORE_SUBSCR);
+
+        if (filterJump >= 0) {
+            b.patch(filterJump, b.size());
+        }
+        b.emitRaw(OpCode.JUMP, loopTop);
+        int afterLoop = b.size();
+        b.patch(forIter, afterLoop);
+
+        b.emit(OpCode.LOAD_FAST, accVar);
+        return null;
+    }
+
+    /**
+     * Set comprehension: {expr FOR id IN iterable (IF cond)?}
+     *
+     * Clean variable-based compilation using PySet built from list or add method.
+     */
+    @Override public Void visitSetComp(Jython3Parser.SetCompContext c) {
+        String accVar = "__comp_set_" + (compCounter++);
+        b.emitRaw(OpCode.BUILD_SET, 0);
+        b.emit(OpCode.STORE_FAST, accVar);
+
+        visit(c.expr(1));                    // iterable
+        b.emit(OpCode.GET_ITER);
+        int loopTop = b.size();
+        int forIter = b.size();
+        b.emitRaw(OpCode.FOR_ITER, 0);
+        b.emit(OpCode.STORE_FAST, c.ID().getText());
+
+        int filterJump = -1;
+        if (c.expr().size() == 3) {
+            visit(c.expr(2));
+            filterJump = b.size();
+            b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+        }
+
+        // acc.add(expr)
+        b.emit(OpCode.LOAD_FAST, accVar);
+        b.emit(OpCode.LOAD_ATTR, "add");
+        visit(c.expr(0));
+        b.emitRaw(OpCode.CALL_FUNCTION, 1);
+        b.emit(OpCode.POP_TOP);
+
+        if (filterJump >= 0) {
+            b.patch(filterJump, b.size());
+        }
+        b.emitRaw(OpCode.JUMP, loopTop);
+        int afterLoop = b.size();
+        b.patch(forIter, afterLoop);
+
+        b.emit(OpCode.LOAD_FAST, accVar);
+        return null;
+    }
+
+    /** Set literal: {expr, expr, ...} */
+    @Override public Void visitSetLiteral(Jython3Parser.SetLiteralContext c) {
+        int n = 0;
+        for (var e : c.expr_list().expr()) { visit(e); n++; }
+        b.emitRaw(OpCode.BUILD_SET, n);
         return null;
     }
 }

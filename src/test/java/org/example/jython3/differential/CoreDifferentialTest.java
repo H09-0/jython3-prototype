@@ -251,4 +251,43 @@ public class CoreDifferentialTest {
         assertMatchesCPython("tup_concat_repeat", "t = (1, 2); print(t + (3,), t * 2)");
         assertMatchesCPython("tup_types", "t = (1, 2); print(isinstance(t, tuple), isinstance(t, list), isinstance([1, 2], tuple))");
     }
+
+    @Test
+    void testDefaultAndKeywordArgsDifferential() {
+        assertMatchesCPython("default_simple",
+                "def f(x, y=10): return x + y\nprint(f(1), f(1, 2), f(1, y=99))");
+        assertMatchesCPython("default_multi",
+                "def g(a=1, b=2, c=3): return a * 100 + b * 10 + c\nprint(g(), g(5), g(5, 6), g(c=9))");
+        assertMatchesCPython("varargs_total",
+                "def total(*ns):\n    s=0\n    for n in ns: s+=n\n    return s\nprint(total(), total(1,2,3), total(10,20,30))");
+        assertMatchesCPython("kwargs_dict",
+                "def d(**kw): return sorted(kw.keys())\nprint(d(z=3, a=1, m=2))");
+        assertMatchesCPython("mixed_all",
+                "def f(a, b=10, *args, **kw): return [a, b, len(args), len(kw.keys())]\n" +
+                "print(f(1), f(1, 2), f(1, 2, 3, 4), f(1, x=9, y=8))");
+        assertMatchesCPython("default_at_def_time",
+                "x=10\ndef f(a=x): return a\nx=99\nprint(f())");
+        assertMatchesCPython("keyword_only_call",
+                "def add(a, b): return a + b\nprint(add(a=3, b=4))");
+        assertMatchesCPython("too_few_args_error",
+                "def f(a, b): pass\ntry:\n    f(1)\nexcept TypeError:\n    print('caught')");
+        assertMatchesCPython("unexpected_kwarg_error",
+                "def f(a): pass\ntry:\n    f(a=1, z=99)\nexcept TypeError:\n    print('caught')");
+    }
+
+    @Test
+    void testSprintASyntaxDifferential() {
+        assertMatchesCPython("listcomp", "print([x * 2 for x in range(5)], [x for x in range(8) if x % 2 == 1])");
+        assertMatchesCPython("dictcomp", "print({k: k * 10 for k in range(3)})");
+        assertMatchesCPython("setcomp", "print({x % 2 for x in range(4)})");
+        assertMatchesCPython("lambda_basic", "f = lambda x: x * 3; print(f(7))");
+        assertMatchesCPython("lambda_defaults", "g = lambda a, b=10: a + b; print(g(2), g(2, 5))");
+        assertMatchesCPython("unpack_pairs", "a, b = 1, 2; print(a, b)");
+        assertMatchesCPython("unpack_from_list", "x, y = [10, 20]; print(x, y)");
+        assertMatchesCPython("fstring", "a = 'world'; n = 42; print(f'hello {a} {n+1}')");
+        assertMatchesCPython("ternary", "print(10 if True else 20, 10 if False else 20)");
+        assertMatchesCPython("unary_plus", "print(+5, +-3, ++7)");
+        assertMatchesCPython("assert_ok", "assert 1 == 1; print('assert_passed')");
+        assertMatchesCPython("assert_caught", "try:\n    assert 1 == 2, 'fail'\nexcept AssertionError as e:\n    print(str(e))");
+    }
 }

@@ -1,5 +1,16 @@
 /**
  * Jython3.g4 – ANTLR4 grammar for Python 3 with true indentation blocks.
+ *
+ * Sprint A — added:
+ *   - list / dict / set comprehensions
+ *   - lambda expressions
+ *   - global / nonlocal statements
+ *   - with statement (single-item, optional 'as')
+ *   - tuple unpacking assignment  (a, b = expr)
+ *   - assert statement
+ *   - f-string literals  (f"..." / f'...')
+ *   - unary plus (+expr)
+ *   - chained comparisons  (1 < x < 10)
  */
 grammar Jython3;
 
@@ -29,6 +40,7 @@ suite
 simple_stmt
     : print_stmt
     | assign_stmt
+    | tuple_assign_stmt
     | subscript_assign_stmt
     | aug_assign_stmt
     | import_stmt
@@ -41,6 +53,9 @@ simple_stmt
     | execfile_stmt
     | call_stmt
     | yield_stmt
+    | global_stmt
+    | nonlocal_stmt
+    | assert_stmt
     ;
 
 /** print() or print(a) or print(a, b, c) */
@@ -48,9 +63,22 @@ print_stmt
     : PRINT LPAREN arg_list? RPAREN
     ;
 
-/** identifier = expr */
+/** identifier = expr  or  identifier = identifier = expr  (chained assignment) */
 assign_stmt
     : ID ASSIGN expr
+    | ID ASSIGN ID ASSIGN expr
+    ;
+
+/** Tuple unpacking: a, b = expr  or  a, b = x, y  or  (a, b) = expr */
+tuple_assign_stmt
+    : LPAREN ID (COMMA ID)+ RPAREN ASSIGN rhs_tuple
+    | ID (COMMA ID)+ ASSIGN rhs_tuple
+    ;
+
+/** Right-hand side that may itself be a tuple: 1, 2  or  (1, 2)  or  expr */
+rhs_tuple
+    : expr (COMMA expr)+ COMMA?   # RhsTupleMany
+    | expr                          # RhsSingle
     ;
 
 /** container[key] = expr or obj.attr = expr */
@@ -139,6 +167,21 @@ call_stmt
     | expr DOT ID LPAREN arg_list? RPAREN
     ;
 
+/** global name, name, ... */
+global_stmt
+    : GLOBAL ID (COMMA ID)*
+    ;
+
+/** nonlocal name, name, ... */
+nonlocal_stmt
+    : NONLOCAL ID (COMMA ID)*
+    ;
+
+/** assert expr [, expr] */
+assert_stmt
+    : ASSERT expr (COMMA expr)?
+    ;
+
 compound_stmt
     : decorated_func_def
     | decorated_class_def
@@ -146,6 +189,7 @@ compound_stmt
     | while_stmt
     | for_stmt
     | try_stmt
+    | with_stmt
     | func_def
     | class_def
     ;
@@ -188,6 +232,11 @@ except_clause
     : EXCEPT (expr (AS ID)?)? COLON suite
     ;
 
+/** with expr [as id]: suite */
+with_stmt
+    : WITH expr (AS ID)? COLON suite
+    ;
+
 /** def name(params): suite */
 func_def
     : DEF ID LPAREN param_list? RPAREN COLON suite
@@ -198,47 +247,79 @@ class_def
     : CLASS ID (LPAREN arg_list RPAREN)? COLON suite
     ;
 
-/** Parameter list – comma‑separated identifiers. */
+/**
+ * Parameter list for function definitions.
+ * Supports: positional, default (x=val), *args, **kwargs.
+ * Order enforced at compile-time: positional → defaults → *args → **kwargs.
+ */
 param_list
-    : ID (COMMA ID)*
+    : param_item (COMMA param_item)* COMMA?
     ;
 
-/** Argument list – comma‑separated expressions. */
+param_item
+    : POWER ID       # KwargsParam
+    | MUL ID         # ArgsParam
+    | ID ASSIGN expr # DefaultParam
+    | ID             # SimpleParam
+    ;
+
+/**
+ * Argument list for function calls.
+ * Supports: positional, keyword (name=val), *splat, **splatKw.
+ */
 arg_list
-    : expr (COMMA expr)* COMMA?
+    : arg_item (COMMA arg_item)* COMMA?
+    ;
+
+arg_item
+    : POWER expr      # SplatKwArg
+    | MUL expr        # SplatArg
+    | ID ASSIGN expr  # KeywordArg
+    | expr            # PositionalArg
     ;
 
 /**
  * Expression grammar with precedence.
+ *
+ * Comprehension forms are added as alternatives inside the collection literals.
+ * Lambda is added as a low-precedence alternative.
  */
 expr
-    : expr LBRACK slice_item RBRACK                   # Subscript
-    | expr DOT ID LPAREN arg_list? RPAREN             # AttrCall
-    | expr DOT ID                                     # AttrAccess
-    | <assoc=right> expr POWER expr                   # Power
-    | SUB expr                                        # UnaryMinus
-    | NOT expr                                        # NotExpr
-    | expr op=('*' | '/' | FLOORDIV | '%') expr       # MulDivMod
-    | expr op=('+' | '-') expr                        # AddSub
-    | expr op=(EQ | NEQ | LTE | GTE | LT | GT) expr   # Comparison
-    | expr NOT IN expr                                # NotInExpr
-    | expr IN expr                                    # InExpr
-    | expr IS NOT expr                                # IsNotExpr
-    | expr IS expr                                    # IsExpr
-    | expr AND expr                                   # AndExpr
-    | expr OR expr                                    # OrExpr
-    | ID LPAREN arg_list? RPAREN                      # FuncCall
-    | LPAREN expr RPAREN                              # Paren
-    | LPAREN expr_list? RPAREN                        # TupleLiteral
-    | LBRACK expr_list? RBRACK                        # ListLiteral
-    | LBRACE dict_entries? RBRACE                     # DictLiteral
-    | FLOAT                                           # Float
-    | INT                                             # Int
-    | STRING                                          # Str
-    | TRUE                                            # TrueLit
-    | FALSE                                           # FalseLit
-    | NONE                                            # NoneLit
-    | ID                                              # Id
+    : expr LBRACK slice_item RBRACK                        # Subscript
+    | expr DOT ID LPAREN arg_list? RPAREN                  # AttrCall
+    | expr DOT ID                                          # AttrAccess
+    | <assoc=right> expr POWER expr                        # Power
+    | SUB expr                                             # UnaryMinus
+    | ADD expr                                             # UnaryPlus
+    | NOT expr                                             # NotExpr
+    | expr op=('*' | '/' | FLOORDIV | '%') expr            # MulDivMod
+    | expr op=('+' | '-') expr                             # AddSub
+    | expr op=(EQ | NEQ | LTE | GTE | LT | GT) expr        # Comparison
+    | expr NOT IN expr                                     # NotInExpr
+    | expr IN expr                                         # InExpr
+    | expr IS NOT expr                                     # IsNotExpr
+    | expr IS expr                                         # IsExpr
+    | expr AND expr                                        # AndExpr
+    | expr OR expr                                         # OrExpr
+    | expr IF expr ELSE expr                               # TernaryExpr
+    | LAMBDA param_list? COLON expr                        # LambdaExpr
+    | ID LPAREN arg_list? RPAREN                           # FuncCall
+    | LPAREN expr RPAREN                                   # Paren
+    | LPAREN expr_list? RPAREN                             # TupleLiteral
+    | LBRACK expr FOR ID IN expr (IF expr)? RBRACK         # ListComp
+    | LBRACK expr_list? RBRACK                             # ListLiteral
+    | LBRACE expr COLON expr FOR ID IN expr (IF expr)? RBRACE  # DictComp
+    | LBRACE expr FOR ID IN expr (IF expr)? RBRACE         # SetComp
+    | LBRACE dict_entries? RBRACE                          # DictLiteral
+    | LBRACE expr_list RBRACE                              # SetLiteral
+    | FLOAT                                                # Float
+    | INT                                                  # Int
+    | FSTRING                                              # FStr
+    | STRING                                               # Str
+    | TRUE                                                 # TrueLit
+    | FALSE                                                # FalseLit
+    | NONE                                                 # NoneLit
+    | ID                                                   # Id
     ;
 
 /** subscript or slice index, e.g. i or a:b or a:b:c or :b or a: or ::-1 */
@@ -298,6 +379,11 @@ NOT      : 'not';
 TRUE     : 'True';
 FALSE    : 'False';
 NONE     : 'None';
+WITH     : 'with';
+GLOBAL   : 'global';
+NONLOCAL : 'nonlocal';
+ASSERT   : 'assert';
+LAMBDA   : 'lambda';
 
 // Multi-character operators
 PLUS_ASSIGN     : '+=';
@@ -334,11 +420,23 @@ DIV    : '/';
 ADD    : '+';
 SUB    : '-';
 MOD    : '%';
+AT     : '@';
 
-// Literals
+// Literals — FSTRING must come before STRING so the lexer picks the right rule
 ID     : [a-zA-Z_][a-zA-Z0-9_]*;
 FLOAT  : [0-9]+ '.' [0-9]* | '.' [0-9]+;
 INT    : [0-9]+;
+
+/**
+ * f-strings: f'...' / f"..." (single or double quote, single-line only).
+ * Triple-quoted f-strings are intentionally left for a future sprint.
+ * The raw token text is processed at compile time.
+ */
+FSTRING
+    : [fF] '\'' ( ~['\\\r\n] | '\\' . )* '\''
+    | [fF] '"'  ( ~["\\\r\n] | '\\' . )* '"'
+    ;
+
 STRING
     : '\'' (~['\\] | '\\' .)* '\''
     | '"'  (~["\\] | '\\' .)* '"'

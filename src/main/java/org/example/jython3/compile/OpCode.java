@@ -27,7 +27,30 @@ public enum OpCode {
     END_EXCEPT_HANDLER(56),   // restores the previously active exception
     DELETE_NAME_SILENT(57),   // deletes name if present, does not throw NameError if absent
     BUILD_SLICE(58),          // raw arg: 2 (start, stop) or 3 (start, stop, step)
-    BUILD_TUPLE(59);          // raw arg: element count on stack
+    BUILD_TUPLE(59),          // raw arg: element count on stack
+    // ── arg: (nPos << 16) | nKw; stack: callable, pos0..posN-1, kw0..kwN-1, kwNames-tuple
+    CALL_FUNCTION_KW(60),
+    // ── arg: (nDefaults << 2) | flags; flags: bit0=hasArgs, bit1=hasKwargs
+    // stack before MAKE_FUNCTION: PyFunction prototype, then nDefaults default values
+    MAKE_FUNCTION_DEFAULTS(61),
+    // ── Comprehensions (compiled as inline loop + accumulator)
+    LIST_COMP_INIT(62),     // push fresh list onto stack for comprehension accumulation
+    LIST_COMP_APPEND(63),   // pop value, append to list at stack[top-1]
+    SET_COMP_INIT(64),      // push fresh set
+    SET_COMP_ADD(65),       // pop value, add to set at stack[top-1]
+    BUILD_SET(66),          // raw arg: element count — build a set from N stack items
+    // ── global / nonlocal
+    LOAD_GLOBAL_NAME(67),   // load from globals scope; NameError if absent
+    STORE_GLOBAL_NAME(68),  // store into globals scope
+    // ── with statement
+    SETUP_WITH(69),         // arg: pool index of __exit__ attribute name ("__exit__")
+                            // stack: context_manager → pushes (exit_fn, value_from___enter__)
+    END_WITH(70),           // calls exit_fn(None, None, None); cleans stack entry
+    WITH_EXCEPT_EXIT(71),   // calls exit_fn(type, value, tb); pushes bool result
+    // ── sequence unpacking
+    UNPACK_SEQUENCE(72),    // raw arg: count — pops one iterable, pushes count items
+    // ── assert
+    ASSERT(73);             // raw arg: 0=no message, 1=has message; pops cond [+ msg]
 
     private final int code;
 

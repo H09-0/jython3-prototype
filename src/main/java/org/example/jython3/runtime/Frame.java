@@ -2,6 +2,7 @@ package org.example.jython3.runtime;
 
 import java.util.Deque;
 import java.util.Map;
+import java.util.Set;
 
 import org.example.jython3.compile.CompiledCode;
 
@@ -11,18 +12,34 @@ import org.example.jython3.compile.CompiledCode;
  * {@code activeExceptions} is the caller's active-exception stack; a callee
  * starts with an empty one, so a bare {@code raise} never sees the caller's
  * handler state.
+ * {@code globalCells} records names declared {@code global} in this frame.
  */
 public record Frame(CompiledCode code, int returnPc,
                     Map<String, PyObject> locals, Deque<PyObject> stack,
                     Deque<ExceptHandler> exceptHandlers,
                     Deque<PyObject> activeExceptions,
                     String funcName, String file, int line,
-                    Map<String, PyObject> globals) {
+                    Map<String, PyObject> globals,
+                    Set<String> globalCells) {
+
+    /** Convenience constructor without globalCells (null = no global declarations). */
     public Frame(CompiledCode code, int returnPc,
                  Map<String, PyObject> locals, Deque<PyObject> stack,
                  Deque<ExceptHandler> exceptHandlers,
                  Deque<PyObject> activeExceptions,
                  String funcName, String file, int line) {
-        this(code, returnPc, locals, stack, exceptHandlers, activeExceptions, funcName, file, line, null);
+        this(code, returnPc, locals, stack, exceptHandlers, activeExceptions,
+             funcName, file, line, null, null);
+    }
+
+    /** Constructor with globals but without globalCells. */
+    public Frame(CompiledCode code, int returnPc,
+                 Map<String, PyObject> locals, Deque<PyObject> stack,
+                 Deque<ExceptHandler> exceptHandlers,
+                 Deque<PyObject> activeExceptions,
+                 String funcName, String file, int line,
+                 Map<String, PyObject> globals) {
+        this(code, returnPc, locals, stack, exceptHandlers, activeExceptions,
+             funcName, file, line, globals, null);
     }
 }

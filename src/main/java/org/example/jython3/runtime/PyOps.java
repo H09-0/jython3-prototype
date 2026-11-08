@@ -141,6 +141,7 @@ public final class PyOps {
             case PyBoundMethod bm -> true;
             case PyList l -> !l.items().isEmpty();
             case PyTuple t -> !t.items().isEmpty();
+            case PySet s -> !s.items().isEmpty();
             case PyDict d -> !d.map().isEmpty();
             case PyIterator it -> true;
             case PyFloat f -> f.value() != 0.0;
@@ -252,6 +253,10 @@ public final class PyOps {
             for (var el : tuple.items()) if (pyEquals(el, item)) return true;
             return false;
         }
+        if (container instanceof PySet set) {
+            for (var el : set.items()) if (pyEquals(el, item)) return true;
+            return false;
+        }
         if (container instanceof PyStr s && item instanceof PyStr sub) return s.value().contains(sub.value());
         if (container instanceof PyDict dict) return dict.map().containsKey(item);
         throw PyErrors.error("TypeError", "argument of type '" + typeName(container) + "' is not iterable");
@@ -267,6 +272,7 @@ public final class PyOps {
             case PyNull n -> "NoneType";
             case PyList l -> "list";
             case PyTuple t -> "tuple";
+            case PySet s -> "set";
             case PyDict d -> "dict";
             case PyFunction f -> "function";
             case PyClass c -> "type";

@@ -3034,4 +3034,278 @@ class Jython3InterpreterTest {
             ZeroDivisionError: division by zero""";
         assertEquals(expected, err());
     }
+
+    // ── Sprint A1+A2: default args, keyword args, *args, **kwargs ──────────
+
+    @Test void testDefaultArguments() {
+        py.exec("""
+            def greet(name, greeting="Hello"):
+                return greeting + ", " + name + "!"
+
+            r1 = greet("World")
+            r2 = greet("Alice", "Hi")
+            r3 = greet("Bob", greeting="Hey")
+            """);
+        assertEquals("", err());
+        assertEquals("Hello, World!", py.getGlobal("r1").toString());
+        assertEquals("Hi, Alice!", py.getGlobal("r2").toString());
+        assertEquals("Hey, Bob!", py.getGlobal("r3").toString());
+    }
+
+    @Test void testMultipleDefaultArguments() {
+        py.exec("""
+            def connect(host="localhost", port=8080, timeout=30):
+                return str(host) + ":" + str(port) + " t=" + str(timeout)
+
+            r1 = connect()
+            r2 = connect("example.com")
+            r3 = connect("example.com", 443)
+            r4 = connect(port=9000)
+            r5 = connect(timeout=60, host="server.io")
+            """);
+        assertEquals("", err());
+        assertEquals("localhost:8080 t=30", py.getGlobal("r1").toString());
+        assertEquals("example.com:8080 t=30", py.getGlobal("r2").toString());
+        assertEquals("example.com:443 t=30", py.getGlobal("r3").toString());
+        assertEquals("localhost:9000 t=30", py.getGlobal("r4").toString());
+        assertEquals("server.io:8080 t=60", py.getGlobal("r5").toString());
+    }
+
+    @Test void testVarArgs() {
+        py.exec("""
+            def total(*nums):
+                s = 0
+                for n in nums:
+                    s += n
+                return s
+
+            r0 = total()
+            r3 = total(1, 2, 3)
+            r5 = total(10, 20, 30, 40, 50)
+            """);
+        assertEquals("", err());
+        assertEquals("0", py.getGlobal("r0").toString());
+        assertEquals("6", py.getGlobal("r3").toString());
+        assertEquals("150", py.getGlobal("r5").toString());
+    }
+
+    @Test void testKwargsDict() {
+        py.exec("""
+            def describe(**info):
+                keys = sorted(info.keys())
+                parts = []
+                for k in keys:
+                    parts.append(k + "=" + str(info[k]))
+                return ",".join(parts)
+
+            r = describe(age=30, name="Alice", score=99)
+            """);
+        assertEquals("", err());
+        assertEquals("age=30,name=Alice,score=99", py.getGlobal("r").toString());
+    }
+
+    @Test void testMixedSignature() {
+        py.exec("""
+            def mixed(a, b=10, *args, **kwargs):
+                return [a, b, list(args), sorted(kwargs.keys())]
+
+            r1 = mixed(1)
+            r2 = mixed(1, 2)
+            r3 = mixed(1, 2, 3, 4)
+            r4 = mixed(1, x=99, y=88)
+            """);
+        assertEquals("", err());
+        assertEquals("[1, 10, [], []]", py.getGlobal("r1").toString());
+        assertEquals("[1, 2, [], []]", py.getGlobal("r2").toString());
+        assertEquals("[1, 2, [3, 4], []]", py.getGlobal("r3").toString());
+        assertEquals("[1, 10, [], ['x', 'y']]", py.getGlobal("r4").toString());
+    }
+
+    @Test void testKeywordArgTypeErrors() {
+        // Missing required argument
+        InterpreterException e1 = assertThrows(InterpreterException.class,
+                () -> py.eval("def f(a, b): return a+b\nf(1)"));
+        assertEquals("TypeError", e1.typeName());
+
+        // Unexpected keyword
+        InterpreterException e2 = assertThrows(InterpreterException.class,
+                () -> py.eval("def g(a): return a\ng(a=1, z=99)"));
+        assertEquals("TypeError", e2.typeName());
+
+        // Duplicate argument
+        InterpreterException e3 = assertThrows(InterpreterException.class,
+                () -> py.eval("def h(a): return a\nh(1, a=99)"));
+        assertEquals("TypeError", e3.typeName());
+
+        // Too many positional arguments
+        InterpreterException e4 = assertThrows(InterpreterException.class,
+                () -> py.eval("def k(a): return a\nk(1, 2)"));
+        assertEquals("TypeError", e4.typeName());
+    }
+
+    @Test void testDefaultsEvaluatedAtDefinitionTime() {
+        // CPython evaluates default values once at definition time, not per-call.
+        py.exec("""
+            x = 10
+            def f(a=x):
+                return a
+            x = 99
+            r = f()
+            """);
+        assertEquals("", err());
+        // Default was captured when def executed (x=10), not when f() called (x=99)
+        assertEquals("10", py.getGlobal("r").toString());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Sprint A — Modern Core Python Syntax Conformance
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test void testListComprehensionWithAndWithoutFilter() {
+        py.exec("""
+            squares = [x * x for x in range(6)]
+            evens   = [x for x in range(10) if x % 2 == 0]
+            """);
+        assertEquals("", err());
+        assertEquals("[0, 1, 4, 9, 16, 25]", py.getGlobal("squares").toString());
+        assertEquals("[0, 2, 4, 6, 8]", py.getGlobal("evens").toString());
+    }
+
+    @Test void testDictComprehension() {
+        py.exec("""
+            d = {k: k * 2 for k in range(4)}
+            d_filtered = {k: k * 2 for k in range(6) if k % 2 == 1}
+            """);
+        assertEquals("", err());
+        assertEquals("{0: 0, 1: 2, 2: 4, 3: 6}", py.getGlobal("d").toString());
+        assertEquals("{1: 2, 3: 6, 5: 10}", py.getGlobal("d_filtered").toString());
+    }
+
+    @Test void testSetComprehensionAndSetLiteral() {
+        py.exec("""
+            s1 = {x % 3 for x in range(6)}
+            s2 = {10, 20, 30}
+            """);
+        assertEquals("", err());
+        assertEquals("{0, 1, 2}", py.getGlobal("s1").toString());
+        assertEquals("{10, 20, 30}", py.getGlobal("s2").toString());
+    }
+
+    @Test void testLambdaExpressions() {
+        py.exec("""
+            f = lambda x: x * 3
+            res1 = f(4)
+            add = lambda a, b=10: a + b
+            res2 = add(5)
+            res3 = add(5, 20)
+            """);
+        assertEquals("", err());
+        assertEquals("12", py.getGlobal("res1").toString());
+        assertEquals("15", py.getGlobal("res2").toString());
+        assertEquals("25", py.getGlobal("res3").toString());
+    }
+
+    @Test void testGlobalStatementAcrossFrames() {
+        py.exec("""
+            counter = 0
+            def increment():
+                global counter
+                counter += 1
+            def set_val(n):
+                global counter
+                counter = n
+            increment()
+            increment()
+            v1 = counter
+            set_val(100)
+            v2 = counter
+            """);
+        assertEquals("", err());
+        assertEquals("2", py.getGlobal("v1").toString());
+        assertEquals("100", py.getGlobal("v2").toString());
+    }
+
+    @Test void testTupleUnpackingAssignment() {
+        py.exec("""
+            a, b = 1, 2
+            x, y, z = (10, 20, 30)
+            p, q = [100, 200]
+            """);
+        assertEquals("", err());
+        assertEquals("1", py.getGlobal("a").toString());
+        assertEquals("2", py.getGlobal("b").toString());
+        assertEquals("10", py.getGlobal("x").toString());
+        assertEquals("20", py.getGlobal("y").toString());
+        assertEquals("30", py.getGlobal("z").toString());
+        assertEquals("100", py.getGlobal("p").toString());
+        assertEquals("200", py.getGlobal("q").toString());
+    }
+
+    @Test void testFStringInterpolation() {
+        py.exec("""
+            name = "World"
+            num = 42
+            s1 = f"Hello, {name}!"
+            s2 = f"Answer is {num + 1}."
+            s3 = f"{1+1} plus {2*2} is {2+4}"
+            """);
+        assertEquals("", err());
+        assertEquals("Hello, World!", py.getGlobal("s1").toString());
+        assertEquals("Answer is 43.", py.getGlobal("s2").toString());
+        assertEquals("2 plus 4 is 6", py.getGlobal("s3").toString());
+    }
+
+    @Test void testAssertStatement() {
+        py.exec("assert True\nassert 1 == 1\nassert 2 + 2 == 4, 'ok'");
+        assertEquals("", err());
+
+        InterpreterException ie1 = assertThrows(InterpreterException.class,
+                () -> py.eval("assert False"));
+        assertEquals("AssertionError", ie1.typeName());
+        assertEquals("", ((PyException) ie1.value()).message());
+
+        InterpreterException ie2 = assertThrows(InterpreterException.class,
+                () -> py.eval("assert 1 == 2, 'condition failed'"));
+        assertEquals("AssertionError", ie2.typeName());
+        assertEquals("condition failed", ((PyException) ie2.value()).message());
+    }
+
+    @Test void testWithStatementNormalAndExceptional() {
+        py.exec("""
+            events = []
+            class Resource:
+                def __init__(self, name, suppress=False):
+                    self.name = name
+                    self.suppress = suppress
+                def __enter__(self):
+                    events.append("enter:" + self.name)
+                    return self
+                def __exit__(self, exc_type, exc_val, tb):
+                    events.append("exit:" + self.name)
+                    return self.suppress
+
+            with Resource("A") as r:
+                events.append("body:" + r.name)
+
+            # Suppressed exception
+            with Resource("B", suppress=True) as r2:
+                raise ValueError("inside B")
+            events.append("after B")
+            """);
+        assertEquals("", err());
+        assertEquals("['enter:A', 'body:A', 'exit:A', 'enter:B', 'exit:B', 'after B']",
+                     py.getGlobal("events").toString());
+    }
+
+    @Test void testTernaryExpressionAndUnaryPlus() {
+        py.exec("""
+            x = 10 if True else 20
+            y = 10 if False else 20
+            p = +42
+            """);
+        assertEquals("", err());
+        assertEquals("10", py.getGlobal("x").toString());
+        assertEquals("20", py.getGlobal("y").toString());
+        assertEquals("42", py.getGlobal("p").toString());
+    }
 }
