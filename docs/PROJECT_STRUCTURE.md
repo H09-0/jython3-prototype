@@ -27,19 +27,19 @@ jython3-prototype/
     │   ├── antlr/org/example/jython3/
     │   │   └── Jython3.g4          # ANTLR4 grammar for Python 3 syntax (expressions, statements, OOP)
     │   └── java/org/example/jython3/
-│       ├── Jython3Interpreter.java # Main interpreter entry point, cache manager & stack VM loop
-│       ├── benchmark/          # Reproducible performance benchmarking
-│       │   └── BenchmarkSuite.java # Performance suite & CLI runner across core workloads
-│       ├── bridge/             # Bidirectional Java <-> Python interoperability
-    │       │   └── JavaBridge.java # Reflection dispatcher, argument converter, overload resolver
-    │       ├── cli/                # Command-line interfaces
-    │       │   ├── Repl.java       # Interactive Python REPL with block & delimiter awareness
-    │       │   └── RunScript.java  # CLI launcher executing script files or inline code (-c)
-    │       ├── compile/            # AST compilation into stack bytecode
+    │       ├── Jython3Interpreter.java # Main interpreter entry point, cache manager & stack VM loop
+    │       ├── benchmark/              # Reproducible performance benchmarking
+    │       │   └── BenchmarkSuite.java # Performance suite & CLI runner across core workloads
+    │       ├── bridge/                 # Bidirectional Java <-> Python interoperability
+    │       │   └── JavaBridge.java     # Reflection dispatcher, argument converter, overload resolver
+    │       ├── cli/                    # Command-line interfaces
+    │       │   ├── Repl.java           # Interactive Python REPL with block & delimiter awareness
+    │       │   └── RunScript.java      # CLI launcher executing script files or inline code (-c)
+    │       ├── compile/                # AST compilation into stack bytecode
     │       │   ├── CodeBuilder.java    # Bytecode instruction emitter and branch patcher
     │       │   ├── CompiledCode.java   # Immutable CompiledCode record (int[] bytecode, Object[] constPool)
     │       │   ├── CompileVisitor.java # ANTLR Visitor generating 32-bit encoded instructions
-    │       │   ├── OpCode.java         # 58 stable bytecode operations
+    │       │   ├── OpCode.java         # 77 stable bytecode operations
     │       │   └── StringEscapes.java  # Python string escape sequence unescaper
     │       ├── parse/              # Lexical stream preprocessors
     │       │   └── PythonIndentStream.java # Converts indentation/dedentation into synthetic INDENT/DEDENT tokens

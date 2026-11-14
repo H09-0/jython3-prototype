@@ -136,7 +136,7 @@ through the `jython3` CLI and CPython 3.12.3, comparing outputs with `diff`.
 
 ### 🟡 Not Yet Implemented (Planned for Phase III)
 
-`lambda` · list comprehensions · f-strings · default arguments · tuple unpacking · `global`/`nonlocal` · chained assignment
+`lambda` · list comprehensions · f-strings · default arguments · tuple unpacking · chained assignment
 
 > 📄 **[Full Report with Root-Cause Analysis →](docs/FIELD_TEST_REPORT.md)**
 

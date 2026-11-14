@@ -43,6 +43,7 @@ import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBoundMethod;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyCaller;
+import org.example.jython3.runtime.PyCell;
 import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyCompiledCodeWrapper;
 import org.example.jython3.runtime.PyDict;
@@ -197,6 +198,7 @@ public class Jython3Interpreter {
     /** Source location of the instruction being executed, for tracebacks. */
     private String currentFile = "<stdin>";
     private String currentFunc = "<module>";
+    private PyFunction currentFunction = null;
     private int currentLine = 0;
     /** Source text of the current script, used to quote lines in a traceback. */
     private String currentSource = "";
@@ -451,6 +453,7 @@ public class Jython3Interpreter {
             currentContext = new ExecutionContext(executionLimits);
             currentFile = filename;
             currentFunc = "<module>";
+            currentFunction = null;
             currentLine = 0;
             currentSource = source;
             execCount++;
@@ -472,6 +475,65 @@ public class Jython3Interpreter {
     }
 
     /**
+     * Executes precompiled bytecode directly without re-lexing, parsing, or compiling.
+     */
+    public void evalCode(CompiledCode code) {
+        evalCode(code, "<compiled>");
+    }
+
+    /**
+     * Executes precompiled bytecode directly, attributing traceback frames to {@code filename}.
+     */
+    public void evalCode(CompiledCode code, String filename) {
+        ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
+        try {
+            stack = new ArrayDeque<>();
+            currentGlobals = globals;
+            currentLocals = globals;
+            exceptStack = new ArrayDeque<>();
+            activeExceptions = new ArrayDeque<>();
+            callStack.clear();
+            yieldCollector = null;
+            currentContext = new ExecutionContext(executionLimits);
+            currentFile = filename;
+            currentFunc = "<module>";
+            currentFunction = null;
+            currentLine = 0;
+            currentSource = "";
+            execCount++;
+
+            long execStart = profilingEnabled ? System.nanoTime() : 0;
+            run(code);
+            if (profilingEnabled) {
+                executionTime += System.nanoTime() - execStart;
+            }
+        } finally {
+            ExceptionTypeRegistry.restore(previousTypes);
+        }
+    }
+
+    /**
+     * Resets execution state (globals, locals, stacks, frames) between benchmark or interactive runs
+     * without reconstructing the interpreter or re-registering policies.
+     */
+    public void resetExecutionState() {
+        globals.clear();
+        registerBuiltins();
+        currentGlobals = globals;
+        currentLocals = globals;
+        if (stack != null) stack.clear();
+        callStack.clear();
+        exceptStack.clear();
+        activeExceptions.clear();
+        yieldCollector = null;
+        globalCells = null;
+        currentFunc = "<module>";
+        currentFunction = null;
+        currentFile = "<stdin>";
+        currentLine = 0;
+    }
+
+    /**
      * Executes {@code code} within an isolated VM state (fresh stack, callStack, exceptStack)
      * using the specified {@code executionLocals}, ensuring the caller's frames and operand stacks
      * are perfectly preserved and restored upon completion or exception.
@@ -485,6 +547,7 @@ public class Jython3Interpreter {
         var savedCallStack = new ArrayDeque<>(callStack);
         var savedCollector = yieldCollector;
         var savedFunc = currentFunc;
+        var savedFunction = currentFunction;
         var savedFile = currentFile;
         var savedLine = currentLine;
         try {
@@ -496,6 +559,7 @@ public class Jython3Interpreter {
             callStack.clear();
             yieldCollector = null;
             currentFunc = "<module>";
+            currentFunction = null;
             currentFile = filename != null ? filename : "<module>";
             currentLine = 0;
             run(code);
@@ -509,6 +573,7 @@ public class Jython3Interpreter {
             callStack.addAll(savedCallStack);
             yieldCollector = savedCollector;
             currentFunc = savedFunc;
+            currentFunction = savedFunction;
             currentFile = savedFile;
             currentLine = savedLine;
         }
@@ -532,6 +597,7 @@ public class Jython3Interpreter {
         var savedActive = activeExceptions;
         var savedCollector = yieldCollector;
         var savedFunc = currentFunc;
+        var savedFunction = currentFunction;
         var savedLine = currentLine;
         try {
             callStack.clear();
@@ -540,6 +606,7 @@ public class Jython3Interpreter {
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             currentFunc = fn.name();
+            currentFunction = fn;
             yieldCollector = collected;
             run(fn.code());
         } finally {
@@ -551,6 +618,7 @@ public class Jython3Interpreter {
             exceptStack = savedExcept;
             activeExceptions = savedActive;
             currentFunc = savedFunc;
+            currentFunction = savedFunction;
             currentLine = savedLine;
         }
         return collected;
@@ -724,7 +792,55 @@ public class Jython3Interpreter {
                             if (globalCells != null) globalCells.add(gName);
                             break; // no stack push — declaration only
                         } else if (s.startsWith("@nonlocal:")) {
-                            break; // nonlocal is handled via closure; skip marker
+                            String nlName = s.substring(10);
+                            if (callStack.isEmpty() || currentLocals == null || currentLocals == globals) {
+                                throw PyErrors.error("SyntaxError", "nonlocal declaration not allowed at module level");
+                            }
+                            PyCell targetCell = null;
+                            for (Frame cf : callStack) {
+                                if (cf.locals() != null && cf.locals() != globals) {
+                                    PyObject existing = cf.locals().get(nlName);
+                                    if (existing instanceof PyCell existingCell) {
+                                        targetCell = existingCell;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (targetCell == null) {
+                                for (Frame cf : callStack) {
+                                    if (cf.locals() != null && cf.locals() != globals) {
+                                        PyObject existing = cf.locals().get(nlName);
+                                        if (existing != null) {
+                                            targetCell = new PyCell(existing);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (targetCell == null) {
+                                PyObject existing = currentLocals.get(nlName);
+                                if (existing != null) {
+                                    targetCell = (existing instanceof PyCell existingCell) ? existingCell : new PyCell(existing);
+                                }
+                            }
+                            if (targetCell == null) {
+                                throw PyErrors.error("SyntaxError", "no binding for nonlocal '" + nlName + "' found");
+                            }
+                            for (Frame cf : callStack) {
+                                if (cf.locals() != null && cf.locals() != globals) {
+                                    if (cf.locals().containsKey(nlName)) {
+                                        cf.locals().put(nlName, targetCell);
+                                    }
+                                    if (cf.function() != null && cf.function().closure() != null && cf.function().closure().containsKey(nlName)) {
+                                        cf.function().closure().put(nlName, targetCell);
+                                    }
+                                }
+                            }
+                            currentLocals.put(nlName, targetCell);
+                            if (currentFunction != null && currentFunction.closure() != null) {
+                                currentFunction.closure().put(nlName, targetCell);
+                            }
+                            break; // no stack push — declaration only
                         }
                         stack.push(new PyStr(s));
                     }
@@ -748,6 +864,12 @@ public class Jython3Interpreter {
                     }
                     if (v == null) v = currentGlobals.get(n);
                     if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
+                    if (v instanceof org.example.jython3.runtime.PyCell cell) {
+                        if (!cell.isBound()) {
+                            throw PyErrors.error("UnboundLocalError", "cannot access local variable '" + n + "' where it is not associated with a value");
+                        }
+                        v = cell.get();
+                    }
                     stack.push(v);
                 }
                 case LOAD_GLOBAL -> {
@@ -764,7 +886,12 @@ public class Jython3Interpreter {
                         globals.put(storeName, storeVal);
                         currentGlobals.put(storeName, storeVal);
                     } else if (currentLocals != null) {
-                        currentLocals.put(storeName, storeVal);
+                        PyObject existing = currentLocals.get(storeName);
+                        if (existing instanceof org.example.jython3.runtime.PyCell cell) {
+                            cell.set(storeVal);
+                        } else {
+                            currentLocals.put(storeName, storeVal);
+                        }
                     } else {
                         globals.put(storeName, storeVal);
                     }
@@ -805,7 +932,10 @@ public class Jython3Interpreter {
                 }
                 case DELETE_FAST -> {
                     String n = (String) pool[ai];
-                    if (currentLocals.remove(n) == null && globals.remove(n) == null) {
+                    if (currentLocals != null && currentLocals.get(n) instanceof org.example.jython3.runtime.PyCell cell) {
+                        if (!cell.isBound()) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
+                        cell.set(null);
+                    } else if ((currentLocals == null || currentLocals.remove(n) == null) && globals.remove(n) == null) {
                         throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     }
                 }
@@ -1156,13 +1286,14 @@ public class Jython3Interpreter {
                             throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                         }
                         callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells));
+                                activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                         globalCells = null; // new frame starts with no global declarations
                         currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
                         stack = new ArrayDeque<>();
                         exceptStack = new ArrayDeque<>();
                         activeExceptions = new ArrayDeque<>();
                         currentFunc = fn.name();
+                        currentFunction = fn;
                         code = fn.code();
                         bc = code.bytecode();
                         pool = code.constPool();
@@ -1212,13 +1343,14 @@ public class Jython3Interpreter {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells));
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                             globalCells = null; // new frame starts with no global declarations
                             currentLocals = bindArgs(fn, args, null, null);
                             stack = new ArrayDeque<>();
                             exceptStack = new ArrayDeque<>();
                             activeExceptions = new ArrayDeque<>();
                             currentFunc = fn.name();
+                            currentFunction = fn;
                             code = fn.code();
                             bc = code.bytecode();
                             pool = code.constPool();
@@ -1255,6 +1387,7 @@ public class Jython3Interpreter {
                         exceptStack = cf.exceptHandlers();
                         activeExceptions = cf.activeExceptions();
                         currentFunc = cf.funcName();
+                        currentFunction = cf.function();
                         currentFile = cf.file();
                         currentLine = cf.line();
                         stack.push(rv);
@@ -1275,6 +1408,10 @@ public class Jython3Interpreter {
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
                     activeExceptions = cf.activeExceptions();
+                    currentFunc = cf.funcName();
+                    currentFunction = cf.function();
+                    currentFile = cf.file();
+                    currentLine = cf.line();
                     stack.push(rv);
                     continue outer;
                 }
@@ -1696,6 +1833,7 @@ public class Jython3Interpreter {
                     exceptStack = cf.exceptHandlers();
                     activeExceptions = cf.activeExceptions();
                     currentFunc = cf.funcName();
+                    currentFunction = cf.function();
                     currentFile = cf.file();
                     currentLine = cf.line();
                     if (!exceptStack.isEmpty()) {
@@ -2108,6 +2246,7 @@ public class Jython3Interpreter {
             var savedExcept = exceptStack;
             var savedActive = activeExceptions;
             var savedFunc = currentFunc;
+            var savedFunction = currentFunction;
             var savedLine = currentLine;
 
             currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
@@ -2115,6 +2254,7 @@ public class Jython3Interpreter {
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             currentFunc = fn.name();
+            currentFunction = fn;
             run(fn.code());
             PyObject result = stack.isEmpty() ? new PyNull() : stack.pop();
 
@@ -2123,6 +2263,7 @@ public class Jython3Interpreter {
             exceptStack = savedExcept;
             activeExceptions = savedActive;
             currentFunc = savedFunc;
+            currentFunction = savedFunction;
             currentLine = savedLine;
             return result;
         }

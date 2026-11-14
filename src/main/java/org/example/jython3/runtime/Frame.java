@@ -20,7 +20,20 @@ public record Frame(CompiledCode code, int returnPc,
                     Deque<PyObject> activeExceptions,
                     String funcName, String file, int line,
                     Map<String, PyObject> globals,
-                    Set<String> globalCells) {
+                    Set<String> globalCells,
+                    PyFunction function) {
+
+    /** Constructor with globals and globalCells but without function. */
+    public Frame(CompiledCode code, int returnPc,
+                 Map<String, PyObject> locals, Deque<PyObject> stack,
+                 Deque<ExceptHandler> exceptHandlers,
+                 Deque<PyObject> activeExceptions,
+                 String funcName, String file, int line,
+                 Map<String, PyObject> globals,
+                 Set<String> globalCells) {
+        this(code, returnPc, locals, stack, exceptHandlers, activeExceptions,
+             funcName, file, line, globals, globalCells, null);
+    }
 
     /** Convenience constructor without globalCells (null = no global declarations). */
     public Frame(CompiledCode code, int returnPc,
@@ -29,7 +42,7 @@ public record Frame(CompiledCode code, int returnPc,
                  Deque<PyObject> activeExceptions,
                  String funcName, String file, int line) {
         this(code, returnPc, locals, stack, exceptHandlers, activeExceptions,
-             funcName, file, line, null, null);
+             funcName, file, line, null, null, null);
     }
 
     /** Constructor with globals but without globalCells. */
@@ -40,6 +53,6 @@ public record Frame(CompiledCode code, int returnPc,
                  String funcName, String file, int line,
                  Map<String, PyObject> globals) {
         this(code, returnPc, locals, stack, exceptHandlers, activeExceptions,
-             funcName, file, line, globals, null);
+             funcName, file, line, globals, null, null);
     }
 }

@@ -134,6 +134,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     // print() is handled as a keyword — routes through the PRINT opcode for now.
     // After Sprint B we'll unify with the builtin `print` function.
     @Override public Void visitPrint_stmt(Jython3Parser.Print_stmtContext c) {
+        boolean hasKeywords = c.arg_list() != null && c.arg_list().arg_item().stream()
+                .anyMatch(it -> it instanceof Jython3Parser.KeywordArgContext);
+        if (hasKeywords) {
+            b.emit(OpCode.LOAD_FAST, "print");
+            emitCall(c.arg_list());
+            b.emit(OpCode.POP_TOP);
+            return null;
+        }
+
         if (c.arg_list() == null || c.arg_list().arg_item().isEmpty()) {
             b.emit(OpCode.LOAD_CONST, "");
             b.emit(OpCode.PRINT);

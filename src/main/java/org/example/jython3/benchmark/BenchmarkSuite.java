@@ -36,6 +36,7 @@ public class BenchmarkSuite {
             String name,
             String description,
             int iterations,
+            double compileMs,
             double meanMs,
             double minMs,
             double maxMs,
@@ -43,8 +44,8 @@ public class BenchmarkSuite {
             long memoryUsedBytes
     ) {
         public String formatRow() {
-            return String.format("%-25s | %8.2f ms | %8.2f ms | %8.2f ms | %8.2f ms | %8.1f MB",
-                    name, meanMs, minMs, maxMs, stdDevMs, memoryUsedBytes / (1024.0 * 1024.0));
+            return String.format("%-22s | %7.2f ms | %7.2f ms | %7.2f ms | %7.2f ms | %7.2f ms | %6.1f MB",
+                    name, compileMs, meanMs, minMs, maxMs, stdDevMs, memoryUsedBytes / (1024.0 * 1024.0));
         }
     }
 
@@ -179,14 +180,17 @@ public class BenchmarkSuite {
     }
 
     public static BenchmarkResult runBenchmark(BenchmarkCase bench, int warmup, int measure) {
-        // Compile once to measure pure execution performance
         Jython3Interpreter interpreter = Jython3Interpreter.trusted();
-        var code = interpreter.compileToCode(bench.pythonCode());
 
-        // Warmup cycles
+        // 1. Measure pure compilation time separately
+        long compStart = System.nanoTime();
+        var code = interpreter.compileToCode(bench.pythonCode());
+        double compileMs = (System.nanoTime() - compStart) / 1_000_000.0;
+
+        // 2. Warmup cycles on the same interpreter using precompiled bytecode
         for (int w = 0; w < warmup; w++) {
-            Jython3Interpreter warmInterp = Jython3Interpreter.trusted();
-            warmInterp.eval(bench.pythonCode(), "<benchmark-warmup>");
+            interpreter.resetExecutionState();
+            interpreter.evalCode(code, "<benchmark-warmup>");
         }
 
         // Force GC before measurements
@@ -196,10 +200,11 @@ public class BenchmarkSuite {
         long memoryBefore = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
         List<Double> durationsMs = new ArrayList<>();
 
+        // 3. Measurement cycles: pure VM execution of precompiled bytecode
         for (int m = 0; m < measure; m++) {
-            Jython3Interpreter runInterp = Jython3Interpreter.trusted();
+            interpreter.resetExecutionState();
             long start = System.nanoTime();
-            runInterp.eval(bench.pythonCode(), "<benchmark>");
+            interpreter.evalCode(code, "<benchmark>");
             long elapsed = System.nanoTime() - start;
             durationsMs.add(elapsed / 1_000_000.0);
         }
@@ -223,7 +228,7 @@ public class BenchmarkSuite {
         }
         double stdDev = Math.sqrt(varSum / durationsMs.size());
 
-        return new BenchmarkResult(bench.name(), bench.description(), measure, mean, min, max, stdDev, memUsed);
+        return new BenchmarkResult(bench.name(), bench.description(), measure, compileMs, mean, min, max, stdDev, memUsed);
     }
 
     public static Map<String, BenchmarkResult> runAll(int warmupOverride, int measureOverride) {
@@ -238,13 +243,13 @@ public class BenchmarkSuite {
     }
 
     public static void printReport(Map<String, BenchmarkResult> results) {
-        String line = "=".repeat(88);
-        String subline = "-".repeat(88);
+        String line = "=".repeat(92);
+        String subline = "-".repeat(92);
         System.out.println(line);
         System.out.println(" JYTHON 3 PERFORMANCE BENCHMARK REPORT");
         System.out.println(line);
-        System.out.printf("%-25s | %11s | %11s | %11s | %11s | %10s%n",
-                "Benchmark", "Mean Time", "Min Time", "Max Time", "Std Dev", "Memory");
+        System.out.printf("%-22s | %10s | %10s | %10s | %10s | %10s | %9s%n",
+                "Benchmark", "Compile", "Mean Exec", "Min Exec", "Max Exec", "Std Dev", "Memory");
         System.out.println(subline);
         for (BenchmarkResult res : results.values()) {
             System.out.println(res.formatRow());

@@ -104,6 +104,10 @@ public final class BuiltinFunctions {
                 else if (endObj instanceof PyNull) end = "None";
                 else end = endObj.toString();
             }
+            PyObject fileObj = kwargs.get("file");
+            PyObject flushObj = kwargs.get("flush");
+            boolean flush = flushObj != null && isTruthy(flushObj);
+
             for (String k : kwargs.keySet()) {
                 if (!k.equals("sep") && !k.equals("end") && !k.equals("file") && !k.equals("flush")) {
                     throw PyErrors.error("TypeError", "print() got an unexpected keyword argument '" + k + "'");
@@ -118,7 +122,40 @@ public final class BuiltinFunctions {
                 else sb.append(o.toString());
             }
             sb.append(end);
-            System.out.print(sb);
+            String output = sb.toString();
+
+            if (fileObj != null && !(fileObj instanceof PyNull)) {
+                PyObject writeMethod = null;
+                try {
+                    if (fileObj instanceof org.example.jython3.runtime.PyInstance inst) {
+                        writeMethod = inst.getField("write");
+                    } else if (fileObj instanceof org.example.jython3.runtime.PyJavaObject jo) {
+                        writeMethod = jo.getMember("write");
+                    }
+                } catch (InterpreterException ignored) {}
+                if (writeMethod == null) {
+                    throw PyErrors.error("AttributeError", "'" + typeName(fileObj) + "' object has no attribute 'write'");
+                }
+                caller.call(writeMethod, new PyObject[]{new PyStr(output)});
+                if (flush) {
+                    PyObject flushMethod = null;
+                    try {
+                        if (fileObj instanceof org.example.jython3.runtime.PyInstance inst) {
+                            flushMethod = inst.getField("flush");
+                        } else if (fileObj instanceof org.example.jython3.runtime.PyJavaObject jo) {
+                            flushMethod = jo.getMember("flush");
+                        }
+                    } catch (InterpreterException ignored) {}
+                    if (flushMethod != null) {
+                        caller.call(flushMethod, new PyObject[0]);
+                    }
+                }
+            } else {
+                System.out.print(output);
+                if (flush) {
+                    System.out.flush();
+                }
+            }
             return new PyNull();
         }));
 
@@ -126,6 +163,9 @@ public final class BuiltinFunctions {
         define.accept("int", new PyBuiltinFunction("int", (args, kwargs) -> {
             if (args.length == 0) return new PyInt(0);
             if (args.length > 2) throw PyErrors.error("TypeError", "int() takes at most 2 arguments (" + args.length + " given)");
+            if (args.length == 2 && kwargs.containsKey("base")) {
+                throw PyErrors.error("TypeError", "int() got multiple values for argument 'base'");
+            }
             int base = 10;
             if (args.length == 2) {
                 base = toInt(args[1]);
