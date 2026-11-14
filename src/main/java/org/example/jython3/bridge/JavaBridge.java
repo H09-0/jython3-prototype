@@ -115,6 +115,7 @@ public class JavaBridge {
         CONSTRUCTOR_CACHE.clear();
         CLASS_INSTANCE_METHODS.clear();
         CLASS_STATIC_METHODS.clear();
+        CONVERTER_CACHE.clear();
     }
 
     public static Class<?>[] extractArgTypes(PyObject[] args) {
@@ -214,9 +215,12 @@ public class JavaBridge {
 
         if (obj instanceof Boolean b) return PyBool.of(b);
         if (obj instanceof Byte || obj instanceof Short || obj instanceof Integer)
-            return new PyInt(((Number) obj).intValue());
+            return PyInt.of(((Number) obj).intValue());
         if (obj instanceof Long l) {
             long val = l;
+            if (val <= 256 && val >= -128) {
+                return PyInt.of((int) val);
+            }
             if (val <= Integer.MAX_VALUE && val >= Integer.MIN_VALUE) {
                 return new PyInt((int) val);
             }
@@ -225,14 +229,16 @@ public class JavaBridge {
         if (obj instanceof java.math.BigInteger bi) {
             if (bi.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
                 bi.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                return new PyInt(bi.intValue());
+                return PyInt.of(bi.intValue());
             }
             return new org.example.jython3.runtime.BigInt(bi);
         }
         if (obj instanceof Float || obj instanceof Double)
             return new PyFloat(((Number) obj).doubleValue());
-        if (obj instanceof String || obj instanceof Character)
-            return new PyStr(obj.toString());
+        if (obj instanceof String s)
+            return new PyStr(s);
+        if (obj instanceof Character c)
+            return new PyStr(String.valueOf(c));
 
         // For non-String CharSequence (e.g. custom user class implementing CharSequence, or StringBuilder),
         // we must check the policy BEFORE invoking toString(), to prevent arbitrary host code execution.
@@ -327,7 +333,7 @@ public class JavaBridge {
             return s.isEmpty() ? '\0' : s.charAt(0);
         }
 
-        if (targetType.isInstance(pyObj)) {
+        if (targetType != Object.class && targetType.isInstance(pyObj)) {
             return pyObj;
         }
 
@@ -338,12 +344,12 @@ public class JavaBridge {
             if (pyObj instanceof PyStr s) return s.value();
             if (pyObj instanceof PyBool b) return b.value();
             if (pyObj instanceof PyList list) {
-                var javaList = new ArrayList<Object>();
+                var javaList = new ArrayList<Object>(list.items().size());
                 for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy));
                 return javaList;
             }
             if (pyObj instanceof PyDict dict) {
-                var javaMap = new LinkedHashMap<Object, Object>();
+                var javaMap = new LinkedHashMap<Object, Object>(dict.size() * 2);
                 for (var entry : dict.map().entrySet()) {
                     javaMap.put(toJavaObject(entry.getKey(), Object.class, policy), toJavaObject(entry.getValue(), Object.class, policy));
                 }
@@ -354,14 +360,14 @@ public class JavaBridge {
 
         // List conversion
         if (pyObj instanceof PyList list && (List.class.isAssignableFrom(targetType) || targetType == Object.class || targetType == Collection.class)) {
-            var javaList = new ArrayList<Object>();
+            var javaList = new ArrayList<Object>(list.items().size());
             for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy));
             return javaList;
         }
 
         // Map conversion
         if (pyObj instanceof PyDict dict && (Map.class.isAssignableFrom(targetType) || targetType == Object.class)) {
-            var javaMap = new LinkedHashMap<Object, Object>();
+            var javaMap = new LinkedHashMap<Object, Object>(dict.size() * 2);
             for (var entry : dict.map().entrySet()) {
                 javaMap.put(toJavaObject(entry.getKey(), Object.class, policy), toJavaObject(entry.getValue(), Object.class, policy));
             }
@@ -371,8 +377,39 @@ public class JavaBridge {
         // Array conversion
         if (targetType.isArray() && pyObj instanceof PyList list) {
             Class<?> componentType = targetType.getComponentType();
-            Object arr = java.lang.reflect.Array.newInstance(componentType, list.items().size());
-            for (int i = 0; i < list.items().size(); i++) {
+            int len = list.items().size();
+            if (componentType == int.class) {
+                int[] arr = new int[len];
+                for (int i = 0; i < len; i++) {
+                    PyObject it = list.items().get(i);
+                    arr[i] = it instanceof PyInt pi ? pi.value() : Integer.parseInt(it.toString());
+                }
+                return arr;
+            }
+            if (componentType == double.class) {
+                double[] arr = new double[len];
+                for (int i = 0; i < len; i++) {
+                    arr[i] = PyOps.toDouble(list.items().get(i));
+                }
+                return arr;
+            }
+            if (componentType == String.class) {
+                String[] arr = new String[len];
+                for (int i = 0; i < len; i++) {
+                    PyObject it = list.items().get(i);
+                    arr[i] = it instanceof PyStr s ? s.value() : (it instanceof PyNull ? null : it.toString());
+                }
+                return arr;
+            }
+            if (!componentType.isPrimitive()) {
+                Object[] arr = (Object[]) java.lang.reflect.Array.newInstance(componentType, len);
+                for (int i = 0; i < len; i++) {
+                    arr[i] = toJavaObject(list.items().get(i), componentType, policy);
+                }
+                return arr;
+            }
+            Object arr = java.lang.reflect.Array.newInstance(componentType, len);
+            for (int i = 0; i < len; i++) {
                 java.lang.reflect.Array.set(arr, i, toJavaObject(list.items().get(i), componentType, policy));
             }
             return arr;
@@ -392,8 +429,112 @@ public class JavaBridge {
 
     // ─── Fast Method / Constructor Resolution Engine ─────────────────────
 
-    public record MethodMatch(Method method, Class<?>[] paramTypes) {}
-    public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes) {}
+    @FunctionalInterface
+    public interface TypeConverter {
+        Object convert(PyObject pyObj, JavaAccessPolicy policy);
+    }
+
+    private static final Map<Class<?>, TypeConverter> CONVERTER_CACHE = new ConcurrentHashMap<>();
+
+    public static TypeConverter getConverter(Class<?> targetType) {
+        TypeConverter cached = CONVERTER_CACHE.get(targetType);
+        if (cached != null) return cached;
+        TypeConverter conv = buildConverter(targetType);
+        CONVERTER_CACHE.put(targetType, conv);
+        return conv;
+    }
+
+    private static TypeConverter buildConverter(Class<?> targetType) {
+        if (targetType == int.class || targetType == Integer.class) {
+            return (pyObj, policy) -> {
+                if (pyObj instanceof PyInt i) return i.value();
+                if (pyObj instanceof PyFloat f) return (int) f.value();
+                if (pyObj instanceof PyBool b) return b.value() ? 1 : 0;
+                if (pyObj instanceof PyNull) return 0;
+                return Integer.parseInt(pyObj.toString());
+            };
+        }
+        if (targetType == double.class || targetType == Double.class) {
+            return (pyObj, policy) -> PyOps.toDouble(pyObj);
+        }
+        if (targetType == float.class || targetType == Float.class) {
+            return (pyObj, policy) -> (float) PyOps.toDouble(pyObj);
+        }
+        if (targetType == long.class || targetType == Long.class) {
+            return (pyObj, policy) -> {
+                if (pyObj instanceof PyInt i) return (long) i.value();
+                if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().longValue();
+                if (pyObj instanceof PyFloat f) return (long) f.value();
+                if (pyObj instanceof PyNull) return 0L;
+                return Long.parseLong(pyObj.toString());
+            };
+        }
+        if (targetType == boolean.class || targetType == Boolean.class) {
+            return (pyObj, policy) -> PyOps.isTruthy(pyObj);
+        }
+        if (targetType == String.class || targetType == CharSequence.class) {
+            return (pyObj, policy) -> {
+                if (pyObj instanceof PyStr s) return s.value();
+                if (pyObj instanceof PyNull) return null;
+                return pyObj.toString();
+            };
+        }
+        if (targetType == Object.class) {
+            return (pyObj, policy) -> {
+                if (pyObj instanceof PyNull) return null;
+                if (pyObj instanceof PyInt i) return i.value();
+                if (pyObj instanceof PyFloat f) return f.value();
+                if (pyObj instanceof PyStr s) return s.value();
+                if (pyObj instanceof PyBool b) return b.value();
+                if (pyObj instanceof PyJavaObject jo) {
+                    if (policy != null && !policy.canAccessClass(jo.object().getClass().getName())) {
+                        throw denied(jo.object().getClass().getName());
+                    }
+                    return jo.object();
+                }
+                return toJavaObject(pyObj, Object.class, policy);
+            };
+        }
+        return (pyObj, policy) -> toJavaObject(pyObj, targetType, policy);
+    }
+
+    private static TypeConverter[] buildConverters(Class<?>[] params) {
+        TypeConverter[] convs = new TypeConverter[params.length];
+        for (int i = 0; i < params.length; i++) {
+            convs[i] = getConverter(params[i]);
+        }
+        return convs;
+    }
+
+    public record MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters) {
+        public MethodMatch(Method method, Class<?>[] paramTypes) {
+            this(method, paramTypes, buildConverters(paramTypes));
+        }
+    }
+
+    public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters) {
+        public ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes) {
+            this(constructor, paramTypes, buildConverters(paramTypes));
+        }
+    }
+
+    public static Object[] convertArgs(PyObject[] args, MethodMatch match, JavaAccessPolicy policy) {
+        TypeConverter[] convs = match.converters();
+        Object[] res = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            res[i] = convs[i].convert(args[i], policy);
+        }
+        return res;
+    }
+
+    public static Object[] convertArgs(PyObject[] args, ConstructorMatch match, JavaAccessPolicy policy) {
+        TypeConverter[] convs = match.converters();
+        Object[] res = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            res[i] = convs[i].convert(args[i], policy);
+        }
+        return res;
+    }
 
     public static MethodMatch findBestMethod(Class<?> clazz, String name, List<Method> methods, PyObject[] args) {
         return findBestMethod(clazz, name, methods, args, null);
