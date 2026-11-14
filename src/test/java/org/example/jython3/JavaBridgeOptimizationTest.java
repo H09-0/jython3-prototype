@@ -19,6 +19,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class JavaBridgeOptimizationTest {
 
     public static class OverloadTarget {
+        public String tag;
+
+        public OverloadTarget() {
+            this.tag = "default";
+        }
+
+        public OverloadTarget(String s) {
+            this.tag = "ctor:str:" + s;
+        }
+
+        public OverloadTarget(Object o) {
+            this.tag = "ctor:obj:" + o;
+        }
+
+        public String getTag() { return tag; }
+
         public String process(int x) { return "int:" + x; }
         public String process(String s) { return "str:" + s; }
         public String process(double d) { return "double:" + d; }
@@ -171,5 +187,34 @@ public class JavaBridgeOptimizationTest {
         interpB.eval("res_b = target.dispatch('test')");
         // Must fallback cleanly to dispatch(Object), NOT fail due to cache pollution from Policy A!
         assertEquals(new PyStr("obj:test"), interpB.getGlobal("res_b"));
+    }
+
+    @Test
+    @DisplayName("Constructor resolution filters candidate constructors by policy before selecting best match")
+    void testPolicyAwareConstructorSelection() {
+        // 1. Policy A allows both OverloadTarget(String) and OverloadTarget(Object)
+        var interpA = new Jython3Interpreter(TEST_POLICY);
+        interpA.setGlobal("TargetClass", new org.example.jython3.runtime.PyJavaClass(OverloadTarget.class, TEST_POLICY));
+        interpA.eval("inst_a = TargetClass('alpha')\ntag_a = inst_a.getTag()");
+        assertEquals(new PyStr("ctor:str:alpha"), interpA.getGlobal("tag_a"));
+
+        // 2. Policy B denies (String) constructor "(Ljava/lang/String;)V"
+        // but permits (Object) constructor "(Ljava/lang/Object;)V"
+        JavaAccessPolicy policyB = new JavaAccessPolicy() {
+            @Override public boolean canAccessClass(String binaryName) { return true; }
+            @Override public boolean canConstructClass(String binaryName, String descriptor) {
+                // Deny String constructor, allow Object constructor
+                return !descriptor.contains("Ljava/lang/String;");
+            }
+            @Override public boolean canCallMethod(String owner, String name, String descriptor) { return true; }
+            @Override public boolean canReadField(String owner, String name) { return true; }
+            @Override public boolean canWriteField(String owner, String name) { return true; }
+        };
+
+        var interpB = new Jython3Interpreter(policyB);
+        interpB.setGlobal("TargetClass", new org.example.jython3.runtime.PyJavaClass(OverloadTarget.class, policyB));
+        interpB.eval("inst_b = TargetClass('alpha')\ntag_b = inst_b.getTag()");
+        // Must fall back to (Object) constructor without throwing SecurityError
+        assertEquals(new PyStr("ctor:obj:alpha"), interpB.getGlobal("tag_b"));
     }
 }

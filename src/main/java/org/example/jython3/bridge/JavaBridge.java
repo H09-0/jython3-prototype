@@ -89,6 +89,7 @@ public class JavaBridge {
     }
 
     private static final int MAX_CACHE_ENTRIES = 2048;
+    private static final int MAX_CLASS_ENTRIES = 1024;
     private static final Map<MethodResolutionKey, MethodMatch> METHOD_CACHE = new ConcurrentHashMap<>();
     private static final Map<ConstructorResolutionKey, ConstructorMatch> CONSTRUCTOR_CACHE = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Map<String, List<Method>>> CLASS_INSTANCE_METHODS = new ConcurrentHashMap<>();
@@ -133,6 +134,9 @@ public class JavaBridge {
     }
 
     public static List<Method> getInstanceMethodsNamed(Class<?> clazz, String name) {
+        if (CLASS_INSTANCE_METHODS.size() >= MAX_CLASS_ENTRIES) {
+            CLASS_INSTANCE_METHODS.clear();
+        }
         Map<String, List<Method>> byName = CLASS_INSTANCE_METHODS.computeIfAbsent(clazz, c -> {
             Map<String, List<Method>> map = new java.util.HashMap<>();
             for (Method m : c.getMethods()) {
@@ -146,6 +150,9 @@ public class JavaBridge {
     }
 
     public static List<Method> getStaticMethodsNamed(Class<?> clazz, String name) {
+        if (CLASS_STATIC_METHODS.size() >= MAX_CLASS_ENTRIES) {
+            CLASS_STATIC_METHODS.clear();
+        }
         Map<String, List<Method>> byName = CLASS_STATIC_METHODS.computeIfAbsent(clazz, c -> {
             Map<String, List<Method>> map = new java.util.HashMap<>();
             for (Method m : c.getMethods()) {
@@ -435,6 +442,8 @@ public class JavaBridge {
 
         Constructor<?> best = null;
         int bestScore = -1;
+        boolean matchingConstructorFound = false;
+        boolean anyConstructorPermitted = false;
 
         for (Constructor<?> c : clazz.getConstructors()) {
             if (!Modifier.isPublic(c.getModifiers()) || c.isSynthetic()) continue;
@@ -442,13 +451,24 @@ public class JavaBridge {
             if (params.length != args.length) continue;
 
             int score = scoreCompatibility(params, args);
+            if (score < 0) continue;
+
+            matchingConstructorFound = true;
+            if (policy != null && !policy.canConstructClass(clazz.getName(), org.example.jython3.security.JavaDescriptors.of(params))) {
+                continue; // Denied by policy, try next compatible overload
+            }
+
+            anyConstructorPermitted = true;
             if (score > bestScore) {
                 bestScore = score;
                 best = c;
             }
         }
 
-        if (best == null || bestScore < 0) {
+        if (best == null) {
+            if (matchingConstructorFound && !anyConstructorPermitted) {
+                throw denied("constructor for '" + clazz.getName() + "'");
+            }
             throw PyErrors.error("TypeError",
                     "no matching Java constructor for class '" + clazz.getName() + "' with (" + signature(args) + ")");
         }
