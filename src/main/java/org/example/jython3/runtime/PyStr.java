@@ -5,10 +5,22 @@ import java.util.List;
 
 /**
  * Python Unicode string object, operating strictly on Unicode code points.
- * Note: Grapheme clusters (combining characters) are represented as sequences
- * of code points, matching standard CPython semantics.
+ * Optimizes ASCII / BMP strings without surrogates for zero-allocation slicing and indexing.
  */
-public record PyStr(String value) implements PyObject {
+public record PyStr(String value, boolean hasSurrogates) implements PyObject {
+
+    public PyStr(String value) {
+        this(value, checkSurrogates(value));
+    }
+
+    private static boolean checkSurrogates(String s) {
+        if (s == null) return false;
+        int len = s.length();
+        for (int i = 0; i < len; i++) {
+            if (Character.isSurrogate(s.charAt(i))) return true;
+        }
+        return false;
+    }
 
     @Override
     public String toString() {
@@ -26,7 +38,7 @@ public record PyStr(String value) implements PyObject {
      * Returns the length of this string in Unicode code points (matching Python len(str)).
      */
     public int codePointCount() {
-        return value.codePointCount(0, value.length());
+        return hasSurrogates ? value.codePointCount(0, value.length()) : value.length();
     }
 
     /**
@@ -36,6 +48,14 @@ public record PyStr(String value) implements PyObject {
      * @throws InterpreterException IndexError if index is out of bounds
      */
     public String getCodePointAt(int index) {
+        if (!hasSurrogates) {
+            int len = value.length();
+            if (index < 0) index += len;
+            if (index < 0 || index >= len) {
+                throw PyErrors.error("IndexError", "string index out of range");
+            }
+            return String.valueOf(value.charAt(index));
+        }
         int[] cps = codePoints();
         if (index < 0) index += cps.length;
         if (index < 0 || index >= cps.length) {

@@ -5,11 +5,12 @@ package org.example.jython3.compile;
  * parallel line table. {@code lines[i]} is the source line that produced the
  * instruction at {@code bytecode[i]} and is used to build tracebacks.
  * {@code hasYield} is precomputed to avoid scanning bytecode on every function call.
+ * {@code attrCache} provides per-instruction monomorphic inline caching for attribute lookups.
  */
-public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines, boolean hasYield) {
+public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines, boolean hasYield, Object[] attrCache) {
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines) {
-        this(bytecode, constPool, lines, scanYield(bytecode));
+        this(bytecode, constPool, lines, scanYield(bytecode), new Object[bytecode != null ? bytecode.length : 0]);
     }
 
     private static boolean scanYield(int[] bytecode) {

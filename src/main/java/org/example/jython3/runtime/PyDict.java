@@ -10,6 +10,40 @@ import java.util.Map;
  */
 public final class PyDict implements PyObject {
 
+    static final class QueryKey {
+        private PyObject object;
+        private int hashCode;
+
+        QueryKey set(PyObject obj) {
+            this.object = obj;
+            this.hashCode = PyKey.computeHash(obj);
+            return this;
+        }
+
+        public PyObject object() {
+            return object;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o instanceof PyKey pk) {
+                return PyOps.pyEquals(this.object, pk.object());
+            }
+            if (o instanceof QueryKey qk) {
+                return PyOps.pyEquals(this.object, qk.object);
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return hashCode;
+        }
+    }
+
+    private static final ThreadLocal<QueryKey> QUERY_KEY = ThreadLocal.withInitial(QueryKey::new);
+
     private final Map<PyKey, PyObject> entries = new LinkedHashMap<>();
 
     public PyDict() {}
@@ -23,7 +57,7 @@ public final class PyDict implements PyObject {
     }
 
     public PyObject get(PyObject key) {
-        return entries.get(new PyKey(key));
+        return entries.get(QUERY_KEY.get().set(key));
     }
 
     public void put(PyObject key, PyObject value) {
@@ -31,11 +65,11 @@ public final class PyDict implements PyObject {
     }
 
     public PyObject remove(PyObject key) {
-        return entries.remove(new PyKey(key));
+        return entries.remove(QUERY_KEY.get().set(key));
     }
 
     public boolean containsKey(PyObject key) {
-        return entries.containsKey(new PyKey(key));
+        return entries.containsKey(QUERY_KEY.get().set(key));
     }
 
     public int size() {

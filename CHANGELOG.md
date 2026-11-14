@@ -9,12 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **Monomorphic Inline Caching (`LOAD_ATTR`)**: Per-instruction call-site caching in `CompiledCode.attrCache` eliminating repeated inheritance tree and map lookups for class methods.
+- **Inlined Bound Method Dispatch**: Inlined `PyBoundMethod` invocation directly into the interpreter loop (`continue outer`) in `CALL_FUNCTION` and `CALL_FUNCTION_KW`, eliminating nested interpreter frames.
+- **Class Member Resolution Caching (`PyClass.lookupMember`)**: Added `memberCache` to `PyClass` to resolve inherited methods in $O(1)$ time after initial lookup.
+- **Instance Bound Method Caching (`PyInstance`)**: Added `boundMethodCache` in `PyInstance` to reuse `PyBoundMethod` wrappers across calls.
+- **Zero-Allocation Dictionary Lookups (`PyDict`)**: Added reusable `ThreadLocal<QueryKey>` for dictionary queries (`get`, `containsKey`, `remove`), eliminating temporary `PyKey` allocations on lookups.
+- **Zero-Allocation Set Hashability Check (`PySet.add`)**: Added static `PyKey.checkHashable()` eliminating temporary key allocations on set insertion.
+- **Optimized ASCII/BMP String Slicing and Indexing (`PyStr`)**: Fast-path detection for non-surrogate Unicode strings enabling direct JVM `String.substring` and character lookups without intermediate `int[]` code point arrays.
 - **Small Integer Caching (`PyInt.of`)**: Pre-allocated cache for integers between `-128` and `256` plus static constants (`PyInt.ZERO`, `PyInt.ONE`, `PyInt.MINUS_ONE`), avoiding millions of temporary heap allocations during arithmetic loops and range iteration.
 - **Fast Array-Backed Operand Stack (`FastStack`)**: Replaced `ArrayDeque` with `FastStack` in VM frames and call stack, reducing stack push/pop overhead to single-instruction array operations.
 - **Fast Function Argument Binding**: Added zero-overhead fast path in `bindArgs` for pure positional calls matching parameter count without kwargs or varargs, reducing call setup overhead.
 - **Precomputed Generator Flag (`hasYield`)**: Stored `hasYield` in `CompiledCode` to turn O(N) bytecode yield scanning into O(1) checks on function calls.
 - **Instruction Counting Bypass in Trusted Mode**: Bypassed per-instruction budget checks when running unconstrained trusted execution.
-- **Performance Benchmark Suite (Step 1 & Step 2)**: Reproducible micro-benchmark suite (`BenchmarkSuite`) measuring 8 core execution workloads with isolated compilation and execution timing.
+- **Performance Benchmark Suite (Step 1, 2, 3)**: Reproducible micro-benchmark suite (`BenchmarkSuite`) measuring 8 core execution workloads with isolated compilation and execution timing.
 - **Full Scoping with `nonlocal` and `PyCell`**: Integrated `PyCell` mutable cell bindings into the compiler and interpreter, enabling lexical closure mutations across arbitrary nested enclosing scopes.
 - **Gradle Benchmark Task**: Added `./gradlew benchmark` task for automated performance baseline profiling with separate Compile and Execution metrics.
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (353 automated tests passing green).

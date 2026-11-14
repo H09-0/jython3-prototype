@@ -57,7 +57,7 @@ This document outlines the milestones, completed phases, and future development 
 - **Active Track**: High-Performance Execution Engine & GraalPy Performance Alignment.
   - [x] **Step 1**: Fixed performance benchmark suite (`./gradlew benchmark`).
   - [x] **Step 2**: Fast operand stack & function call optimization (PyInt cache, FastStack, zero-overhead argument binding).
-  - [ ] **Step 3**: Inline caches for attributes and type dispatch.
+  - [x] **Step 3**: Inline caches for attributes and type dispatch (monomorphic LOAD_ATTR cache, PyClass member resolution cache, inlined bound method execution).
   - [ ] **Step 4**: Java bridge method resolution caching.
   - [ ] **Step 5**: `invokedynamic` in hot execution paths.
   - [ ] **Step 6**: JIT compiler for hot functions.

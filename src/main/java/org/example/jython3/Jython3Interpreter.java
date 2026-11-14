@@ -92,6 +92,9 @@ import static org.example.jython3.runtime.PyOps.typeName;
 
 public class Jython3Interpreter {
 
+    // ─── Inline Caches ───────────────────────────────────────────────────
+    private record AttrCacheEntry(PyClass cachedClass, PyObject cachedMember) {}
+
     // ─── Module Cache & Loading States ───────────────────────────────────
     private enum ModuleState { INITIALIZING, LOADED }
     private record ModuleEntry(PyModule module, ModuleState state) {}
@@ -926,6 +929,7 @@ public class Jython3Interpreter {
                         mod.attrs().put(attr, val);
                     } else if (obj instanceof PyClass cls) {
                         cls.members().put(attr, val);
+                        cls.clearMemberCache();
                     } else if (obj instanceof PyJavaObject jo) {
                         jo.setMember(attr, val);
                     } else {
@@ -1261,10 +1265,32 @@ public class Jython3Interpreter {
                     PyObject callable = stack.pop();
 
                     if (callable instanceof PyBoundMethod bm) {
+                        PyFunction fn = bm.fn();
                         var callArgs = new PyObject[nPos + 1];
                         callArgs[0] = bm.instance();
                         System.arraycopy(posArgs, 0, callArgs, 1, nPos);
-                        stack.push(callPyCallableKw(bm.fn(), callArgs, kwNames, kwValues));
+                        if (containsYield(fn.code())) {
+                            var genLocals = bindArgs(fn, callArgs, kwNames, kwValues);
+                            stack.push(new PyGenerator(fn, genLocals));
+                        } else {
+                            if (callStack.size() >= MAX_CALL_DEPTH) {
+                                throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+                            }
+                            callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
+                            globalCells = null;
+                            currentLocals = bindArgs(fn, callArgs, kwNames, kwValues);
+                            stack = new FastStack();
+                            exceptStack = new ArrayDeque<>();
+                            activeExceptions = new ArrayDeque<>();
+                            currentFunc = fn.name();
+                            currentFunction = fn;
+                            code = fn.code();
+                            bc = code.bytecode();
+                            pool = code.constPool();
+                            pc = 0;
+                            continue outer;
+                        }
                     } else if (callable instanceof PyFunction fn && containsYield(fn.code())) {
                         var genLocals = bindArgs(fn, posArgs, kwNames, kwValues);
                         stack.push(new PyGenerator(fn, genLocals));
@@ -1312,10 +1338,32 @@ public class Jython3Interpreter {
                     PyObject callable = stack.pop();
 
                     if (callable instanceof PyBoundMethod bm) {
+                        PyFunction fn = bm.fn();
                         var callArgs = new PyObject[argc + 1];
                         callArgs[0] = bm.instance();
                         System.arraycopy(args, 0, callArgs, 1, argc);
-                        stack.push(callPyCallable(bm.fn(), callArgs));
+                        if (containsYield(fn.code())) {
+                            var genLocals = bindArgs(fn, callArgs, null, null);
+                            stack.push(new PyGenerator(fn, genLocals));
+                        } else {
+                            if (callStack.size() >= MAX_CALL_DEPTH) {
+                                throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+                            }
+                            callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
+                            globalCells = null;
+                            currentLocals = bindArgs(fn, callArgs, null, null);
+                            stack = new FastStack();
+                            exceptStack = new ArrayDeque<>();
+                            activeExceptions = new ArrayDeque<>();
+                            currentFunc = fn.name();
+                            currentFunction = fn;
+                            code = fn.code();
+                            bc = code.bytecode();
+                            pool = code.constPool();
+                            pc = 0;
+                            continue outer;
+                        }
                     } else if (callable instanceof PyFunction fn2 && containsYield(fn2.code())) {
                         var genLocals = bindArgs(fn2, args, null, null);
                         stack.push(new PyGenerator(fn2, genLocals));
@@ -1480,16 +1528,21 @@ public class Jython3Interpreter {
                         }
                         stack.push(new PyTuple(resList));
                     } else if (ctr instanceof PyStr s && idx instanceof org.example.jython3.runtime.PySlice slice) {
-                        int[] codePoints = s.codePoints();
-                        var indices = slice.computeIndices(codePoints.length);
+                        int len = s.codePointCount();
+                        var indices = slice.computeIndices(len);
                         if (indices.length() > executionLimits.maxStringLength()) {
                             throw PyErrors.error("OverflowError", "Slice result exceeds maximum string length: " + executionLimits.maxStringLength());
                         }
-                        var sb = new StringBuilder();
-                        for (int i = indices.start(), count = 0; count < indices.length(); i += indices.step(), count++) {
-                            sb.appendCodePoint(codePoints[i]);
+                        if (!s.hasSurrogates() && indices.step() == 1) {
+                            stack.push(new PyStr(s.value().substring(indices.start(), indices.start() + indices.length())));
+                        } else {
+                            int[] codePoints = s.codePoints();
+                            var sb = new StringBuilder(indices.length());
+                            for (int i = indices.start(), count = 0; count < indices.length(); i += indices.step(), count++) {
+                                sb.appendCodePoint(codePoints[i]);
+                            }
+                            stack.push(new PyStr(sb.toString()));
                         }
-                        stack.push(new PyStr(sb.toString()));
                     } else if (ctr instanceof PyList list && idx instanceof PyInt ix) {
                         int i = ix.value();
                         if (i < 0) i += list.items().size();
@@ -1583,7 +1636,33 @@ public class Jython3Interpreter {
                     String attr = (String) pool[ai];
                     PyObject obj = stack.pop();
                     if (obj instanceof PyInstance inst) {
-                        stack.push(inst.getField(attr));
+                        PyObject val = inst.fields().get(attr);
+                        if (val != null) {
+                            stack.push(val);
+                        } else {
+                            Object[] cache = code.attrCache();
+                            AttrCacheEntry entry = (cache != null && pc < cache.length) ? (AttrCacheEntry) cache[pc] : null;
+                            PyObject member;
+                            if (entry != null && entry.cachedClass() == inst.pyClass()) {
+                                member = entry.cachedMember();
+                            } else {
+                                member = inst.pyClass().lookupMember(attr);
+                                if (member == null && inst.fields().containsKey(attr)) {
+                                    member = inst.fields().get(attr);
+                                }
+                                if (member == null) {
+                                    throw PyErrors.error("AttributeError", "'" + inst.pyClass().name() + "' object has no attribute '" + attr + "'");
+                                }
+                                if (cache != null && pc < cache.length) {
+                                    cache[pc] = new AttrCacheEntry(inst.pyClass(), member);
+                                }
+                            }
+                            if (member instanceof PyFunction fn) {
+                                stack.push(new PyBoundMethod(inst, fn));
+                            } else {
+                                stack.push(member);
+                            }
+                        }
                     } else if (obj instanceof PyClass cls) {
                         PyObject val = cls.lookupMember(attr);
                         if (val == null) throw PyErrors.error("AttributeError", "type object '" + cls.name() + "' has no attribute '" + attr + "'");

@@ -15,6 +15,7 @@ public final class PyClass implements PyObject {
     private final PyClass baseClass;
     private final Map<String, PyObject> members;
     private final java.util.List<PyClass> bases = new java.util.ArrayList<>();
+    private final Map<String, PyObject> memberCache = new HashMap<>();
     /**
      * Marks the root of the exception hierarchy. Every class that has this
      * class in its base list is an exception type; the flag is inherited, not
@@ -45,15 +46,27 @@ public final class PyClass implements PyObject {
     public Map<String, PyObject> members() { return members; }
     public java.util.List<PyClass> getBases() { return bases; }
 
+    public void clearMemberCache() {
+        memberCache.clear();
+    }
+
     public PyObject lookupMember(String attr) {
+        PyObject cached = memberCache.get(attr);
+        if (cached != null) return cached;
         PyObject val = members.get(attr);
-        if (val != null) return val;
-        // try bases in order
-        for (PyClass b : bases) {
-            PyObject v = b.lookupMember(attr);
-            if (v != null) return v;
+        if (val == null) {
+            for (PyClass b : bases) {
+                PyObject v = b.lookupMember(attr);
+                if (v != null) {
+                    val = v;
+                    break;
+                }
+            }
         }
-        return null;
+        if (val != null) {
+            memberCache.put(attr, val);
+        }
+        return val;
     }
 
     public boolean hasMember(String attr) {
@@ -85,7 +98,7 @@ public final class PyClass implements PyObject {
      */
     public boolean isSubclassOf(PyClass ancestor) {
         if (ancestor == null) return false;
-        if (this == ancestor) return true;
+        if (this == ancestor || this.baseClass == ancestor) return true;
         Set<PyClass> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         ArrayDeque<PyClass> pending = new ArrayDeque<>();
         pending.add(this);

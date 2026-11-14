@@ -29,7 +29,11 @@ public final class PyKey {
         return object;
     }
 
-    private static int computeHash(PyObject obj) {
+    public static void checkHashable(PyObject obj) {
+        computeHash(obj);
+    }
+
+    static int computeHash(PyObject obj) {
         if (obj instanceof PyList || obj instanceof PyDict) {
             throw PyErrors.error("TypeError", "unhashable type: '" + PyOps.typeName(obj) + "'");
         }
@@ -87,6 +91,9 @@ public final class PyKey {
         if (this == o) return true;
         if (o instanceof PyKey other) {
             return PyOps.pyEquals(this.object, other.object);
+        }
+        if (o instanceof PyDict.QueryKey qk) {
+            return PyOps.pyEquals(this.object, qk.object());
         }
         return false;
     }

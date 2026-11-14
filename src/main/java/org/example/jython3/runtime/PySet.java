@@ -20,8 +20,8 @@ public final class PySet implements PyObject {
     public Set<PyObject> items() { return items; }
 
     public void add(PyObject v) {
-        // Validate hashability before inserting via PyKey construction (raises TypeError for lists etc.)
-        new PyKey(v); // throws TypeError if unhashable
+        // Validate hashability before inserting (raises TypeError for lists etc.)
+        PyKey.checkHashable(v);
         items.add(v);
     }
 

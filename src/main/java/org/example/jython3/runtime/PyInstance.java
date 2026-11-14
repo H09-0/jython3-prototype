@@ -7,6 +7,7 @@ import java.util.Map;
 public final class PyInstance implements PyObject {
     private final PyClass pyClass;
     private final Map<String, PyObject> fields = new HashMap<>();
+    private Map<String, PyBoundMethod> boundMethodCache;
 
     public PyInstance(PyClass pyClass) {
         this.pyClass = pyClass;
@@ -26,21 +27,33 @@ public final class PyInstance implements PyObject {
     }
 
     public PyObject getField(String name) {
-        if (fields.containsKey(name)) {
-            return fields.get(name);
+        PyObject val = fields.get(name);
+        if (val != null) {
+            return val;
         }
         PyObject member = pyClass.lookupMember(name);
         if (member instanceof PyFunction fn) {
-            return new PyBoundMethod(this, fn);
+            if (boundMethodCache == null) boundMethodCache = new HashMap<>(4);
+            PyBoundMethod cached = boundMethodCache.get(name);
+            if (cached != null) return cached;
+            PyBoundMethod bm = new PyBoundMethod(this, fn);
+            boundMethodCache.put(name, bm);
+            return bm;
         }
         if (member != null) {
             return member;
+        }
+        if (fields.containsKey(name)) {
+            return fields.get(name);
         }
         throw PyErrors.error("AttributeError", "'" + pyClass.name() + "' object has no attribute '" + name + "'");
     }
 
     public void setField(String name, PyObject val) {
         fields.put(name, val);
+        if (boundMethodCache != null) {
+            boundMethodCache.remove(name);
+        }
     }
 
     public Map<String, PyObject> fields() {
