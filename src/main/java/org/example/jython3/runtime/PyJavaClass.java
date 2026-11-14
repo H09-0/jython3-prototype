@@ -15,7 +15,7 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
 
     public PyObject newInstance(PyObject[] args) {
         if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
-        JavaBridge.ConstructorMatch match = JavaBridge.findBestConstructor(clazz, args);
+        JavaBridge.ConstructorMatch match = JavaBridge.findBestConstructor(clazz, args, policy);
         String descriptor = JavaDescriptors.of(match.paramTypes());
         if (!policy.canConstructClass(clazz.getName(), descriptor)) {
             throw JavaBridge.denied(clazz.getName() + descriptor);

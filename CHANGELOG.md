@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
-- **Java Bridge Overload Resolution Caching (Step 4)**: Introduced structured immutable `MethodResolutionKey` and `ConstructorResolutionKey` (target class, method name, argument types, argument count) reducing Java interop dispatch latency by 55.2% (from 124.69 ms to 55.81 ms).
+- **Java Bridge Overload Resolution Caching (Step 4)**: Introduced policy-scoped structured immutable `MethodResolutionKey` and `ConstructorResolutionKey` (access policy, target class, method name, argument types, argument count) with `MAX_CACHE_ENTRIES` size caps, reducing Java interop dispatch latency by 52.4% (from 124.69 ms to 59.31 ms) with zero cross-policy resolution pollution.
 - **Class Reflection Method Discovery Caching**: Added grouped method caches in `JavaBridge` (`CLASS_INSTANCE_METHODS`, `CLASS_STATIC_METHODS`) eliminating repeated array allocations from `Class.getMethods()`.
 - **Java Bridge Caching Regression Suite**: Added `JavaBridgeOptimizationTest` verifying overload selection, cross-class cache isolation, per-call security policy enforcement, and cache invalidation (365 total tests passing).
 - **Class Hierarchy Versioning & Generation Stamps**: Introduced `PyClass.version()` counter and recursive `invalidateHierarchy()` propagation across subclasses in `PyClass`.

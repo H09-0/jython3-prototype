@@ -13,7 +13,7 @@ public record PyJavaMethod(Object target, Class<?> clazz, String name, List<Meth
 
     public PyObject invoke(PyObject[] args) {
         if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
-        JavaBridge.MethodMatch match = JavaBridge.findBestMethod(clazz, name, methods, args);
+        JavaBridge.MethodMatch match = JavaBridge.findBestMethod(clazz, name, methods, args, policy);
         String descriptor = JavaDescriptors.of(match.paramTypes());
         if (!policy.canCallMethod(clazz.getName(), name, descriptor)) {
             throw JavaBridge.denied("method '" + name + "'");

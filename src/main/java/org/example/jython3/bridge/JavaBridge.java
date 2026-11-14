@@ -44,12 +44,13 @@ import org.example.jython3.security.JavaAccessPolicy;
  */
 public class JavaBridge {
 
-    public record MethodResolutionKey(Class<?> targetClass, String methodName, Class<?>[] argTypes, int argCount) {
+    public record MethodResolutionKey(JavaAccessPolicy policy, Class<?> targetClass, String methodName, Class<?>[] argTypes, int argCount) {
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof MethodResolutionKey other)) return false;
             return argCount == other.argCount &&
+                   java.util.Objects.equals(policy, other.policy) &&
                    targetClass == other.targetClass &&
                    methodName.equals(other.methodName) &&
                    Arrays.equals(argTypes, other.argTypes);
@@ -57,7 +58,8 @@ public class JavaBridge {
 
         @Override
         public int hashCode() {
-            int result = targetClass.hashCode();
+            int result = java.util.Objects.hashCode(policy);
+            result = 31 * result + targetClass.hashCode();
             result = 31 * result + methodName.hashCode();
             result = 31 * result + argCount;
             result = 31 * result + Arrays.hashCode(argTypes);
@@ -65,30 +67,47 @@ public class JavaBridge {
         }
     }
 
-    public record ConstructorResolutionKey(Class<?> targetClass, Class<?>[] argTypes, int argCount) {
+    public record ConstructorResolutionKey(JavaAccessPolicy policy, Class<?> targetClass, Class<?>[] argTypes, int argCount) {
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof ConstructorResolutionKey other)) return false;
             return argCount == other.argCount &&
+                   java.util.Objects.equals(policy, other.policy) &&
                    targetClass == other.targetClass &&
                    Arrays.equals(argTypes, other.argTypes);
         }
 
         @Override
         public int hashCode() {
-            int result = targetClass.hashCode();
+            int result = java.util.Objects.hashCode(policy);
+            result = 31 * result + targetClass.hashCode();
             result = 31 * result + argCount;
             result = 31 * result + Arrays.hashCode(argTypes);
             return result;
         }
     }
 
+    private static final int MAX_CACHE_ENTRIES = 2048;
     private static final Map<MethodResolutionKey, MethodMatch> METHOD_CACHE = new ConcurrentHashMap<>();
     private static final Map<ConstructorResolutionKey, ConstructorMatch> CONSTRUCTOR_CACHE = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Map<String, List<Method>>> CLASS_INSTANCE_METHODS = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Map<String, List<Method>>> CLASS_STATIC_METHODS = new ConcurrentHashMap<>();
     private static final Class<?>[] EMPTY_CLASSES = new Class<?>[0];
+
+    private static void putMethodCache(MethodResolutionKey key, MethodMatch match) {
+        if (METHOD_CACHE.size() >= MAX_CACHE_ENTRIES) {
+            METHOD_CACHE.clear();
+        }
+        METHOD_CACHE.put(key, match);
+    }
+
+    private static void putConstructorCache(ConstructorResolutionKey key, ConstructorMatch match) {
+        if (CONSTRUCTOR_CACHE.size() >= MAX_CACHE_ENTRIES) {
+            CONSTRUCTOR_CACHE.clear();
+        }
+        CONSTRUCTOR_CACHE.put(key, match);
+    }
 
     public static void clearResolutionCache() {
         METHOD_CACHE.clear();
@@ -370,8 +389,12 @@ public class JavaBridge {
     public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes) {}
 
     public static MethodMatch findBestMethod(Class<?> clazz, String name, List<Method> methods, PyObject[] args) {
+        return findBestMethod(clazz, name, methods, args, null);
+    }
+
+    public static MethodMatch findBestMethod(Class<?> clazz, String name, List<Method> methods, PyObject[] args, JavaAccessPolicy policy) {
         Class<?>[] argTypes = extractArgTypes(args);
-        var key = new MethodResolutionKey(clazz, name, argTypes, args.length);
+        var key = new MethodResolutionKey(policy, clazz, name, argTypes, args.length);
         MethodMatch cached = METHOD_CACHE.get(key);
         if (cached != null) return cached;
 
@@ -396,13 +419,17 @@ public class JavaBridge {
         }
 
         var match = new MethodMatch(best, best.getParameterTypes());
-        METHOD_CACHE.put(key, match);
+        putMethodCache(key, match);
         return match;
     }
 
     public static ConstructorMatch findBestConstructor(Class<?> clazz, PyObject[] args) {
+        return findBestConstructor(clazz, args, null);
+    }
+
+    public static ConstructorMatch findBestConstructor(Class<?> clazz, PyObject[] args, JavaAccessPolicy policy) {
         Class<?>[] argTypes = extractArgTypes(args);
-        var key = new ConstructorResolutionKey(clazz, argTypes, args.length);
+        var key = new ConstructorResolutionKey(policy, clazz, argTypes, args.length);
         ConstructorMatch cached = CONSTRUCTOR_CACHE.get(key);
         if (cached != null) return cached;
 
@@ -427,7 +454,7 @@ public class JavaBridge {
         }
 
         var match = new ConstructorMatch(best, best.getParameterTypes());
-        CONSTRUCTOR_CACHE.put(key, match);
+        putConstructorCache(key, match);
         return match;
     }
 

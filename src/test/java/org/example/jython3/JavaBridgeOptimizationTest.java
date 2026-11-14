@@ -23,6 +23,9 @@ public class JavaBridgeOptimizationTest {
         public String process(String s) { return "str:" + s; }
         public String process(double d) { return "double:" + d; }
         public String process(int a, int b) { return "int2:" + (a + b); }
+
+        public String dispatch(String s) { return "str:" + s; }
+        public String dispatch(Object o) { return "obj:" + o; }
     }
 
     public static class TargetA {
@@ -136,5 +139,37 @@ public class JavaBridgeOptimizationTest {
         interp.eval("r2 = target.process('hello')");
 
         assertEquals(interp.getGlobal("r1"), interp.getGlobal("r2"));
+    }
+
+    @Test
+    @DisplayName("Policy-aware resolution selects permitted overload when a more specific overload is denied")
+    void testPolicyAwareOverloadSelection() {
+        // 1. Policy A allows both dispatch(String) and dispatch(Object)
+        var interpA = new Jython3Interpreter(TEST_POLICY);
+        interpA.setGlobal("target", JavaBridge.toPyObject(new OverloadTarget(), TEST_POLICY));
+        interpA.eval("res_a = target.dispatch('test')");
+        // String overload selected
+        assertEquals(new PyStr("str:test"), interpA.getGlobal("res_a"));
+
+        // 2. Policy B restricts dispatch(String) descriptor "(Ljava/lang/String;)Ljava/lang/String;"
+        // but permits dispatch(Object) descriptor "(Ljava/lang/Object;)Ljava/lang/String;"
+        JavaAccessPolicy policyB = new JavaAccessPolicy() {
+            @Override public boolean canAccessClass(String binaryName) { return true; }
+            @Override public boolean canConstructClass(String binaryName, String descriptor) { return true; }
+            @Override public boolean canCallMethod(String owner, String name, String descriptor) {
+                if (name.equals("dispatch") && descriptor.contains("Ljava/lang/String;")) {
+                    return false; // deny String overload
+                }
+                return true; // permit Object overload and all others
+            }
+            @Override public boolean canReadField(String owner, String name) { return true; }
+            @Override public boolean canWriteField(String owner, String name) { return true; }
+        };
+
+        var interpB = new Jython3Interpreter(policyB);
+        interpB.setGlobal("target", JavaBridge.toPyObject(new OverloadTarget(), policyB));
+        interpB.eval("res_b = target.dispatch('test')");
+        // Must fallback cleanly to dispatch(Object), NOT fail due to cache pollution from Policy A!
+        assertEquals(new PyStr("obj:test"), interpB.getGlobal("res_b"));
     }
 }
