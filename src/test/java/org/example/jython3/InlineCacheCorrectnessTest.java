@@ -83,7 +83,7 @@ public class InlineCacheCorrectnessTest {
             r2 = s.action()
             """);
         assertEquals(new PyStr("base_v1"), interp.getGlobal("r1"));
-        assertEquals(new PyStr("base_v2"), interp.getGlobal("second") != null ? interp.getGlobal("second") : interp.getGlobal("r2"));
+        assertEquals(new PyStr("base_v2"), interp.getGlobal("r2"));
     }
 
     @Test
@@ -174,5 +174,14 @@ public class InlineCacheCorrectnessTest {
             """);
         assertEquals(new PyStr("running"), interp.getGlobal("r1"));
         assertEquals(new PyStr("stopped"), interp.getGlobal("r2"));
+    }
+
+    @Test
+    @DisplayName("PyClass.members() is unmodifiable to prevent bypassing cache invalidation")
+    void testMembersMapIsUnmodifiable() {
+        var pyClass = new org.example.jython3.runtime.PyClass("Test", null, new java.util.HashMap<>());
+        assertThrows(UnsupportedOperationException.class, () -> {
+            pyClass.members().put("hack", new org.example.jython3.runtime.PyInt(1));
+        });
     }
 }

@@ -27,7 +27,7 @@ public final class PyClass implements PyObject {
     public PyClass(String name, PyClass baseClass, Map<String, PyObject> members) {
         this.name = name;
         this.baseClass = baseClass;
-        this.members = members == null ? new HashMap<>() : members;
+        this.members = members == null ? new HashMap<>() : new HashMap<>(members);
         if (baseClass != null) {
             this.bases.add(baseClass);
             baseClass.addSubclass(this);
@@ -37,7 +37,7 @@ public final class PyClass implements PyObject {
     public PyClass(String name, PyClass baseClass, Map<String, PyObject> members, java.util.List<PyClass> basesList) {
         this.name = name;
         this.baseClass = baseClass;
-        this.members = members == null ? new HashMap<>() : members;
+        this.members = members == null ? new HashMap<>() : new HashMap<>(members);
         if (basesList != null) {
             this.bases.addAll(basesList);
             for (PyClass b : basesList) {
@@ -51,7 +51,7 @@ public final class PyClass implements PyObject {
 
     public String name() { return name; }
     public PyClass baseClass() { return baseClass; }
-    public Map<String, PyObject> members() { return members; }
+    public Map<String, PyObject> members() { return Collections.unmodifiableMap(members); }
     public java.util.List<PyClass> getBases() { return bases; }
 
     public long version() {
