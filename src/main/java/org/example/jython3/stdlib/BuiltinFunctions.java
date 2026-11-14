@@ -297,9 +297,9 @@ public final class BuiltinFunctions {
             if (step == 0) throw PyErrors.error("ValueError", "range() arg 3 must not be zero");
             var items = new ArrayList<PyObject>();
             if (step > 0) {
-                for (int i = start; i < stop; i += step) items.add(new PyInt(i));
+                for (int i = start; i < stop; i += step) items.add(PyInt.of(i));
             } else {
-                for (int i = start; i > stop; i += step) items.add(new PyInt(i));
+                for (int i = start; i > stop; i += step) items.add(PyInt.of(i));
             }
             return new PyList(items);
         }));

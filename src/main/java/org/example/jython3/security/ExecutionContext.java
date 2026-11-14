@@ -30,6 +30,10 @@ public final class ExecutionContext {
         this.cancelled = true;
     }
 
+    public boolean hasActiveLimits() {
+        return cancelled || deadlineNanos > 0 || limits.maxInstructions() < Long.MAX_VALUE;
+    }
+
     public boolean isCancelled() {
         return cancelled;
     }

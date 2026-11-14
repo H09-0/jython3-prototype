@@ -155,4 +155,34 @@ public class NonlocalAndBuiltinFixesTest {
         assertEquals(new PyInt(42), interp.getGlobal("x"));
         assertEquals(new PyInt(84), interp.getGlobal("y"));
     }
+
+    @Test
+    @DisplayName("PyInt.of caches small integers between -128 and 256")
+    void testPyIntSmallIntegerCache() {
+        org.junit.jupiter.api.Assertions.assertSame(PyInt.of(0), PyInt.of(0));
+        org.junit.jupiter.api.Assertions.assertSame(PyInt.ZERO, PyInt.of(0));
+        org.junit.jupiter.api.Assertions.assertSame(PyInt.ONE, PyInt.of(1));
+        org.junit.jupiter.api.Assertions.assertSame(PyInt.of(-128), PyInt.of(-128));
+        org.junit.jupiter.api.Assertions.assertSame(PyInt.of(256), PyInt.of(256));
+        org.junit.jupiter.api.Assertions.assertNotSame(PyInt.of(1000), PyInt.of(1000));
+        assertEquals(1000, PyInt.of(1000).value());
+    }
+
+    @Test
+    @DisplayName("FastStack performs LIFO stack operations with dynamic growth")
+    void testFastStackOperations() {
+        var stack = new org.example.jython3.runtime.FastStack(2);
+        assertTrue(stack.isEmpty());
+        assertEquals(0, stack.size());
+
+        stack.push(PyInt.of(10));
+        stack.push(PyInt.of(20));
+        stack.push(PyInt.of(30)); // triggers capacity growth
+        assertEquals(3, stack.size());
+        assertEquals(PyInt.of(30), stack.peek());
+        assertEquals(PyInt.of(30), stack.pop());
+        assertEquals(PyInt.of(20), stack.pop());
+        assertEquals(PyInt.of(10), stack.pop());
+        assertTrue(stack.isEmpty());
+    }
 }

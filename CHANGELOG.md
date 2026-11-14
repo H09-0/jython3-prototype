@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
-- **Performance Benchmark Suite (Step 1)**: Reproducible micro-benchmark suite (`BenchmarkSuite`) measuring 8 core execution workloads (arithmetic loops, recursive Fibonacci, function call overhead, OOP instantiation & method dispatch, list/dict operations, string processing, and Java bridge reflection).
-- **Separated Compilation & Execution Profiling**: Added `evalCode(CompiledCode)` and `resetExecutionState()` to `Jython3Interpreter` to isolate bytecode VM execution speed from parse/compile overhead on warm interpreter instances.
+- **Small Integer Caching (`PyInt.of`)**: Pre-allocated cache for integers between `-128` and `256` plus static constants (`PyInt.ZERO`, `PyInt.ONE`, `PyInt.MINUS_ONE`), avoiding millions of temporary heap allocations during arithmetic loops and range iteration.
+- **Fast Array-Backed Operand Stack (`FastStack`)**: Replaced `ArrayDeque` with `FastStack` in VM frames and call stack, reducing stack push/pop overhead to single-instruction array operations.
+- **Fast Function Argument Binding**: Added zero-overhead fast path in `bindArgs` for pure positional calls matching parameter count without kwargs or varargs, reducing call setup overhead.
+- **Precomputed Generator Flag (`hasYield`)**: Stored `hasYield` in `CompiledCode` to turn O(N) bytecode yield scanning into O(1) checks on function calls.
+- **Instruction Counting Bypass in Trusted Mode**: Bypassed per-instruction budget checks when running unconstrained trusted execution.
+- **Performance Benchmark Suite (Step 1 & Step 2)**: Reproducible micro-benchmark suite (`BenchmarkSuite`) measuring 8 core execution workloads with isolated compilation and execution timing.
 - **Full Scoping with `nonlocal` and `PyCell`**: Integrated `PyCell` mutable cell bindings into the compiler and interpreter, enabling lexical closure mutations across arbitrary nested enclosing scopes.
 - **Gradle Benchmark Task**: Added `./gradlew benchmark` task for automated performance baseline profiling with separate Compile and Execution metrics.
-- **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (351 automated tests passing green).
+- **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (353 automated tests passing green).
 
 ### Fixed
 - **Builtin `print` Keywords**: Implemented `print(file=..., flush=...)` routing with support for custom file objects (`.write()`) and flush handling.

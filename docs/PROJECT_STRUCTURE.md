@@ -47,12 +47,14 @@ jython3-prototype/
     │       │   ├── BigInt.java         # Arbitrary-precision integer wrapping BigInteger
     │       │   ├── ExceptHandler.java  # Active exception handler entry on exceptStack
     │       │   ├── ExceptionTypeRegistry.java # Standard Python exception type hierarchy
+    │       │   ├── FastStack.java      # High-performance array-backed operand stack
     │       │   ├── Frame.java          # Call stack frame record (code, returnPc, locals, stack)
     │       │   ├── InterpreterException.java # Java exception carrying runtime Python errors
     │       │   ├── PyBool.java         # Python boolean literal (True, False)
     │       │   ├── PyBoundMethod.java   # Bound instance method wrapper
     │       │   ├── PyBuiltinFunction.java # Built-in native function wrapper
     │       │   ├── PyCaller.java       # Callable dispatch abstraction
+    │       │   ├── PyCell.java         # Mutable cell binding for closures and nonlocal
     │       │   ├── PyClass.java        # Python class definition (methods, bases)
     │       │   ├── PyCompiledCodeWrapper.java # Wrapper for nested code blocks
     │       │   ├── PyDict.java         # Python dictionary backed by LinkedHashMap

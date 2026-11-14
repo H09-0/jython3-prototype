@@ -56,7 +56,7 @@ This document outlines the milestones, completed phases, and future development 
 - **Current Release**: `v0.11.0-alpha` (Pre-production research prototype).
 - **Active Track**: High-Performance Execution Engine & GraalPy Performance Alignment.
   - [x] **Step 1**: Fixed performance benchmark suite (`./gradlew benchmark`).
-  - [ ] **Step 2**: Fast locals array & function call optimization.
+  - [x] **Step 2**: Fast operand stack & function call optimization (PyInt cache, FastStack, zero-overhead argument binding).
   - [ ] **Step 3**: Inline caches for attributes and type dispatch.
   - [ ] **Step 4**: Java bridge method resolution caching.
   - [ ] **Step 5**: `invokedynamic` in hot execution paths.

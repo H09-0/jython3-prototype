@@ -15,7 +15,7 @@ import org.example.jython3.compile.CompiledCode;
  * {@code globalCells} records names declared {@code global} in this frame.
  */
 public record Frame(CompiledCode code, int returnPc,
-                    Map<String, PyObject> locals, Deque<PyObject> stack,
+                    Map<String, PyObject> locals, FastStack stack,
                     Deque<ExceptHandler> exceptHandlers,
                     Deque<PyObject> activeExceptions,
                     String funcName, String file, int line,
@@ -25,7 +25,7 @@ public record Frame(CompiledCode code, int returnPc,
 
     /** Constructor with globals and globalCells but without function. */
     public Frame(CompiledCode code, int returnPc,
-                 Map<String, PyObject> locals, Deque<PyObject> stack,
+                 Map<String, PyObject> locals, FastStack stack,
                  Deque<ExceptHandler> exceptHandlers,
                  Deque<PyObject> activeExceptions,
                  String funcName, String file, int line,
@@ -37,7 +37,7 @@ public record Frame(CompiledCode code, int returnPc,
 
     /** Convenience constructor without globalCells (null = no global declarations). */
     public Frame(CompiledCode code, int returnPc,
-                 Map<String, PyObject> locals, Deque<PyObject> stack,
+                 Map<String, PyObject> locals, FastStack stack,
                  Deque<ExceptHandler> exceptHandlers,
                  Deque<PyObject> activeExceptions,
                  String funcName, String file, int line) {
@@ -47,7 +47,7 @@ public record Frame(CompiledCode code, int returnPc,
 
     /** Constructor with globals but without globalCells. */
     public Frame(CompiledCode code, int returnPc,
-                 Map<String, PyObject> locals, Deque<PyObject> stack,
+                 Map<String, PyObject> locals, FastStack stack,
                  Deque<ExceptHandler> exceptHandlers,
                  Deque<PyObject> activeExceptions,
                  String funcName, String file, int line,

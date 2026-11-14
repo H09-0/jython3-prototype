@@ -36,6 +36,7 @@ import org.example.jython3.compile.OpCode;
 import org.example.jython3.parse.PythonIndentStream;
 import org.example.jython3.runtime.BigInt;
 import org.example.jython3.runtime.ExceptHandler;
+import org.example.jython3.runtime.FastStack;
 import org.example.jython3.runtime.Frame;
 import org.example.jython3.runtime.ExceptionTypeRegistry;
 import org.example.jython3.runtime.InterpreterException;
@@ -108,6 +109,7 @@ public class Jython3Interpreter {
     private final ExecutionLimits executionLimits;
     /** Active execution context tracking consumption across frames. */
     private ExecutionContext currentContext;
+    private boolean enforceLimits = false;
 
     /** Built-in functions and standard types template for module initialization. */
     private final Map<String, PyObject> builtinSymbols = new HashMap<>();
@@ -180,7 +182,7 @@ public class Jython3Interpreter {
     // ─── Runtime state ────────────────────────────────────────────────────
     private final Map<String, PyObject> globals = new HashMap<>();
     private Map<String, PyObject> currentGlobals = globals;
-    private Deque<PyObject> stack;
+    private FastStack stack;
     private Map<String, PyObject> currentLocals;
     /** Set of variable names declared `global` in the current function frame. */
     private java.util.Set<String> globalCells;
@@ -443,7 +445,7 @@ public class Jython3Interpreter {
     public void eval(String source, String filename) {
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
         try {
-            stack = new ArrayDeque<>();
+            stack = new FastStack();
             currentGlobals = globals;
             currentLocals = globals;
             exceptStack = new ArrayDeque<>();
@@ -451,6 +453,7 @@ public class Jython3Interpreter {
             callStack.clear();
             yieldCollector = null;
             currentContext = new ExecutionContext(executionLimits);
+            enforceLimits = currentContext.hasActiveLimits();
             currentFile = filename;
             currentFunc = "<module>";
             currentFunction = null;
@@ -487,7 +490,7 @@ public class Jython3Interpreter {
     public void evalCode(CompiledCode code, String filename) {
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
         try {
-            stack = new ArrayDeque<>();
+            stack = new FastStack();
             currentGlobals = globals;
             currentLocals = globals;
             exceptStack = new ArrayDeque<>();
@@ -495,6 +498,7 @@ public class Jython3Interpreter {
             callStack.clear();
             yieldCollector = null;
             currentContext = new ExecutionContext(executionLimits);
+            enforceLimits = currentContext.hasActiveLimits();
             currentFile = filename;
             currentFunc = "<module>";
             currentFunction = null;
@@ -551,7 +555,7 @@ public class Jython3Interpreter {
         var savedFile = currentFile;
         var savedLine = currentLine;
         try {
-            stack = new ArrayDeque<>();
+            stack = new FastStack();
             currentGlobals = executionLocals;
             currentLocals = executionLocals;
             exceptStack = new ArrayDeque<>();
@@ -601,7 +605,7 @@ public class Jython3Interpreter {
         var savedLine = currentLine;
         try {
             callStack.clear();
-            stack = new ArrayDeque<>();
+            stack = new FastStack();
             currentLocals = new HashMap<>(initialLocals);
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
@@ -767,7 +771,7 @@ public class Jython3Interpreter {
         int pc = 0;
 
         outer: while (pc < bc.length) {
-            if (currentContext != null) {
+            if (enforceLimits) {
                 currentContext.stepInstruction();
             }
             int instr = bc[pc];
@@ -844,7 +848,7 @@ public class Jython3Interpreter {
                         }
                         stack.push(new PyStr(s));
                     }
-                    else if (v instanceof Integer i) stack.push(new PyInt(i));
+                    else if (v instanceof Integer i) stack.push(PyInt.of(i));
                     else if (v instanceof Double d) stack.push(new PyFloat(d));
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
                     else if (v instanceof org.example.jython3.runtime.BigInt bi) stack.push(bi);
@@ -855,7 +859,6 @@ public class Jython3Interpreter {
                 case LOAD_FAST -> {
                     String n = (String) pool[ai];
                     PyObject v = null;
-                    // If declared global, read from global scope directly
                     if (globalCells != null && globalCells.contains(n)) {
                         v = globals.get(n);
                         if (v == null) v = currentGlobals.get(n);
@@ -864,7 +867,7 @@ public class Jython3Interpreter {
                     }
                     if (v == null) v = currentGlobals.get(n);
                     if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
-                    if (v instanceof org.example.jython3.runtime.PyCell cell) {
+                    if (v instanceof PyCell cell) {
                         if (!cell.isBound()) {
                             throw PyErrors.error("UnboundLocalError", "cannot access local variable '" + n + "' where it is not associated with a value");
                         }
@@ -881,13 +884,12 @@ public class Jython3Interpreter {
                 case STORE_FAST -> {
                     String storeName = (String) pool[ai];
                     PyObject storeVal = stack.pop();
-                    // If this name was declared 'global', write to the global scope
                     if (globalCells != null && globalCells.contains(storeName)) {
                         globals.put(storeName, storeVal);
                         currentGlobals.put(storeName, storeVal);
                     } else if (currentLocals != null) {
                         PyObject existing = currentLocals.get(storeName);
-                        if (existing instanceof org.example.jython3.runtime.PyCell cell) {
+                        if (existing instanceof PyCell cell) {
                             cell.set(storeVal);
                         } else {
                             currentLocals.put(storeName, storeVal);
@@ -986,14 +988,14 @@ public class Jython3Interpreter {
                     var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
                     if (l instanceof PyInt li && r instanceof PyInt ri) {
                         if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
-                        stack.push(new PyInt(Math.floorDiv(li.value(), ri.value())));
+                        stack.push(PyInt.of(Math.floorDiv(li.value(), ri.value())));
                     } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
                         java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
                         java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
                         java.math.BigInteger q = PyOps.floorDiv(ba, bb);
                         if (q.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
                             q.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                            stack.push(new PyInt(q.intValue()));
+                            stack.push(PyInt.of(q.intValue()));
                         } else {
                             stack.push(new BigInt(q));
                         }
@@ -1014,14 +1016,14 @@ public class Jython3Interpreter {
                         r = unwrapBool(r);
                         if (l instanceof PyInt li && r instanceof PyInt ri) {
                             if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
-                            stack.push(new PyInt(Math.floorMod(li.value(), ri.value())));
+                            stack.push(PyInt.of(Math.floorMod(li.value(), ri.value())));
                         } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
                             java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
                             java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
                             java.math.BigInteger rem = PyOps.floorMod(ba, bb);
                             if (rem.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
                                 rem.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                                stack.push(new PyInt(rem.intValue()));
+                                stack.push(PyInt.of(rem.intValue()));
                             } else {
                                 stack.push(new BigInt(rem));
                             }
@@ -1058,7 +1060,7 @@ public class Jython3Interpreter {
                                 java.math.BigInteger res = base.pow(expInt);
                                 if (res.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
                                     res.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                                    stack.push(new PyInt(res.intValue()));
+                                    stack.push(PyInt.of(res.intValue()));
                                 } else {
                                     stack.push(new BigInt(res));
                                 }
@@ -1086,7 +1088,7 @@ public class Jython3Interpreter {
                         if (negated > Integer.MAX_VALUE || negated < Integer.MIN_VALUE) {
                             stack.push(new BigInt(java.math.BigInteger.valueOf(negated)));
                         } else {
-                            stack.push(new PyInt((int) negated));
+                            stack.push(PyInt.of((int) negated));
                         }
                     } else if (v instanceof BigInt bi) {
                         stack.push(new BigInt(bi.value().negate()));
@@ -1227,7 +1229,7 @@ public class Jython3Interpreter {
                     var savedLocals = currentLocals;
                     var savedStack = stack;
                     currentLocals = classLocals;
-                    stack = new ArrayDeque<>();
+                    stack = new FastStack();
                     run(codeWrap.code());
                     currentLocals = savedLocals;
                     stack = savedStack;
@@ -1289,7 +1291,7 @@ public class Jython3Interpreter {
                                 activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                         globalCells = null; // new frame starts with no global declarations
                         currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-                        stack = new ArrayDeque<>();
+                        stack = new FastStack();
                         exceptStack = new ArrayDeque<>();
                         activeExceptions = new ArrayDeque<>();
                         currentFunc = fn.name();
@@ -1346,7 +1348,7 @@ public class Jython3Interpreter {
                                     activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                             globalCells = null; // new frame starts with no global declarations
                             currentLocals = bindArgs(fn, args, null, null);
-                            stack = new ArrayDeque<>();
+                            stack = new FastStack();
                             exceptStack = new ArrayDeque<>();
                             activeExceptions = new ArrayDeque<>();
                             currentFunc = fn.name();
@@ -1856,7 +1858,7 @@ public class Jython3Interpreter {
     // ─── Arithmetic helpers ───────────────────────────────────────────────
 
     private static PyObject unwrapBool(PyObject o) {
-        return (o instanceof PyBool b) ? new PyInt(b.value() ? 1 : 0) : o;
+        return (o instanceof PyBool b) ? (b.value() ? PyInt.ONE : PyInt.ZERO) : o;
     }
 
     private void binaryAdd() {
@@ -1883,7 +1885,7 @@ public class Jython3Interpreter {
                 if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
                     stack.push(new BigInt(java.math.BigInteger.valueOf(res)));
                 } else {
-                    stack.push(new PyInt((int)res));
+                    stack.push(PyInt.of((int)res));
                 }
             } catch (ArithmeticException ae) {
                 stack.push(new BigInt(java.math.BigInteger.valueOf(lv).add(java.math.BigInteger.valueOf(rv))));
@@ -1911,7 +1913,7 @@ public class Jython3Interpreter {
                 if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
                     stack.push(new BigInt(java.math.BigInteger.valueOf(res)));
                 } else {
-                    stack.push(new PyInt((int)res));
+                    stack.push(PyInt.of((int)res));
                 }
             } catch (ArithmeticException ae) {
                 stack.push(new BigInt(java.math.BigInteger.valueOf(lv).subtract(java.math.BigInteger.valueOf(rv))));
@@ -1990,7 +1992,7 @@ public class Jython3Interpreter {
                 if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
                     stack.push(new BigInt(java.math.BigInteger.valueOf(res)));
                 } else {
-                    stack.push(new PyInt((int)res));
+                    stack.push(PyInt.of((int)res));
                 }
             } catch (ArithmeticException ae) {
                 stack.push(new BigInt(java.math.BigInteger.valueOf(lv).multiply(java.math.BigInteger.valueOf(rv))));
@@ -2250,7 +2252,7 @@ public class Jython3Interpreter {
             var savedLine = currentLine;
 
             currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-            stack = new ArrayDeque<>();
+            stack = new FastStack();
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             currentFunc = fn.name();
@@ -2291,21 +2293,31 @@ public class Jython3Interpreter {
                                            PyObject[] posArgs,
                                            String[] kwNames,
                                            PyObject[] kwValues) {
-        var fl = new HashMap<String, PyObject>();
-        // 1. Seed with closure
-        if (fn.closure() != null) fl.putAll(fn.closure());
-
         List<String> params     = fn.params();
         PyObject[]   defaults   = fn.defaults();
         String       argsParam  = fn.argsParam();
         String       kwargsParam = fn.kwargsParam();
         int nParams   = params.size();
         int nDefaults = defaults.length;
+        int nPos = posArgs.length;
+
+        int totalExpected = (fn.closure() != null ? fn.closure().size() : 0) + nParams + 4;
+        var fl = new HashMap<String, PyObject>(Math.max(8, (int)(totalExpected / 0.75f) + 1));
+        // 1. Seed with closure
+        if (fn.closure() != null) fl.putAll(fn.closure());
+
+        // Fast path: pure positional call matching parameter count with no kwargs or varargs
+        if (kwNames == null && nPos == nParams && nDefaults == 0 && argsParam == null && kwargsParam == null) {
+            for (int i = 0; i < nParams; i++) {
+                fl.put(params.get(i), posArgs[i]);
+            }
+            return fl;
+        }
+
         // Index at which defaults start (right-aligned)
         int defaultStart = nParams - nDefaults;
 
         // 2. Assign positional args to params
-        int nPos = posArgs.length;
         int nFill = Math.min(nPos, nParams);
         for (int i = 0; i < nFill; i++) fl.put(params.get(i), posArgs[i]);
 
@@ -2364,10 +2376,10 @@ public class Jython3Interpreter {
         return fl;
     }
 
-    private String debugStack(Deque<PyObject> s, int n) {
-        var items = new java.util.ArrayDeque<>(s);
+    private String debugStack(FastStack s, int n) {
+        if (s == null) return "[]";
         var parts = new java.util.ArrayList<String>();
-        for (int i = 0; i < n && !items.isEmpty(); i++) parts.add(String.valueOf(items.pop()));
+        for (int i = 0; i < n && i < s.size(); i++) parts.add(String.valueOf(s.peek()));
         return parts.toString();
     }
 
@@ -2524,15 +2536,7 @@ public class Jython3Interpreter {
     }
 
     private boolean containsYield(CompiledCode code) {
-        if (code == null || code.bytecode() == null) return false;
-        int[] bc = code.bytecode();
-        for (int instr : bc) {
-            int op = instr >>> 16;
-            if (op >= 0 && op < OP_VALUES.length && OP_VALUES[op] == OpCode.YIELD_VALUE) {
-                return true;
-            }
-        }
-        return false;
+        return code != null && code.hasYield();
     }
 
     private static boolean isJavaRootPackage(String name) {
