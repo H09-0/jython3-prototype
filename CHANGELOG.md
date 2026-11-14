@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **Array Conversion Semantic Fidelity**: Fixed specialized primitive array conversions (`int[]`, `long[]`, `double[]`, `boolean[]`) to support Python coercion semantics (e.g. `[3.14, True] -> int[] {3, 1}`) via `toJavaInt/Long/Double/Boolean` and added array/BigInt resolution support in `scoreParam`.
+- **Bounded Converter Cache**: Capped `CONVERTER_CACHE` with `MAX_CONVERTER_ENTRIES = 512` and auto-eviction.
+- **CI GitHub Actions Workflow**: Fixed multi-line `python-version` YAML parsing error in `.github/workflows/test.yml`.
 - **Builtin `print` Keywords**: Implemented `print(file=..., flush=...)` routing with support for custom file objects (`.write()`) and flush handling.
 - **Builtin `int` Argument Validation**: Fixed `int(obj, base=10)` to reject duplicate `base` argument when passed both positionally and as keyword (`TypeError: int() got multiple values for argument 'base'`).
 - **Project Structure Documentation**: Fixed tree alignment in `docs/PROJECT_STRUCTURE.md` and updated bytecode opcode count to 77.

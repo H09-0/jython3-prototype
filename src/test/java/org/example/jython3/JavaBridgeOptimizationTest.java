@@ -52,6 +52,40 @@ public class JavaBridgeOptimizationTest {
         public String identify(int x) { return "B:" + x; }
     }
 
+    public static class ArrayTarget {
+        public int sumInts(int[] arr) {
+            int s = 0;
+            for (int v : arr) s += v;
+            return s;
+        }
+
+        public double sumDoubles(double[] arr) {
+            double s = 0.0;
+            for (double v : arr) s += v;
+            return s;
+        }
+
+        public String concatStrings(String[] arr) {
+            return String.join("-", arr);
+        }
+
+        public int countTrues(boolean[] arr) {
+            int count = 0;
+            for (boolean b : arr) if (b) count++;
+            return count;
+        }
+
+        public String describeBigInt(java.math.BigInteger bi) {
+            return "big:" + bi.toString();
+        }
+
+        public long sumLongs(long[] arr) {
+            long s = 0;
+            for (long v : arr) s += v;
+            return s;
+        }
+    }
+
     private static final JavaAccessPolicy TEST_POLICY = new JavaAccessPolicy() {
         @Override public boolean canAccessClass(String binaryName) { return true; }
         @Override public boolean canConstructClass(String binaryName, String descriptor) { return true; }
@@ -216,5 +250,50 @@ public class JavaBridgeOptimizationTest {
         interpB.eval("inst_b = TargetClass('alpha')\ntag_b = inst_b.getTag()");
         // Must fall back to (Object) constructor without throwing SecurityError
         assertEquals(new PyStr("ctor:obj:alpha"), interpB.getGlobal("tag_b"));
+    }
+
+    @Test
+    @DisplayName("Fast array conversion handles int[], double[], String[], boolean[], long[] correctly")
+    void testArrayConversions() {
+        var interp = new Jython3Interpreter(TEST_POLICY);
+        interp.setGlobal("target", JavaBridge.toPyObject(new ArrayTarget(), TEST_POLICY));
+
+        interp.eval("""
+            # int[] with mixed types: [3.14, True, 42] -> 3 + 1 + 42 = 46
+            r_int = target.sumInts([3.14, True, 42])
+
+            # double[] with mixed types: [10, 2.5, False] -> 10.0 + 2.5 + 0.0 = 12.5
+            r_dbl = target.sumDoubles([10, 2.5, False])
+
+            # String[]: ["alpha", "beta", "gamma"] -> "alpha-beta-gamma"
+            r_str = target.concatStrings(["alpha", "beta", "gamma"])
+
+            # boolean[]: [True, False, 1, 0, "", "hello"] -> 3 trues (True, 1, "hello")
+            r_bool = target.countTrues([True, False, 1, 0, "", "hello"])
+            """);
+
+        assertEquals(new PyInt(46), interp.getGlobal("r_int"));
+        assertEquals(new org.example.jython3.runtime.PyFloat(12.5), interp.getGlobal("r_dbl"));
+        assertEquals(new PyStr("alpha-beta-gamma"), interp.getGlobal("r_str"));
+        assertEquals(new PyInt(3), interp.getGlobal("r_bool"));
+    }
+
+    @Test
+    @DisplayName("Large values and BigInt conversion")
+    void testBigIntAndLargeValuesConversion() {
+        var interp = new Jython3Interpreter(TEST_POLICY);
+        interp.setGlobal("target", JavaBridge.toPyObject(new ArrayTarget(), TEST_POLICY));
+
+        interp.eval("""
+            # Large BigInt passed to BigInteger parameter
+            large_val = 10 ** 25
+            r_big = target.describeBigInt(large_val)
+
+            # Large long array
+            r_longs = target.sumLongs([10000000000, 20000000000])
+            """);
+
+        assertEquals(new PyStr("big:10000000000000000000000000"), interp.getGlobal("r_big"));
+        assertEquals(new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(30000000000L)), interp.getGlobal("r_longs"));
     }
 }

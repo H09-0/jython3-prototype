@@ -294,16 +294,10 @@ public class JavaBridge {
         }
 
         if (targetType == int.class || targetType == Integer.class) {
-            if (pyObj instanceof PyInt i) return i.value();
-            if (pyObj instanceof PyFloat f) return (int) f.value();
-            if (pyObj instanceof PyBool b) return b.value() ? 1 : 0;
-            return Integer.parseInt(pyObj.toString());
+            return toJavaInt(pyObj);
         }
         if (targetType == long.class || targetType == Long.class) {
-            if (pyObj instanceof PyInt i) return (long) i.value();
-            if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().longValue();
-            if (pyObj instanceof PyFloat f) return (long) f.value();
-            return Long.parseLong(pyObj.toString());
+            return toJavaLong(pyObj);
         }
         if (targetType == java.math.BigInteger.class) {
             if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value();
@@ -312,13 +306,13 @@ public class JavaBridge {
             return new java.math.BigInteger(pyObj.toString());
         }
         if (targetType == double.class || targetType == Double.class) {
-            return PyOps.toDouble(pyObj);
+            return toJavaDouble(pyObj);
         }
         if (targetType == float.class || targetType == Float.class) {
-            return (float) PyOps.toDouble(pyObj);
+            return (float) toJavaDouble(pyObj);
         }
         if (targetType == boolean.class || targetType == Boolean.class) {
-            return PyOps.isTruthy(pyObj);
+            return toJavaBoolean(pyObj);
         }
         if (targetType == byte.class || targetType == Byte.class) {
             if (pyObj instanceof PyInt i) return (byte) i.value();
@@ -381,15 +375,35 @@ public class JavaBridge {
             if (componentType == int.class) {
                 int[] arr = new int[len];
                 for (int i = 0; i < len; i++) {
-                    PyObject it = list.items().get(i);
-                    arr[i] = it instanceof PyInt pi ? pi.value() : Integer.parseInt(it.toString());
+                    arr[i] = toJavaInt(list.items().get(i));
+                }
+                return arr;
+            }
+            if (componentType == long.class) {
+                long[] arr = new long[len];
+                for (int i = 0; i < len; i++) {
+                    arr[i] = toJavaLong(list.items().get(i));
                 }
                 return arr;
             }
             if (componentType == double.class) {
                 double[] arr = new double[len];
                 for (int i = 0; i < len; i++) {
-                    arr[i] = PyOps.toDouble(list.items().get(i));
+                    arr[i] = toJavaDouble(list.items().get(i));
+                }
+                return arr;
+            }
+            if (componentType == float.class) {
+                float[] arr = new float[len];
+                for (int i = 0; i < len; i++) {
+                    arr[i] = (float) toJavaDouble(list.items().get(i));
+                }
+                return arr;
+            }
+            if (componentType == boolean.class) {
+                boolean[] arr = new boolean[len];
+                for (int i = 0; i < len; i++) {
+                    arr[i] = toJavaBoolean(list.items().get(i));
                 }
                 return arr;
             }
@@ -436,9 +450,40 @@ public class JavaBridge {
 
     private static final Map<Class<?>, TypeConverter> CONVERTER_CACHE = new ConcurrentHashMap<>();
 
+    public static int toJavaInt(PyObject pyObj) {
+        if (pyObj instanceof PyInt i) return i.value();
+        if (pyObj instanceof PyFloat f) return (int) f.value();
+        if (pyObj instanceof PyBool b) return b.value() ? 1 : 0;
+        if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().intValue();
+        if (pyObj instanceof PyNull) return 0;
+        return Integer.parseInt(pyObj.toString());
+    }
+
+    public static long toJavaLong(PyObject pyObj) {
+        if (pyObj instanceof PyInt i) return (long) i.value();
+        if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().longValue();
+        if (pyObj instanceof PyFloat f) return (long) f.value();
+        if (pyObj instanceof PyBool b) return b.value() ? 1L : 0L;
+        if (pyObj instanceof PyNull) return 0L;
+        return Long.parseLong(pyObj.toString());
+    }
+
+    public static double toJavaDouble(PyObject pyObj) {
+        return PyOps.toDouble(pyObj);
+    }
+
+    public static boolean toJavaBoolean(PyObject pyObj) {
+        return PyOps.isTruthy(pyObj);
+    }
+
+    private static final int MAX_CONVERTER_ENTRIES = 512;
+
     public static TypeConverter getConverter(Class<?> targetType) {
         TypeConverter cached = CONVERTER_CACHE.get(targetType);
         if (cached != null) return cached;
+        if (CONVERTER_CACHE.size() >= MAX_CONVERTER_ENTRIES) {
+            CONVERTER_CACHE.clear();
+        }
         TypeConverter conv = buildConverter(targetType);
         CONVERTER_CACHE.put(targetType, conv);
         return conv;
@@ -446,31 +491,19 @@ public class JavaBridge {
 
     private static TypeConverter buildConverter(Class<?> targetType) {
         if (targetType == int.class || targetType == Integer.class) {
-            return (pyObj, policy) -> {
-                if (pyObj instanceof PyInt i) return i.value();
-                if (pyObj instanceof PyFloat f) return (int) f.value();
-                if (pyObj instanceof PyBool b) return b.value() ? 1 : 0;
-                if (pyObj instanceof PyNull) return 0;
-                return Integer.parseInt(pyObj.toString());
-            };
+            return (pyObj, policy) -> toJavaInt(pyObj);
         }
         if (targetType == double.class || targetType == Double.class) {
-            return (pyObj, policy) -> PyOps.toDouble(pyObj);
+            return (pyObj, policy) -> toJavaDouble(pyObj);
         }
         if (targetType == float.class || targetType == Float.class) {
-            return (pyObj, policy) -> (float) PyOps.toDouble(pyObj);
+            return (pyObj, policy) -> (float) toJavaDouble(pyObj);
         }
         if (targetType == long.class || targetType == Long.class) {
-            return (pyObj, policy) -> {
-                if (pyObj instanceof PyInt i) return (long) i.value();
-                if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().longValue();
-                if (pyObj instanceof PyFloat f) return (long) f.value();
-                if (pyObj instanceof PyNull) return 0L;
-                return Long.parseLong(pyObj.toString());
-            };
+            return (pyObj, policy) -> toJavaLong(pyObj);
         }
         if (targetType == boolean.class || targetType == Boolean.class) {
-            return (pyObj, policy) -> PyOps.isTruthy(pyObj);
+            return (pyObj, policy) -> toJavaBoolean(pyObj);
         }
         if (targetType == String.class || targetType == CharSequence.class) {
             return (pyObj, policy) -> {
@@ -639,8 +672,18 @@ public class JavaBridge {
             return -1;
         }
         if (p == long.class || p == Long.class) {
-            if (a instanceof PyInt) return 10;
+            if (a instanceof PyInt || a instanceof org.example.jython3.runtime.BigInt) return 10;
             if (a instanceof PyFloat) return 5;
+            return -1;
+        }
+        if (p == java.math.BigInteger.class) {
+            if (a instanceof org.example.jython3.runtime.BigInt) return 10;
+            if (a instanceof PyInt) return 8;
+            return -1;
+        }
+        if (p.isArray()) {
+            if (a instanceof PyList) return 10;
+            if (a instanceof PyJavaObject jo && jo.object().getClass().isArray()) return 10;
             return -1;
         }
         if (p == double.class || p == Double.class) {

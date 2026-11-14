@@ -32,12 +32,10 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up CPython (target: 3.14-dev / 3.13 fallback)
+      - name: Set up CPython
         uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.14-dev
-            3.13
+          python-version: '3.13'
           allow-prereleases: true
 
       - name: Record Environment Baseline
