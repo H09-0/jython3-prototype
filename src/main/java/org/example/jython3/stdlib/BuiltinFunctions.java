@@ -524,6 +524,10 @@ public final class BuiltinFunctions {
                 inst.setField(s.value(), args[2]);
                 return new PyNull();
             }
+            if (args[0] instanceof org.example.jython3.runtime.PyClass cls) {
+                cls.setMember(s.value(), args[2]);
+                return new PyNull();
+            }
             if (args[0] instanceof PyModule mod) {
                 mod.attrs().put(s.value(), args[2]);
                 return new PyNull();

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **Class Hierarchy Versioning & Generation Stamps**: Introduced `PyClass.version()` counter and recursive `invalidateHierarchy()` propagation across subclasses in `PyClass`.
+- **Version-Guarded Monomorphic Inline Caching**: Added class-version verification to `AttrCacheEntry` in `LOAD_ATTR` to guarantee stale method/attribute references are never returned after class mutations.
+- **Version-Guarded Bound Method Caching**: Added class version checks to `PyInstance.boundMethodCache` ensuring replaced methods immediately reflect on existing instances.
+- **Inline Cache Correctness Regression Suite**: Added `InlineCacheCorrectnessTest` covering method replacement, base class mutation propagation, instance field shadowing, and polymorphic call sites (360 total tests passing).
 - **Monomorphic Inline Caching (`LOAD_ATTR`)**: Per-instruction call-site caching in `CompiledCode.attrCache` eliminating repeated inheritance tree and map lookups for class methods.
 - **Inlined Bound Method Dispatch**: Inlined `PyBoundMethod` invocation directly into the interpreter loop (`continue outer`) in `CALL_FUNCTION` and `CALL_FUNCTION_KW`, eliminating nested interpreter frames.
 - **Class Member Resolution Caching (`PyClass.lookupMember`)**: Added `memberCache` to `PyClass` to resolve inherited methods in $O(1)$ time after initial lookup.
@@ -24,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Performance Benchmark Suite (Step 1, 2, 3)**: Reproducible micro-benchmark suite (`BenchmarkSuite`) measuring 8 core execution workloads with isolated compilation and execution timing.
 - **Full Scoping with `nonlocal` and `PyCell`**: Integrated `PyCell` mutable cell bindings into the compiler and interpreter, enabling lexical closure mutations across arbitrary nested enclosing scopes.
 - **Gradle Benchmark Task**: Added `./gradlew benchmark` task for automated performance baseline profiling with separate Compile and Execution metrics.
-- **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (353 automated tests passing green).
+- **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (360 automated tests passing green).
 
 ### Fixed
 - **Builtin `print` Keywords**: Implemented `print(file=..., flush=...)` routing with support for custom file objects (`.write()`) and flush handling.

@@ -8,6 +8,7 @@ public final class PyInstance implements PyObject {
     private final PyClass pyClass;
     private final Map<String, PyObject> fields = new HashMap<>();
     private Map<String, PyBoundMethod> boundMethodCache;
+    private long lastClassVersion = -1;
 
     public PyInstance(PyClass pyClass) {
         this.pyClass = pyClass;
@@ -33,7 +34,14 @@ public final class PyInstance implements PyObject {
         }
         PyObject member = pyClass.lookupMember(name);
         if (member instanceof PyFunction fn) {
-            if (boundMethodCache == null) boundMethodCache = new HashMap<>(4);
+            long currentVer = pyClass.version();
+            if (boundMethodCache == null) {
+                boundMethodCache = new HashMap<>(4);
+                lastClassVersion = currentVer;
+            } else if (lastClassVersion != currentVer) {
+                boundMethodCache.clear();
+                lastClassVersion = currentVer;
+            }
             PyBoundMethod cached = boundMethodCache.get(name);
             if (cached != null) return cached;
             PyBoundMethod bm = new PyBoundMethod(this, fn);

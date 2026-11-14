@@ -1,14 +1,12 @@
 package org.example.jython3.runtime;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
+import java.util.WeakHashMap;
 
 public final class PyClass implements PyObject {
     private final String name;
@@ -16,6 +14,9 @@ public final class PyClass implements PyObject {
     private final Map<String, PyObject> members;
     private final java.util.List<PyClass> bases = new java.util.ArrayList<>();
     private final Map<String, PyObject> memberCache = new HashMap<>();
+    private final Set<PyClass> subclasses = Collections.newSetFromMap(new WeakHashMap<>());
+    private long version = 1;
+
     /**
      * Marks the root of the exception hierarchy. Every class that has this
      * class in its base list is an exception type; the flag is inherited, not
@@ -27,7 +28,10 @@ public final class PyClass implements PyObject {
         this.name = name;
         this.baseClass = baseClass;
         this.members = members == null ? new HashMap<>() : members;
-        if (baseClass != null) this.bases.add(baseClass);
+        if (baseClass != null) {
+            this.bases.add(baseClass);
+            baseClass.addSubclass(this);
+        }
     }
 
     public PyClass(String name, PyClass baseClass, Map<String, PyObject> members, java.util.List<PyClass> basesList) {
@@ -36,8 +40,12 @@ public final class PyClass implements PyObject {
         this.members = members == null ? new HashMap<>() : members;
         if (basesList != null) {
             this.bases.addAll(basesList);
+            for (PyClass b : basesList) {
+                b.addSubclass(this);
+            }
         } else if (baseClass != null) {
             this.bases.add(baseClass);
+            baseClass.addSubclass(this);
         }
     }
 
@@ -46,8 +54,41 @@ public final class PyClass implements PyObject {
     public Map<String, PyObject> members() { return members; }
     public java.util.List<PyClass> getBases() { return bases; }
 
+    public long version() {
+        return version;
+    }
+
+    public void addSubclass(PyClass sub) {
+        if (sub != null) {
+            subclasses.add(sub);
+        }
+    }
+
+    /**
+     * Invalidates member caches and increments the class version counter for this
+     * class and all derived subclasses across the inheritance tree.
+     */
+    public void invalidateHierarchy() {
+        this.version++;
+        this.memberCache.clear();
+        for (PyClass sub : subclasses) {
+            sub.invalidateHierarchy();
+        }
+    }
+
+    public void setMember(String attr, PyObject val) {
+        members.put(attr, val);
+        invalidateHierarchy();
+    }
+
+    public PyObject removeMember(String attr) {
+        PyObject removed = members.remove(attr);
+        invalidateHierarchy();
+        return removed;
+    }
+
     public void clearMemberCache() {
-        memberCache.clear();
+        invalidateHierarchy();
     }
 
     public PyObject lookupMember(String attr) {
@@ -115,5 +156,3 @@ public final class PyClass implements PyObject {
         return "<class '" + name + "'>";
     }
 }
-
-/** Python Class Instance. */

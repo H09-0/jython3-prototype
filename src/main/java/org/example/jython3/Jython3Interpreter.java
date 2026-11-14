@@ -93,7 +93,7 @@ import static org.example.jython3.runtime.PyOps.typeName;
 public class Jython3Interpreter {
 
     // ─── Inline Caches ───────────────────────────────────────────────────
-    private record AttrCacheEntry(PyClass cachedClass, PyObject cachedMember) {}
+    private record AttrCacheEntry(PyClass cachedClass, long cachedClassVersion, PyObject cachedMember) {}
 
     // ─── Module Cache & Loading States ───────────────────────────────────
     private enum ModuleState { INITIALIZING, LOADED }
@@ -928,8 +928,7 @@ public class Jython3Interpreter {
                     } else if (obj instanceof PyModule mod) {
                         mod.attrs().put(attr, val);
                     } else if (obj instanceof PyClass cls) {
-                        cls.members().put(attr, val);
-                        cls.clearMemberCache();
+                        cls.setMember(attr, val);
                     } else if (obj instanceof PyJavaObject jo) {
                         jo.setMember(attr, val);
                     } else {
@@ -1642,19 +1641,20 @@ public class Jython3Interpreter {
                         } else {
                             Object[] cache = code.attrCache();
                             AttrCacheEntry entry = (cache != null && pc < cache.length) ? (AttrCacheEntry) cache[pc] : null;
+                            PyClass cls = inst.pyClass();
                             PyObject member;
-                            if (entry != null && entry.cachedClass() == inst.pyClass()) {
+                            if (entry != null && entry.cachedClass() == cls && entry.cachedClassVersion() == cls.version()) {
                                 member = entry.cachedMember();
                             } else {
-                                member = inst.pyClass().lookupMember(attr);
+                                member = cls.lookupMember(attr);
                                 if (member == null && inst.fields().containsKey(attr)) {
                                     member = inst.fields().get(attr);
                                 }
                                 if (member == null) {
-                                    throw PyErrors.error("AttributeError", "'" + inst.pyClass().name() + "' object has no attribute '" + attr + "'");
+                                    throw PyErrors.error("AttributeError", "'" + cls.name() + "' object has no attribute '" + attr + "'");
                                 }
                                 if (cache != null && pc < cache.length) {
-                                    cache[pc] = new AttrCacheEntry(inst.pyClass(), member);
+                                    cache[pc] = new AttrCacheEntry(cls, cls.version(), member);
                                 }
                             }
                             if (member instanceof PyFunction fn) {
