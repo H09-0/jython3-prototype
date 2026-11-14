@@ -2377,9 +2377,12 @@ public class Jython3Interpreter {
     }
 
     private String debugStack(FastStack s, int n) {
-        if (s == null) return "[]";
+        if (s == null || s.isEmpty()) return "[]";
         var parts = new java.util.ArrayList<String>();
-        for (int i = 0; i < n && i < s.size(); i++) parts.add(String.valueOf(s.peek()));
+        int count = Math.min(n, s.size());
+        for (int i = 0; i < count; i++) {
+            parts.add(String.valueOf(s.get(s.size() - 1 - i)));
+        }
         return parts.toString();
     }
 

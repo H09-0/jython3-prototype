@@ -193,24 +193,24 @@ public class BenchmarkSuite {
             interpreter.evalCode(code, "<benchmark-warmup>");
         }
 
-        // Force GC before measurements
-        System.gc();
-        try { Thread.sleep(50); } catch (InterruptedException ignored) {}
-
-        long memoryBefore = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
         List<Double> durationsMs = new ArrayList<>();
+        long totalMemorySampled = 0;
 
         // 3. Measurement cycles: pure VM execution of precompiled bytecode
         for (int m = 0; m < measure; m++) {
             interpreter.resetExecutionState();
+            long memStart = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
             long start = System.nanoTime();
             interpreter.evalCode(code, "<benchmark>");
             long elapsed = System.nanoTime() - start;
+            long memEnd = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
             durationsMs.add(elapsed / 1_000_000.0);
+            if (memEnd > memStart) {
+                totalMemorySampled += (memEnd - memStart);
+            }
         }
 
-        long memoryAfter = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-        long memUsed = Math.max(0, memoryAfter - memoryBefore);
+        long memUsed = measure > 0 ? (totalMemorySampled / measure) : 0;
 
         double sum = 0;
         double min = Double.MAX_VALUE;

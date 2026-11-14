@@ -44,6 +44,13 @@ public final class FastStack {
         return elements[sp - 1];
     }
 
+    public PyObject get(int index) {
+        if (index < 0 || index >= sp) {
+            throw new IndexOutOfBoundsException("Index " + index + ", size " + sp);
+        }
+        return elements[index];
+    }
+
     public int size() {
         return sp;
     }
