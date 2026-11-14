@@ -44,11 +44,100 @@ import org.example.jython3.security.JavaAccessPolicy;
  */
 public class JavaBridge {
 
-    /** Method resolution cache: (TargetClass#MethodName#ArgTypes) -> MethodMatch */
-    private static final Map<String, MethodMatch> METHOD_CACHE = new ConcurrentHashMap<>();
+    public record MethodResolutionKey(Class<?> targetClass, String methodName, Class<?>[] argTypes, int argCount) {
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof MethodResolutionKey other)) return false;
+            return argCount == other.argCount &&
+                   targetClass == other.targetClass &&
+                   methodName.equals(other.methodName) &&
+                   Arrays.equals(argTypes, other.argTypes);
+        }
 
-    /** Constructor resolution cache: (TargetClass#ArgTypes) -> ConstructorMatch */
-    private static final Map<String, ConstructorMatch> CONSTRUCTOR_CACHE = new ConcurrentHashMap<>();
+        @Override
+        public int hashCode() {
+            int result = targetClass.hashCode();
+            result = 31 * result + methodName.hashCode();
+            result = 31 * result + argCount;
+            result = 31 * result + Arrays.hashCode(argTypes);
+            return result;
+        }
+    }
+
+    public record ConstructorResolutionKey(Class<?> targetClass, Class<?>[] argTypes, int argCount) {
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof ConstructorResolutionKey other)) return false;
+            return argCount == other.argCount &&
+                   targetClass == other.targetClass &&
+                   Arrays.equals(argTypes, other.argTypes);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = targetClass.hashCode();
+            result = 31 * result + argCount;
+            result = 31 * result + Arrays.hashCode(argTypes);
+            return result;
+        }
+    }
+
+    private static final Map<MethodResolutionKey, MethodMatch> METHOD_CACHE = new ConcurrentHashMap<>();
+    private static final Map<ConstructorResolutionKey, ConstructorMatch> CONSTRUCTOR_CACHE = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, Map<String, List<Method>>> CLASS_INSTANCE_METHODS = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, Map<String, List<Method>>> CLASS_STATIC_METHODS = new ConcurrentHashMap<>();
+    private static final Class<?>[] EMPTY_CLASSES = new Class<?>[0];
+
+    public static void clearResolutionCache() {
+        METHOD_CACHE.clear();
+        CONSTRUCTOR_CACHE.clear();
+        CLASS_INSTANCE_METHODS.clear();
+        CLASS_STATIC_METHODS.clear();
+    }
+
+    public static Class<?>[] extractArgTypes(PyObject[] args) {
+        if (args == null || args.length == 0) return EMPTY_CLASSES;
+        Class<?>[] types = new Class<?>[args.length];
+        for (int i = 0; i < args.length; i++) {
+            PyObject a = args[i];
+            if (a instanceof PyJavaObject jo) {
+                types[i] = jo.object() != null ? jo.object().getClass() : Void.class;
+            } else if (a == null || a instanceof PyNull) {
+                types[i] = Void.class;
+            } else {
+                types[i] = a.getClass();
+            }
+        }
+        return types;
+    }
+
+    public static List<Method> getInstanceMethodsNamed(Class<?> clazz, String name) {
+        Map<String, List<Method>> byName = CLASS_INSTANCE_METHODS.computeIfAbsent(clazz, c -> {
+            Map<String, List<Method>> map = new java.util.HashMap<>();
+            for (Method m : c.getMethods()) {
+                if (!Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
+                    map.computeIfAbsent(m.getName(), k -> new ArrayList<>()).add(m);
+                }
+            }
+            return map;
+        });
+        return byName.getOrDefault(name, java.util.Collections.emptyList());
+    }
+
+    public static List<Method> getStaticMethodsNamed(Class<?> clazz, String name) {
+        Map<String, List<Method>> byName = CLASS_STATIC_METHODS.computeIfAbsent(clazz, c -> {
+            Map<String, List<Method>> map = new java.util.HashMap<>();
+            for (Method m : c.getMethods()) {
+                if (Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
+                    map.computeIfAbsent(m.getName(), k -> new ArrayList<>()).add(m);
+                }
+            }
+            return map;
+        });
+        return byName.getOrDefault(name, java.util.Collections.emptyList());
+    }
 
     // ─── Class & Package Loading & Resolution ─────────────────────────────
 
@@ -281,8 +370,9 @@ public class JavaBridge {
     public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes) {}
 
     public static MethodMatch findBestMethod(Class<?> clazz, String name, List<Method> methods, PyObject[] args) {
-        String cacheKey = clazz.getName() + "#" + name + "#" + signature(args);
-        MethodMatch cached = METHOD_CACHE.get(cacheKey);
+        Class<?>[] argTypes = extractArgTypes(args);
+        var key = new MethodResolutionKey(clazz, name, argTypes, args.length);
+        MethodMatch cached = METHOD_CACHE.get(key);
         if (cached != null) return cached;
 
         Method best = null;
@@ -306,13 +396,14 @@ public class JavaBridge {
         }
 
         var match = new MethodMatch(best, best.getParameterTypes());
-        METHOD_CACHE.put(cacheKey, match);
+        METHOD_CACHE.put(key, match);
         return match;
     }
 
     public static ConstructorMatch findBestConstructor(Class<?> clazz, PyObject[] args) {
-        String cacheKey = clazz.getName() + "#<init>#" + signature(args);
-        ConstructorMatch cached = CONSTRUCTOR_CACHE.get(cacheKey);
+        Class<?>[] argTypes = extractArgTypes(args);
+        var key = new ConstructorResolutionKey(clazz, argTypes, args.length);
+        ConstructorMatch cached = CONSTRUCTOR_CACHE.get(key);
         if (cached != null) return cached;
 
         Constructor<?> best = null;
@@ -336,7 +427,7 @@ public class JavaBridge {
         }
 
         var match = new ConstructorMatch(best, best.getParameterTypes());
-        CONSTRUCTOR_CACHE.put(cacheKey, match);
+        CONSTRUCTOR_CACHE.put(key, match);
         return match;
     }
 

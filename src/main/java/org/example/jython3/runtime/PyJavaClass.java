@@ -33,13 +33,7 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
         if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
 
         // Static methods
-        List<Method> allStaticMethods = new ArrayList<>();
-        for (Method m : clazz.getMethods()) {
-            if (m.getName().equals(name) && Modifier.isStatic(m.getModifiers())
-                    && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
-                allStaticMethods.add(m);
-            }
-        }
+        List<Method> allStaticMethods = JavaBridge.getStaticMethodsNamed(clazz, name);
         List<Method> staticMethods = permit(allStaticMethods, name);
         if (!staticMethods.isEmpty()) {
             return new PyJavaMethod(null, clazz, name, staticMethods, policy);

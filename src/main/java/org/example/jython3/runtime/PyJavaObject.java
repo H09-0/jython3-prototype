@@ -22,13 +22,7 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
 
         // Instance methods
-        List<Method> allMethods = new ArrayList<>();
-        for (Method m : clazz.getMethods()) {
-            if (m.getName().equals(name) && !Modifier.isStatic(m.getModifiers())
-                    && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
-                allMethods.add(m);
-            }
-        }
+        List<Method> allMethods = JavaBridge.getInstanceMethodsNamed(clazz, name);
         List<Method> methods = allMethods.stream()
                 .filter(m -> policy.canCallMethod(
                         clazz.getName(), name, JavaDescriptors.of(m.getParameterTypes())))

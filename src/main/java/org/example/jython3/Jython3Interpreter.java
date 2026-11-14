@@ -119,6 +119,7 @@ public class Jython3Interpreter {
 
     public void clearCache() {
         bytecodeCache.clear();
+        JavaBridge.clearResolutionCache();
     }
 
     public int getCacheSize() {
