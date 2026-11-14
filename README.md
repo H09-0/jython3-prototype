@@ -70,6 +70,9 @@ cd jython3-prototype
 # Run automated unit tests
 ./gradlew test
 
+# Run performance benchmark suite
+./gradlew benchmark
+
 # Start the interactive REPL
 ./gradlew repl
 

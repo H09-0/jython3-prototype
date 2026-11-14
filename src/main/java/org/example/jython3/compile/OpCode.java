@@ -50,7 +50,11 @@ public enum OpCode {
     // ── sequence unpacking
     UNPACK_SEQUENCE(72),    // raw arg: count — pops one iterable, pushes count items
     // ── assert
-    ASSERT(73);             // raw arg: 0=no message, 1=has message; pops cond [+ msg]
+    ASSERT(73),             // raw arg: 0=no message, 1=has message; pops cond [+ msg]
+    // ── call-site splat (*args and **kwargs)
+    CALL_FUNCTION_EX(74),   // raw arg: 0 = args only, 1 = args + kwargs; stack: [callable, args_list, (kw_dict)]
+    LIST_EXTEND(75),        // pops iterable, extends list on top of stack
+    DICT_MERGE(76);         // pops mapping, merges into dict on top of stack
 
     private final int code;
 

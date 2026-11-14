@@ -2076,9 +2076,14 @@ public class Jython3Interpreter {
     private PyObject callPyCallableKw(PyObject callable, PyObject[] posArgs,
                                       String[] kwNames, PyObject[] kwValues) {
         if (callable instanceof PyBuiltinFunction bf) {
-            // Built-ins only receive positional args; keyword args are unsupported at this layer.
-            // Keyword args to builtins (like print(end='')) require Sprint B stdlib rewrite.
-            return bf.fn().apply(posArgs);
+            Map<String, PyObject> kwMap = Collections.emptyMap();
+            if (kwNames != null && kwNames.length > 0) {
+                kwMap = new LinkedHashMap<>();
+                for (int i = 0; i < kwNames.length; i++) {
+                    kwMap.put(kwNames[i], kwValues[i]);
+                }
+            }
+            return bf.callWithKw(posArgs, kwMap);
         }
         if (callable instanceof PyBoundMethod bm) {
             var callArgs = new PyObject[posArgs.length + 1];

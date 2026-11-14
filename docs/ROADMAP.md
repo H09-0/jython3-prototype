@@ -53,9 +53,16 @@ This document outlines the milestones, completed phases, and future development 
 
 ## Current Status
 
-- **Current Release**: `v0.10.0-alpha` (Pre-production research prototype).
-- **Next Milestone**: `v1.0.0-alpha` (Feature stabilization & expanded differential corpus).
-- Automated test suite: **276 tests passing green in continuous integration**.
+- **Current Release**: `v0.11.0-alpha` (Pre-production research prototype).
+- **Active Track**: High-Performance Execution Engine & GraalPy Performance Alignment.
+  - [x] **Step 1**: Fixed performance benchmark suite (`./gradlew benchmark`).
+  - [ ] **Step 2**: Fast locals array & function call optimization.
+  - [ ] **Step 3**: Inline caches for attributes and type dispatch.
+  - [ ] **Step 4**: Java bridge method resolution caching.
+  - [ ] **Step 5**: `invokedynamic` in hot execution paths.
+  - [ ] **Step 6**: JIT compiler for hot functions.
+  - [ ] **Step 7**: Memory optimization & specialized object representations.
+- Automated test suite: **Passing green in continuous integration**.
 
 ---
 

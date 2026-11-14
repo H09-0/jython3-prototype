@@ -25,6 +25,13 @@ application {
     mainClass.set("org.example.jython3.cli.Repl")
 }
 
+tasks.register<JavaExec>("benchmark") {
+    group = "application"
+    description = "Run Jython 3 performance benchmark suite"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("org.example.jython3.benchmark.BenchmarkSuite")
+}
+
 tasks.register<JavaExec>("runScript") {
     group = "application"
     description = "Run a Python script file"

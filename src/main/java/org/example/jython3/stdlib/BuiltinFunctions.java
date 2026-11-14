@@ -88,20 +88,69 @@ public final class BuiltinFunctions {
             return new PyStr(args[0].toString());
         }));
 
-        // int(obj)
-        define.accept("int", new PyBuiltinFunction("int", args -> {
-            checkArgCount("int", args, 1);
-            PyObject o = args[0];
-            if (o instanceof PyInt) return o;
-            if (o instanceof PyFloat f) return new PyInt((int) f.value());
-            if (o instanceof PyBool b) return new PyInt(b.value() ? 1 : 0);
-            if (o instanceof PyStr s) {
-                try {
-                    return new PyInt(Integer.parseInt(s.value().strip()));
-                } catch (NumberFormatException e) {
-                    throw PyErrors.error("ValueError", "invalid literal for int(): '" + s.value() + "'");
+        // print(*objects, sep=' ', end='\n', file=None, flush=False)
+        define.accept("print", new PyBuiltinFunction("print", (args, kwargs) -> {
+            String sep = " ";
+            String end = "\n";
+            PyObject sepObj = kwargs.get("sep");
+            if (sepObj != null) {
+                if (sepObj instanceof PyStr s) sep = s.value();
+                else if (sepObj instanceof PyNull) sep = "None";
+                else sep = sepObj.toString();
+            }
+            PyObject endObj = kwargs.get("end");
+            if (endObj != null) {
+                if (endObj instanceof PyStr s) end = s.value();
+                else if (endObj instanceof PyNull) end = "None";
+                else end = endObj.toString();
+            }
+            for (String k : kwargs.keySet()) {
+                if (!k.equals("sep") && !k.equals("end") && !k.equals("file") && !k.equals("flush")) {
+                    throw PyErrors.error("TypeError", "print() got an unexpected keyword argument '" + k + "'");
                 }
             }
+            var sb = new StringBuilder();
+            for (int i = 0; i < args.length; i++) {
+                if (i > 0) sb.append(sep);
+                PyObject o = args[i];
+                if (o == null) sb.append("None");
+                else if (o instanceof PyException pe) sb.append(pe.message());
+                else sb.append(o.toString());
+            }
+            sb.append(end);
+            System.out.print(sb);
+            return new PyNull();
+        }));
+
+        // int(obj, base=10)
+        define.accept("int", new PyBuiltinFunction("int", (args, kwargs) -> {
+            if (args.length == 0) return new PyInt(0);
+            if (args.length > 2) throw PyErrors.error("TypeError", "int() takes at most 2 arguments (" + args.length + " given)");
+            int base = 10;
+            if (args.length == 2) {
+                base = toInt(args[1]);
+            } else if (kwargs.containsKey("base")) {
+                base = toInt(kwargs.get("base"));
+            }
+            for (String k : kwargs.keySet()) {
+                if (!k.equals("base")) throw PyErrors.error("TypeError", "int() got an unexpected keyword argument '" + k + "'");
+            }
+            PyObject o = args[0];
+            if (o instanceof PyInt i && base == 10) return i;
+            if (o instanceof PyFloat f && base == 10) return new PyInt((int) f.value());
+            if (o instanceof PyBool b && base == 10) return new PyInt(b.value() ? 1 : 0);
+            if (o instanceof PyStr s) {
+                try {
+                    return new PyInt(Integer.parseInt(s.value().strip(), base));
+                } catch (NumberFormatException e) {
+                    try {
+                        return new BigInt(new java.math.BigInteger(s.value().strip(), base));
+                    } catch (Exception ex) {
+                        throw PyErrors.error("ValueError", "invalid literal for int() with base " + base + ": '" + s.value() + "'");
+                    }
+                }
+            }
+            if (base != 10) throw PyErrors.error("TypeError", "int() can't convert non-string with explicit base");
             throw PyErrors.error("TypeError", "int() argument must be a string or a number, not '" + typeName(o) + "'");
         }));
 
@@ -215,16 +264,42 @@ public final class BuiltinFunctions {
             return new PyList(items);
         }));
 
-        // sorted(iterable)
-        define.accept("sorted", new PyBuiltinFunction("sorted", args -> {
-            checkArgCount("sorted", args, 1);
+        // sorted(iterable, *, key=None, reverse=False)
+        define.accept("sorted", new PyBuiltinFunction("sorted", (args, kwargs) -> {
+            if (args.length != 1) {
+                throw PyErrors.error("TypeError", "sorted() takes 1 positional argument (" + args.length + " given)");
+            }
+            boolean reverse = false;
+            PyObject reverseObj = kwargs.get("reverse");
+            if (reverseObj != null) {
+                reverse = isTruthy(reverseObj);
+            }
+            PyObject keyFn = kwargs.get("key");
+            for (String k : kwargs.keySet()) {
+                if (!k.equals("reverse") && !k.equals("key")) {
+                    throw PyErrors.error("TypeError", "sorted() got an unexpected keyword argument '" + k + "'");
+                }
+            }
             List<PyObject> items;
             if (args[0] instanceof PyList list) items = new ArrayList<>(list.items());
             else if (args[0] instanceof PyTuple t) items = new ArrayList<>(t.items());
+            else if (args[0] instanceof org.example.jython3.runtime.PySet s) items = new ArrayList<>(s.items());
             else if (args[0] instanceof PyStr s) items = s.toCodePointList();
             else if (args[0] instanceof PyDict d) items = new ArrayList<>(d.map().keySet());
             else throw PyErrors.error("TypeError", "sorted() argument must be iterable");
-            items.sort(PyOps::compareObjects);
+
+            if (keyFn != null && !(keyFn instanceof PyNull)) {
+                items.sort((a, b) -> {
+                    PyObject ka = caller.call(keyFn, new PyObject[]{a});
+                    PyObject kb = caller.call(keyFn, new PyObject[]{b});
+                    return compareObjects(ka, kb);
+                });
+            } else {
+                items.sort(PyOps::compareObjects);
+            }
+            if (reverse) {
+                Collections.reverse(items);
+            }
             return new PyList(items);
         }));
 

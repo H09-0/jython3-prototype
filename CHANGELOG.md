@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.11.0-alpha] - 2026-11-14
+### Added
+- **Performance Benchmark Suite (Step 1)**: Reproducible micro-benchmark suite (`BenchmarkSuite`) measuring 8 core execution workloads (arithmetic loops, recursive Fibonacci, function call overhead, OOP instantiation & method dispatch, list/dict operations, string processing, and Java bridge reflection).
+- **Gradle Benchmark Task**: Added `./gradlew benchmark` task for automated performance baseline profiling.
+- **Benchmark Smoke Tests**: Added `BenchmarkSmokeTest` integrated into JUnit suite.
+
+---
+
 ## [v0.10.0-alpha] - 2026-10-26
 ### Added
 - **Core Numeric Model (P1.0 & P1.1)**: True division `/` always producing `float`, integer-power semantics using BigInteger exponentiation, and `PyOps` exact numeric operations.

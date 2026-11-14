@@ -27,8 +27,10 @@ jython3-prototype/
     │   ├── antlr/org/example/jython3/
     │   │   └── Jython3.g4          # ANTLR4 grammar for Python 3 syntax (expressions, statements, OOP)
     │   └── java/org/example/jython3/
-    │       ├── Jython3Interpreter.java # Main interpreter entry point, cache manager & stack VM loop
-    │       ├── bridge/             # Bidirectional Java <-> Python interoperability
+│       ├── Jython3Interpreter.java # Main interpreter entry point, cache manager & stack VM loop
+│       ├── benchmark/          # Reproducible performance benchmarking
+│       │   └── BenchmarkSuite.java # Performance suite & CLI runner across core workloads
+│       ├── bridge/             # Bidirectional Java <-> Python interoperability
     │       │   └── JavaBridge.java # Reflection dispatcher, argument converter, overload resolver
     │       ├── cli/                # Command-line interfaces
     │       │   ├── Repl.java       # Interactive Python REPL with block & delimiter awareness

@@ -156,6 +156,7 @@ public final class PyOps {
                 case PyGenerator g -> true;
                 case PySuper s -> true;
                 case PySlice sl -> true;
+                case PyCell c -> c.isBound() && isTruthy(c.get());
         };
     }
 
@@ -290,6 +291,7 @@ public final class PyOps {
             case PyGenerator g -> "generator";
             case PySuper s -> "super";
             case PySlice sl -> "slice";
+            case PyCell c -> c.isBound() ? typeName(c.get()) : "cell";
         };
     }
 
