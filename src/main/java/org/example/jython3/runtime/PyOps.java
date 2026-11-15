@@ -166,6 +166,16 @@ public final class PyOps {
     public static boolean pyEquals(PyObject a, PyObject b) {
         if (a instanceof PyNull && b instanceof PyNull) return true;
         if (a instanceof PyBool ab && b instanceof PyBool bb) return ab.value() == bb.value();
+        if (a instanceof PyBool ab && b instanceof PyInt bi) return (ab.value() ? 1 : 0) == bi.value();
+        if (a instanceof PyInt ai && b instanceof PyBool bb) return ai.value() == (bb.value() ? 1 : 0);
+        if (a instanceof PyBool ab && b instanceof BigInt bb) {
+            return bb.value().equals(ab.value() ? java.math.BigInteger.ONE : java.math.BigInteger.ZERO);
+        }
+        if (a instanceof BigInt ba && b instanceof PyBool bb) {
+            return ba.value().equals(bb.value() ? java.math.BigInteger.ONE : java.math.BigInteger.ZERO);
+        }
+        if (a instanceof PyBool ab && b instanceof PyFloat bf) return (ab.value() ? 1.0 : 0.0) == bf.value();
+        if (a instanceof PyFloat af && b instanceof PyBool bb) return af.value() == (bb.value() ? 1.0 : 0.0);
         if (a instanceof PyInt ai && b instanceof PyInt bi) return ai.value() == bi.value();
         if (a instanceof BigInt ba && b instanceof BigInt bb) return ba.value().equals(bb.value());
         if (a instanceof BigInt ba && b instanceof PyInt bi) return ba.value().equals(java.math.BigInteger.valueOf(bi.value()));
@@ -196,8 +206,11 @@ public final class PyOps {
         if (a instanceof PySet sa && b instanceof PySet sb) {
             return sa.equals(sb);
         }
+        if (a instanceof PyBoundMethod ma && b instanceof PyBoundMethod mb) {
+            return ma.instance() == mb.instance() && ma.fn() == mb.fn();
+        }
         if (a instanceof PyClass || a instanceof PyException || a instanceof PyFunction
-                || a instanceof PyBuiltinFunction || a instanceof PyBoundMethod
+                || a instanceof PyBuiltinFunction
                 || a instanceof PyInstance || a instanceof PyModule
                 || a instanceof PyTraceback || a instanceof PyFrameInfo || a instanceof PyCodeInfo) {
             return a == b;

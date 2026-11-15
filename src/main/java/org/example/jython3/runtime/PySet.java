@@ -42,6 +42,26 @@ public final class PySet implements PyObject {
         return entries.containsKey(new PyKey(v));
     }
 
+    /** Removes {@code v} if present; returns {@code true} if removed. Raises {@code TypeError} if unhashable. */
+    public boolean remove(PyObject v) {
+        return entries.remove(new PyKey(v)) != null;
+    }
+
+    /** Removes and returns an element, or throws {@code KeyError} when empty. */
+    public PyObject pop() {
+        var it = entries.entrySet().iterator();
+        if (!it.hasNext()) {
+            throw PyErrors.error("KeyError", "pop from an empty set");
+        }
+        PyObject val = it.next().getValue();
+        it.remove();
+        return val;
+    }
+
+    public void clear() { entries.clear(); }
+
+    public PySet copy() { return new PySet(entries.values()); }
+
     public int size() { return entries.size(); }
 
     public boolean isEmpty() { return entries.isEmpty(); }

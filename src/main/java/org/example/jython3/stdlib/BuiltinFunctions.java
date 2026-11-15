@@ -632,7 +632,7 @@ public final class BuiltinFunctions {
     }
 
     /** Collects any supported iterable (including generators, iterators, sets, Java iterables) into a mutable List. */
-    private static List<PyObject> collectIterable(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
+    public static List<PyObject> collectIterable(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
         if (o instanceof PyList list) return new ArrayList<>(list.items());
         if (o instanceof PyTuple tuple) return new ArrayList<>(tuple.items());
         if (o instanceof org.example.jython3.runtime.PySet s) return new ArrayList<>(s.items());

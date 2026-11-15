@@ -33,17 +33,27 @@ class HashEqualitySemanticsTest {
                 {True: 1} == {1: 1},
                 {"a": 1} == {"a": 1.0},
                 {(1, 2): "t"} == {(1.0, 2): "t"},
+                {((1, 2), (True,)): "v"}[((1.0, 2.0), (1,))] == "v",
                 {10 ** 20: 1} == {float(10 ** 20): 1},
+                {10 ** 20: "big"}[float(10 ** 20)] == "big",
+                (10 ** 400 == True) == False,
+                (10 ** 400 == 1.0) == False,
+                (True in {10 ** 400: 1}) == False,
+                hash(1) == hash(1.0) and hash(1) == hash(True),
+                hash(0) == hash(0.0) and hash(0) == hash(False),
+                {1: "a"}[1.0] == "a",
+                {1.0: "a"}[True] == "a",
                 not ({1: 0} != {1.0: 0}),
                 {1: 0} != {1: 0, 2: 0},
                 1.0 in {1: 0},
                 True in {1: 0},
                 (2 in {1: 0}) == False,
             ]
-            d = {1: "int"}
+            d = {1: "int", 2: "two"}
             d[1.0] = "float"
             d[True] = "bool"
-            checks.append(len(d) == 1 and d[1] == "bool")
+            d[3] = "three"
+            checks.append(len(d) == 3 and d[1] == "bool" and d.keys() == [1, 2, 3])
             lit = {1: "a", 1.0: "b", True: "c"}
             checks.append(len(lit) == 1 and lit[1] == "c")
             ok = False not in checks
@@ -99,5 +109,61 @@ class HashEqualitySemanticsTest {
         assertFalse(s.contains(PyInt.of(2)));
         assertThrows(InterpreterException.class, () -> s.add(new PyList(new java.util.ArrayList<>())));
         assertThrows(UnsupportedOperationException.class, () -> s.items().clear(), "items() is read-only");
+    }
+
+    @Test
+    @DisplayName("set iteration and methods: add, remove, discard, pop, clear, copy, union, intersection, difference, update")
+    void setMethodsAndIteration() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            s = {1, 2}
+            s.add(1.0)
+            s.add(3)
+            iter_seen = []
+            for x in s:
+                iter_seen.append(x)
+
+            s.discard(2.0)
+            s.discard(99)
+            s.remove(3)
+
+            c = s.copy()
+            c.add(4)
+
+            popped = c.pop()
+            c.clear()
+
+            u = {1, 2}.union([2.0, 3], (4,))
+            inter = {1, 2, 3}.intersection([2.0, 3, 9], {3.0, 2})
+            diff = {1, 2, 3}.difference([2.0], {3})
+            upd = {1}
+            upd.update([1.0, 2], (3,))
+
+            def gen():
+                yield 10
+                yield 20
+            ug = {10}.union(gen())
+
+            checks = [
+                iter_seen == [1, 2, 3],
+                s == {1},
+                popped in {1, 4},
+                len(c) == 0 and c == set(),
+                u == {1, 2, 3, 4},
+                inter == {2, 3},
+                diff == {1},
+                upd == {1, 2, 3},
+                ug == {10, 20},
+            ]
+            ok = False not in checks
+            """);
+        assertEquals(PyBool.TRUE, interp.getGlobal("ok"), String.valueOf(interp.getGlobal("checks")));
+
+        var ke = assertThrows(InterpreterException.class, () -> interp.eval("s = {1}\ns.remove(99)"));
+        assertEquals("KeyError", ke.typeName());
+        var pe = assertThrows(InterpreterException.class, () -> interp.eval("s = set()\ns.pop()"));
+        assertEquals("KeyError", pe.typeName());
+        var ue = assertThrows(InterpreterException.class, () -> interp.eval("s = {1}\ns.discard([1])"));
+        assertEquals("TypeError", ue.typeName());
     }
 }

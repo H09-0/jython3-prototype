@@ -379,8 +379,10 @@ public class CoreDifferentialTest {
                 + "print({1: 0} != {1.0: 0}, {(1, 2): 't'} == {(1.0, 2): 't'}, {10 ** 20: 1} == {float(10 ** 20): 1})\n"
                 + "print({1: [1, 2]} == {1: [1, 2]}, {1: {2: 3}} == {1: {2: 3}}, {1: 0} == {1: 0, 2: 0})");
         assertMatchesCPython("dict_numeric_key_collapse",
-                "d = {1: 'int'}\nd[1.0] = 'float'\nd[True] = 'bool'\nprint(len(d), d[1], d)\n"
+                "d = {1: 'int', 2: 'two'}\nd[1.0] = 'float'\nd[True] = 'bool'\nprint(len(d), d[1], list(d.keys()), d)\n"
                 + "lit = {1: 'a', 1.0: 'b', True: 'c'}\nprint(lit, len(lit))\n"
+                + "print({1: 'a'}[1.0], {1.0: 'a'}[True], hash(1) == hash(1.0) and hash(1) == hash(True))\n"
+                + "print({((1, 2), (True,)): 'v'}[((1.0, 2.0), (1,))], 10**400 == True, 10**400 == 1.0)\n"
                 + "print({1: 0}.get(1.0), 1.0 in {1: 0}, True in {1: 0}, 2 in {1: 0})");
         assertMatchesCPython("set_numeric_collapse_and_membership",
                 "print(len({1, 1.0, True}), len({0, 0.0, False}), 1.0 in {1}, True in {1}, len({(1, 2), (1.0, 2)}))\n"
@@ -388,7 +390,9 @@ public class CoreDifferentialTest {
                 + "s = set()\nprint(s, len(s), bool(s), bool({0}))\n"
                 + "print({'x'}, {1.5}, sorted({3, 1, 2}))\n"
                 + "c = {v % 3 for v in range(10)}\nprint(sorted(c), len(c))\n"
-                + "print(len(set([1, 1.0, 2, True])), sorted(set('abca')), isinstance({1}, set), isinstance([1], set))");
+                + "print(len(set([1, 1.0, 2, True])), sorted(set('abca')), isinstance({1}, set), isinstance([1], set))\n"
+                + "s2 = {1, 2}\ns2.add(3)\ns2.discard(2.0)\ns2.remove(3)\nprint(sorted(s2))\n"
+                + "print(sorted({1, 2}.union([2.0, 3])), {1, 2, 3}.intersection([2.0, 3]) == {2, 3}, sorted({1, 2, 3}.difference([2.0])))");
         assertMatchesCPython("unhashable_keys_raise_type_error",
                 "for label, make, typ in [('list-key', lambda: {[1]: 1}, 'list'), ('set-elem', lambda: {[1]}, 'list'),\n"
                 + "                         ('set-key', lambda: {{1}: 1}, 'set'), ('dict-in-set', lambda: {{}}, 'dict')]:\n"

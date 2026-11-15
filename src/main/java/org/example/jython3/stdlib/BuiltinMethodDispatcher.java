@@ -11,6 +11,7 @@ import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PySet;
 import org.example.jython3.runtime.PyStr;
+import org.example.jython3.security.JavaAccessPolicy;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -89,11 +90,82 @@ public final class BuiltinMethodDispatcher {
     }
 
     public static PyObject setMethod(PySet set, String method) {
+        return setMethod(set, method, org.example.jython3.security.DenyAllPolicy.INSTANCE);
+    }
+
+    public static PyObject setMethod(PySet set, String method, JavaAccessPolicy policy) {
         return switch (method) {
             case "add" -> new PyBuiltinFunction("set.add", args -> {
                 checkArgCount("set.add", args, 1);
                 set.add(args[0]);
                 return new PyNull();
+            });
+            case "remove" -> new PyBuiltinFunction("set.remove", args -> {
+                checkArgCount("set.remove", args, 1);
+                if (!set.remove(args[0])) {
+                    throw PyErrors.error("KeyError", String.valueOf(args[0]));
+                }
+                return new PyNull();
+            });
+            case "discard" -> new PyBuiltinFunction("set.discard", args -> {
+                checkArgCount("set.discard", args, 1);
+                set.remove(args[0]);
+                return new PyNull();
+            });
+            case "pop" -> new PyBuiltinFunction("set.pop", args -> {
+                checkArgCount("set.pop", args, 0);
+                return set.pop();
+            });
+            case "clear" -> new PyBuiltinFunction("set.clear", args -> {
+                checkArgCount("set.clear", args, 0);
+                set.clear();
+                return new PyNull();
+            });
+            case "copy" -> new PyBuiltinFunction("set.copy", args -> {
+                checkArgCount("set.copy", args, 0);
+                return set.copy();
+            });
+            case "union" -> new PyBuiltinFunction("set.union", args -> {
+                PySet res = set.copy();
+                for (PyObject other : args) {
+                    for (PyObject el : BuiltinFunctions.collectIterable(other, policy)) {
+                        res.add(el);
+                    }
+                }
+                return res;
+            });
+            case "update" -> new PyBuiltinFunction("set.update", args -> {
+                for (PyObject other : args) {
+                    for (PyObject el : BuiltinFunctions.collectIterable(other, policy)) {
+                        set.add(el);
+                    }
+                }
+                return new PyNull();
+            });
+            case "intersection" -> new PyBuiltinFunction("set.intersection", args -> {
+                if (args.length == 0) return set.copy();
+                var otherSets = new ArrayList<PySet>(args.length);
+                for (PyObject other : args) {
+                    otherSets.add(new PySet(BuiltinFunctions.collectIterable(other, policy)));
+                }
+                PySet res = new PySet();
+                for (PyObject el : set.items()) {
+                    boolean inAll = true;
+                    for (PySet os : otherSets) {
+                        if (!os.contains(el)) { inAll = false; break; }
+                    }
+                    if (inAll) res.add(el);
+                }
+                return res;
+            });
+            case "difference" -> new PyBuiltinFunction("set.difference", args -> {
+                PySet res = set.copy();
+                for (PyObject other : args) {
+                    for (PyObject el : BuiltinFunctions.collectIterable(other, policy)) {
+                        res.remove(el);
+                    }
+                }
+                return res;
             });
             default -> throw PyErrors.error("AttributeError", "'set' object has no attribute '" + method + "'");
         };

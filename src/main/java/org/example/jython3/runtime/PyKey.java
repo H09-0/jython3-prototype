@@ -34,7 +34,7 @@ public final class PyKey {
     }
 
     static int computeHash(PyObject obj) {
-        if (obj instanceof PyList || obj instanceof PyDict || obj instanceof PySet) {
+        if (obj instanceof PyList || obj instanceof PyDict || obj instanceof PySet || obj instanceof PySlice) {
             throw PyErrors.error("TypeError", "unhashable type: '" + PyOps.typeName(obj) + "'");
         }
         if (obj instanceof PyTuple t) {
@@ -90,10 +90,10 @@ public final class PyKey {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o instanceof PyKey other) {
-            return PyOps.pyEquals(this.object, other.object);
+            return this.object == other.object || PyOps.pyEquals(this.object, other.object);
         }
         if (o instanceof PyDict.QueryKey qk) {
-            return PyOps.pyEquals(this.object, qk.object());
+            return this.object == qk.object() || PyOps.pyEquals(this.object, qk.object());
         }
         return false;
     }

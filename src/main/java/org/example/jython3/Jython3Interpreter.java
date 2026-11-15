@@ -1783,7 +1783,9 @@ public class Jython3Interpreter {
                     else if (o instanceof PyStr s) {
                         stack.push(s.codePointIterator());
                     } else if (o instanceof PyDict d) {
-                        stack.push(new PyIterator(new ArrayList<>(d.map().keySet()), 0));
+                        stack.push(new PyIterator(d.keys(), 0));
+                    } else if (o instanceof PySet s) {
+                        stack.push(new PyIterator(new ArrayList<>(s.items()), 0));
                     } else if (o instanceof PyGenerator gen) {
                         stack.push(PyIterator.fromGenerator(gen));
                     } else if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
@@ -1882,7 +1884,7 @@ public class Jython3Interpreter {
                     } else if (obj instanceof PyList list) {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("list") : BuiltinMethodDispatcher.listMethod(list, attr));
                     } else if (obj instanceof PySet set) {
-                        stack.push("__class__".equals(attr) ? builtinTypes.get("set") : BuiltinMethodDispatcher.setMethod(set, attr));
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("set") : BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy));
                     } else if (obj instanceof PyStr s) {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("str") : BuiltinMethodDispatcher.strMethod(s, attr));
                     } else if (obj instanceof PyJavaObject jo) {
@@ -2246,7 +2248,7 @@ public class Jython3Interpreter {
         if ("__class__".equals(attr)) return BuiltinFunctions.typeOf(obj, builtinTypes);
         if (obj instanceof PyDict dict) return BuiltinMethodDispatcher.dictMethod(dict, attr);
         if (obj instanceof PyList list) return BuiltinMethodDispatcher.listMethod(list, attr);
-        if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr);
+        if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy);
         if (obj instanceof PyStr s)     return BuiltinMethodDispatcher.strMethod(s, attr);
         return null;
     }
