@@ -151,7 +151,7 @@ public final class SwingUiToolkit implements UiToolkit {
             closeListeners.clear();
             session.releaseWindowSlot(this);
             if (!session.isClosed() && !snap.isEmpty()) {
-                var ev = new UiEvent("window.close", id, frame.getTitle(), System.currentTimeMillis()).toPyHandle();
+                var ev = new UiEvent("window.close", id, frame.getTitle(), System.currentTimeMillis()).toPyHandle(session);
                 for (PyObject cb : snap) session.invokeCallback(cb, ev);
             }
         }
@@ -221,7 +221,7 @@ public final class SwingUiToolkit implements UiToolkit {
 
         @Override public void click() {
             if (!button.isEnabled()) return;
-            var ev = new UiEvent("button.click", id, button.getText(), System.currentTimeMillis()).toPyHandle();
+            var ev = new UiEvent("button.click", id, button.getText(), System.currentTimeMillis()).toPyHandle(session);
             for (PyObject cb : listeners) session.invokeCallback(cb, ev);
         }
 
@@ -260,7 +260,7 @@ public final class SwingUiToolkit implements UiToolkit {
         @Override public void setText(String text) {
             dispatcher.assertUiThread("textfield.setText");
             field.setText(text);
-            var ev = new UiEvent("textfield.change", id, text, System.currentTimeMillis()).toPyHandle();
+            var ev = new UiEvent("textfield.change", id, text, System.currentTimeMillis()).toPyHandle(session);
             for (PyObject cb : listeners) session.invokeCallback(cb, ev);
         }
 

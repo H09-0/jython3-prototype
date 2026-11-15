@@ -58,6 +58,7 @@ public final class ControlModule {
                 argsDict.put(new PyStr(e.getKey()), e.getValue());
             }
             return PyHostHandle.builder("control.Command")
+                    .bindSession(session)
                     .prop("name", () -> cmdName)
                     .prop("args", () -> argsDict)
                     .build();
@@ -140,6 +141,7 @@ public final class ControlModule {
 
                     if (!listeners.isEmpty()) {
                         PyHostHandle ev = PyHostHandle.builder("control.Event")
+                                .bindSession(session)
                                 .prop("type", () -> new PyStr("command"))
                                 .prop("device_id", () -> new PyStr(device.id()))
                                 .prop("command", () -> new PyStr(cmdName))

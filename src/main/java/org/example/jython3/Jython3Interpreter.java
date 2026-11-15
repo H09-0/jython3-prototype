@@ -1204,7 +1204,7 @@ public class Jython3Interpreter implements AutoCloseable {
     }
 
     public void setGlobal(String name, PyObject value) {
-        globals.put(name, PolicySanitizer.sanitize(value, javaAccessPolicy));
+        globals.put(name, PolicySanitizer.sanitize(value, javaAccessPolicy, hostSession));
     }
 
     // ─── ANTLR compilation with Python Indentation Stream ─────────────────

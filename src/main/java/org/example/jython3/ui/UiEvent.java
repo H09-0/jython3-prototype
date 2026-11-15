@@ -1,5 +1,6 @@
 package org.example.jython3.ui;
 
+import org.example.jython3.host.HostSession;
 import org.example.jython3.runtime.PyHostHandle;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyStr;
@@ -10,11 +11,16 @@ import org.example.jython3.runtime.PyStr;
 public record UiEvent(String type, String sourceId, String text, long timestampMs) {
 
     public PyHostHandle toPyHandle() {
-        return PyHostHandle.builder("ui.Event")
+        return toPyHandle(null);
+    }
+
+    public PyHostHandle toPyHandle(HostSession session) {
+        var b = PyHostHandle.builder("ui.Event")
                 .prop("type", () -> new PyStr(type))
                 .prop("source_id", () -> new PyStr(sourceId))
                 .prop("text", () -> new PyStr(text != null ? text : ""))
-                .prop("timestamp", () -> PyInt.of((int) (timestampMs & 0x7FFFFFFFL)))
-                .build();
+                .prop("timestamp", () -> PyInt.of((int) (timestampMs & 0x7FFFFFFFL)));
+        if (session != null) b.bindSession(session);
+        return b.build();
     }
 }

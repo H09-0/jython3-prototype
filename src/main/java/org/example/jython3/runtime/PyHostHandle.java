@@ -57,6 +57,8 @@ public final class PyHostHandle implements PyObject {
 
     public String handleTypeName() { return typeName; }
 
+    public HostSession session() { return session; }
+
     private void checkValid() {
         if (session != null) {
             session.requireValidEpoch(sessionEpoch, typeName);

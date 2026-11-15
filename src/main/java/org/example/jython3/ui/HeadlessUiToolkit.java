@@ -231,7 +231,7 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
 
     private void dispatchEvent(HostSession session, List<PyObject> listeners, UiEvent event) {
         eventHistory.add(event);
-        PyObject evHandle = event.toPyHandle();
+        PyObject evHandle = event.toPyHandle(session);
         for (PyObject cb : listeners) {
             session.invokeCallback(cb, evHandle);
         }
