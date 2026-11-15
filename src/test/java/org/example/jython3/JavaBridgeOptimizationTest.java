@@ -84,6 +84,48 @@ public class JavaBridgeOptimizationTest {
             for (long v : arr) s += v;
             return s;
         }
+
+        public int sumBytes(byte[] arr) {
+            int s = 0;
+            for (byte v : arr) s += v;
+            return s;
+        }
+
+        public int sumShorts(short[] arr) {
+            int s = 0;
+            for (short v : arr) s += v;
+            return s;
+        }
+
+        public String joinChars(char[] arr) {
+            return new String(arr);
+        }
+
+        public String joinStringsWithNull(String[] arr) {
+            var sb = new StringBuilder();
+            for (int i = 0; i < arr.length; i++) {
+                if (i > 0) sb.append(",");
+                sb.append(arr[i] == null ? "<null>" : arr[i]);
+            }
+            return sb.toString();
+        }
+
+        public String describeBoxedInts(Integer[] arr) {
+            var sb = new StringBuilder();
+            for (int i = 0; i < arr.length; i++) {
+                if (i > 0) sb.append(",");
+                sb.append(arr[i] == null ? "<null>" : arr[i]);
+            }
+            return sb.toString();
+        }
+
+        public int inspectListSize(java.util.List<?> list) {
+            return list.size();
+        }
+
+        public int inspectMapSize(java.util.Map<?, ?> map) {
+            return map.size();
+        }
     }
 
     private static final JavaAccessPolicy TEST_POLICY = new JavaAccessPolicy() {
@@ -295,5 +337,93 @@ public class JavaBridgeOptimizationTest {
 
         assertEquals(new PyStr("big:10000000000000000000000000"), interp.getGlobal("r_big"));
         assertEquals(new org.example.jython3.runtime.BigInt(java.math.BigInteger.valueOf(30000000000L)), interp.getGlobal("r_longs"));
+    }
+
+    @Test
+    @DisplayName("Null (None) inside String[] and Integer[] converts to null, while None inside primitive arrays throws TypeError")
+    void testNullInArrays() {
+        var interp = new Jython3Interpreter(TEST_POLICY);
+        interp.setGlobal("target", JavaBridge.toPyObject(new ArrayTarget(), TEST_POLICY));
+
+        interp.eval("""
+            r_str_null = target.joinStringsWithNull(["a", None, "b"])
+            r_box_null = target.describeBoxedInts([1, None, 3])
+            """);
+
+        assertEquals(new PyStr("a,<null>,b"), interp.getGlobal("r_str_null"));
+        assertEquals(new PyStr("1,<null>,3"), interp.getGlobal("r_box_null"));
+
+        InterpreterException exInt = assertThrows(InterpreterException.class, () -> {
+            interp.eval("target.sumInts([1, None, 2])");
+        });
+        assertTrue(exInt.getMessage().contains("TypeError"), exInt.getMessage());
+
+        InterpreterException exDbl = assertThrows(InterpreterException.class, () -> {
+            interp.eval("target.sumDoubles([1.5, None])");
+        });
+        assertTrue(exDbl.getMessage().contains("TypeError"), exDbl.getMessage());
+
+        InterpreterException exBool = assertThrows(InterpreterException.class, () -> {
+            interp.eval("target.countTrues([True, None])");
+        });
+        assertTrue(exBool.getMessage().contains("TypeError"), exBool.getMessage());
+    }
+
+    @Test
+    @DisplayName("byte[], short[], and char[] array conversions work accurately")
+    void testByteShortCharArrayConversions() {
+        var interp = new Jython3Interpreter(TEST_POLICY);
+        interp.setGlobal("target", JavaBridge.toPyObject(new ArrayTarget(), TEST_POLICY));
+
+        interp.eval("""
+            r_byte  = target.sumBytes([10, 20, True, 3.9])
+            r_short = target.sumShorts([100, 200, True, 4.7])
+            r_char  = target.joinChars(["J", "3", "!"])
+            """);
+
+        assertEquals(new PyInt(34), interp.getGlobal("r_byte"));
+        assertEquals(new PyInt(305), interp.getGlobal("r_short"));
+        assertEquals(new PyStr("J3!"), interp.getGlobal("r_char"));
+    }
+
+    @Test
+    @DisplayName("List and Map conversions enforce access policy on nested PyJavaObject elements")
+    void testListAndMapPolicyEnforcement() {
+        // 1. Create a restricted Java object (TargetA) wrapped under permissive policy
+        var secretObj = new TargetA();
+        var wrappedSecret = new org.example.jython3.runtime.PyJavaObject(secretObj, TEST_POLICY);
+
+        // 2. Policy that allows ArrayTarget, List, Map, etc., but DENIES TargetA
+        JavaAccessPolicy denyTargetA = new JavaAccessPolicy() {
+            @Override public boolean canAccessClass(String binaryName) {
+                return !binaryName.equals(TargetA.class.getName());
+            }
+            @Override public boolean canConstructClass(String binaryName, String descriptor) { return true; }
+            @Override public boolean canCallMethod(String owner, String name, String descriptor) { return true; }
+            @Override public boolean canReadField(String owner, String name) { return true; }
+            @Override public boolean canWriteField(String owner, String name) { return true; }
+        };
+
+        var interp = new Jython3Interpreter(denyTargetA);
+        interp.setGlobal("target", JavaBridge.toPyObject(new ArrayTarget(), denyTargetA));
+
+        // Permitted elements in List and Map succeed
+        interp.eval("""
+            l_sz = target.inspectListSize([1, "two", 3.0])
+            m_sz = target.inspectMapSize({"k1": 10, "k2": 20})
+            """);
+        assertEquals(new PyInt(3), interp.getGlobal("l_sz"));
+        assertEquals(new PyInt(2), interp.getGlobal("m_sz"));
+
+        // Injecting restricted PyJavaObject inside a list or dict must be rejected during conversion!
+        var listWithSecret = new org.example.jython3.runtime.PyList(java.util.List.of(wrappedSecret));
+        assertThrows(InterpreterException.class, () -> {
+            JavaBridge.toJavaObject(listWithSecret, java.util.List.class, denyTargetA);
+        });
+
+        var mapWithSecret = new org.example.jython3.runtime.PyDict(java.util.Map.of(new PyStr("secret"), wrappedSecret));
+        assertThrows(InterpreterException.class, () -> {
+            JavaBridge.toJavaObject(mapWithSecret, java.util.Map.class, denyTargetA);
+        });
     }
 }

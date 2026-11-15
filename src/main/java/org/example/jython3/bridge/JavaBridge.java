@@ -315,16 +315,13 @@ public class JavaBridge {
             return toJavaBoolean(pyObj);
         }
         if (targetType == byte.class || targetType == Byte.class) {
-            if (pyObj instanceof PyInt i) return (byte) i.value();
-            return (byte) Integer.parseInt(pyObj.toString());
+            return (byte) toJavaInt(pyObj);
         }
         if (targetType == short.class || targetType == Short.class) {
-            if (pyObj instanceof PyInt i) return (short) i.value();
-            return (short) Integer.parseInt(pyObj.toString());
+            return (short) toJavaInt(pyObj);
         }
         if (targetType == char.class || targetType == Character.class) {
-            String s = pyObj.toString();
-            return s.isEmpty() ? '\0' : s.charAt(0);
+            return toJavaChar(pyObj);
         }
 
         if (targetType != Object.class && targetType.isInstance(pyObj)) {
@@ -407,6 +404,27 @@ public class JavaBridge {
                 }
                 return arr;
             }
+            if (componentType == byte.class) {
+                byte[] arr = new byte[len];
+                for (int i = 0; i < len; i++) {
+                    arr[i] = (byte) toJavaInt(list.items().get(i));
+                }
+                return arr;
+            }
+            if (componentType == short.class) {
+                short[] arr = new short[len];
+                for (int i = 0; i < len; i++) {
+                    arr[i] = (short) toJavaInt(list.items().get(i));
+                }
+                return arr;
+            }
+            if (componentType == char.class) {
+                char[] arr = new char[len];
+                for (int i = 0; i < len; i++) {
+                    arr[i] = toJavaChar(list.items().get(i));
+                }
+                return arr;
+            }
             if (componentType == String.class) {
                 String[] arr = new String[len];
                 for (int i = 0; i < len; i++) {
@@ -451,21 +469,33 @@ public class JavaBridge {
     private static final Map<Class<?>, TypeConverter> CONVERTER_CACHE = new ConcurrentHashMap<>();
 
     public static int toJavaInt(PyObject pyObj) {
+        if (pyObj == null || pyObj instanceof PyNull) {
+            throw PyErrors.error("TypeError", "cannot convert NoneType to Java primitive int");
+        }
         if (pyObj instanceof PyInt i) return i.value();
         if (pyObj instanceof PyFloat f) return (int) f.value();
         if (pyObj instanceof PyBool b) return b.value() ? 1 : 0;
         if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().intValue();
-        if (pyObj instanceof PyNull) return 0;
-        return Integer.parseInt(pyObj.toString());
+        try {
+            return Integer.parseInt(pyObj.toString());
+        } catch (NumberFormatException e) {
+            throw PyErrors.error("ValueError", "cannot convert '" + pyObj + "' to Java int");
+        }
     }
 
     public static long toJavaLong(PyObject pyObj) {
+        if (pyObj == null || pyObj instanceof PyNull) {
+            throw PyErrors.error("TypeError", "cannot convert NoneType to Java primitive long");
+        }
         if (pyObj instanceof PyInt i) return (long) i.value();
         if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value().longValue();
         if (pyObj instanceof PyFloat f) return (long) f.value();
         if (pyObj instanceof PyBool b) return b.value() ? 1L : 0L;
-        if (pyObj instanceof PyNull) return 0L;
-        return Long.parseLong(pyObj.toString());
+        try {
+            return Long.parseLong(pyObj.toString());
+        } catch (NumberFormatException e) {
+            throw PyErrors.error("ValueError", "cannot convert '" + pyObj + "' to Java long");
+        }
     }
 
     public static double toJavaDouble(PyObject pyObj) {
@@ -473,7 +503,25 @@ public class JavaBridge {
     }
 
     public static boolean toJavaBoolean(PyObject pyObj) {
+        if (pyObj == null || pyObj instanceof PyNull) {
+            throw PyErrors.error("TypeError", "cannot convert NoneType to Java primitive boolean");
+        }
         return PyOps.isTruthy(pyObj);
+    }
+
+    public static char toJavaChar(PyObject pyObj) {
+        if (pyObj == null || pyObj instanceof PyNull) {
+            throw PyErrors.error("TypeError", "cannot convert NoneType to Java primitive char");
+        }
+        if (pyObj instanceof PyStr s) {
+            String val = s.value();
+            return val.isEmpty() ? '\0' : val.charAt(0);
+        }
+        if (pyObj instanceof PyInt i) {
+            return (char) i.value();
+        }
+        String s = pyObj.toString();
+        return s.isEmpty() ? '\0' : s.charAt(0);
     }
 
     private static final int MAX_CONVERTER_ENTRIES = 512;
@@ -490,20 +538,53 @@ public class JavaBridge {
     }
 
     private static TypeConverter buildConverter(Class<?> targetType) {
-        if (targetType == int.class || targetType == Integer.class) {
+        if (targetType == int.class) {
             return (pyObj, policy) -> toJavaInt(pyObj);
         }
-        if (targetType == double.class || targetType == Double.class) {
+        if (targetType == Integer.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : toJavaInt(pyObj);
+        }
+        if (targetType == double.class) {
             return (pyObj, policy) -> toJavaDouble(pyObj);
         }
-        if (targetType == float.class || targetType == Float.class) {
+        if (targetType == Double.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : toJavaDouble(pyObj);
+        }
+        if (targetType == float.class) {
             return (pyObj, policy) -> (float) toJavaDouble(pyObj);
         }
-        if (targetType == long.class || targetType == Long.class) {
+        if (targetType == Float.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : (float) toJavaDouble(pyObj);
+        }
+        if (targetType == long.class) {
             return (pyObj, policy) -> toJavaLong(pyObj);
         }
-        if (targetType == boolean.class || targetType == Boolean.class) {
+        if (targetType == Long.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : toJavaLong(pyObj);
+        }
+        if (targetType == boolean.class) {
             return (pyObj, policy) -> toJavaBoolean(pyObj);
+        }
+        if (targetType == Boolean.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : toJavaBoolean(pyObj);
+        }
+        if (targetType == byte.class) {
+            return (pyObj, policy) -> (byte) toJavaInt(pyObj);
+        }
+        if (targetType == Byte.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : (byte) toJavaInt(pyObj);
+        }
+        if (targetType == short.class) {
+            return (pyObj, policy) -> (short) toJavaInt(pyObj);
+        }
+        if (targetType == Short.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : (short) toJavaInt(pyObj);
+        }
+        if (targetType == char.class) {
+            return (pyObj, policy) -> toJavaChar(pyObj);
+        }
+        if (targetType == Character.class) {
+            return (pyObj, policy) -> (pyObj == null || pyObj instanceof PyNull) ? null : toJavaChar(pyObj);
         }
         if (targetType == String.class || targetType == CharSequence.class) {
             return (pyObj, policy) -> {
