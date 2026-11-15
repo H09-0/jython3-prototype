@@ -68,7 +68,14 @@ public enum OpCode {
     LSHIFT(85),
     RSHIFT(86),
     // ── exception chaining
-    RAISE_FROM(87);         // stack: [..., exc, cause] → raise exc with __cause__ = cause (None suppresses context)
+    RAISE_FROM(87),         // stack: [..., exc, cause] → raise exc with __cause__ = cause (None suppresses context)
+    // ── in-place augmented assignment
+    INPLACE_ADD(88),
+    INPLACE_SUBTRACT(89),
+    INPLACE_MULTIPLY(90),
+    INPLACE_AND(91),
+    INPLACE_OR(92),
+    INPLACE_XOR(93);
 
     private final int code;
 

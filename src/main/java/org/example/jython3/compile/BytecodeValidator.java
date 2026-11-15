@@ -207,6 +207,8 @@ public final class BytecodeValidator {
             case UNARY_MINUS, LOGICAL_NOT, BITWISE_INVERT, GET_ITER, LOAD_ATTR -> new int[]{1, 0};
             case YIELD_VALUE -> new int[]{1, -1};
             case ADD, SUBTRACT, MULTIPLY, DIVIDE, FLOOR_DIVIDE, MODULO, POWER,
+                 INPLACE_ADD, INPLACE_SUBTRACT, INPLACE_MULTIPLY,
+                 INPLACE_AND, INPLACE_OR, INPLACE_XOR,
                  COMPARE_EQ, COMPARE_NEQ, COMPARE_LT, COMPARE_GT, COMPARE_LTE, COMPARE_GTE,
                  COMPARE_IN, COMPARE_NOT_IN, COMPARE_IS, COMPARE_IS_NOT,
                  BINARY_SUBSCR, BITWISE_AND, BITWISE_OR, BITWISE_XOR, LSHIFT, RSHIFT -> new int[]{2, -1};

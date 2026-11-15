@@ -347,16 +347,16 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         LValue target = LValue.fromSingleTarget(c.single_target());
         String opText = c.aug_op().getText();
         OpCode op = switch (opText) {
-            case "+="  -> OpCode.ADD;
-            case "-="  -> OpCode.SUBTRACT;
-            case "*="  -> OpCode.MULTIPLY;
+            case "+="  -> OpCode.INPLACE_ADD;
+            case "-="  -> OpCode.INPLACE_SUBTRACT;
+            case "*="  -> OpCode.INPLACE_MULTIPLY;
             case "/="  -> OpCode.DIVIDE;
             case "//=" -> OpCode.FLOOR_DIVIDE;
             case "%="  -> OpCode.MODULO;
             case "**=" -> OpCode.POWER;
-            case "&="  -> OpCode.BITWISE_AND;
-            case "|="  -> OpCode.BITWISE_OR;
-            case "^="  -> OpCode.BITWISE_XOR;
+            case "&="  -> OpCode.INPLACE_AND;
+            case "|="  -> OpCode.INPLACE_OR;
+            case "^="  -> OpCode.INPLACE_XOR;
             case "<<=" -> OpCode.LSHIFT;
             case ">>=" -> OpCode.RSHIFT;
             default    -> throw new CompileError("unknown augmented assignment operator: " + opText);

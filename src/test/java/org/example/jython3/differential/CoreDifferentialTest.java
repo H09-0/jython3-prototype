@@ -511,7 +511,9 @@ public class CoreDifferentialTest {
                 + "print(type(a | fs) is set, type(fs | a) is frozenset)\n"
                 + "print({1} < {1, 2}, {1} < {1}, {1} <= {1}, {1} <= {2}, {1} > {2}, {1, 2} >= {1}, {1, 2} <= frozenset([1, 2]))\n"
                 + "print({1, 2}.issubset([1, 2, 3]), {1, 2}.issuperset([1.0]), {1, 2}.isdisjoint([3, 4]), sorted({1, 2}.symmetric_difference([2.0, 3])))\n"
-                + "c = {1, 2}\nc |= {3}\nc &= {2, 3}\nc ^= {3, 4}\nc -= {4}\nprint(sorted(c))");
+                + "c = {1, 2}\nc_alias = c\nc |= {3}\nc &= {2, 3}\nc ^= {3, 4}\nc -= {4}\nprint(sorted(c), c is c_alias)\n"
+                + "lst = [1, 2]\nl_alias = lst\nlst += (3, 4)\nlst *= 2\nprint(lst, lst is l_alias)\n"
+                + "s_self = {1, 2}\ns_self -= s_self\nprint(s_self)");
         assertMatchesCPython("frozenset_hash_eq_and_methods",
                 "f1 = frozenset([1, 2, 3])\nf2 = frozenset([3.0, True, 2])\n"
                 + "print(f1 == f2, f1 == {1, 2, 3}, hash(f1) == hash(f2), {f1: 'ok'}[f2], len({f1, f2}))\n"

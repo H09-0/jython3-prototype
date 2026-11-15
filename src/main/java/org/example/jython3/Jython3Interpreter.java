@@ -1229,9 +1229,29 @@ public class Jython3Interpreter {
                 }
 
                 // ── Arithmetic ──
-                case ADD -> binaryAdd();
-                case SUBTRACT -> binarySubtract();
-                case MULTIPLY -> binaryMultiply();
+                case ADD        -> binaryAdd();
+                case SUBTRACT   -> binarySubtract();
+                case MULTIPLY   -> binaryMultiply();
+                case INPLACE_ADD -> {
+                    var r = stack.pop();
+                    var l = stack.pop();
+                    if (l instanceof PyList list) {
+                        var extra = BuiltinFunctions.collectIterable(r, javaAccessPolicy);
+                        if ((long) list.items().size() + extra.size() > executionLimits.maxCollectionSize()) {
+                            throw PyErrors.error("OverflowError",
+                                    "List size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
+                        }
+                        list.items().addAll(extra);
+                        stack.push(list);
+                    } else {
+                        stack.push(ArithmeticOps.add(l, r));
+                    }
+                }
+                case INPLACE_SUBTRACT -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.inplaceSubtract(l, r)); }
+                case INPLACE_MULTIPLY -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.inplaceMultiply(l, r, executionLimits)); }
+                case INPLACE_AND      -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.inplaceBitwiseAnd(l, r)); }
+                case INPLACE_OR       -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.inplaceBitwiseOr(l, r)); }
+                case INPLACE_XOR      -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.inplaceBitwiseXor(l, r)); }
                 case DIVIDE -> {
                     var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
                     if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {

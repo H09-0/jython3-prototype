@@ -76,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **True In-Place Augmented Assignment for `list` and `set` (`INPLACE_*`)**: Added `INPLACE_ADD`, `INPLACE_SUBTRACT`, `INPLACE_MULTIPLY`, `INPLACE_AND`, `INPLACE_OR`, `INPLACE_XOR` so `list += iterable`, `list *= n`, and `set |= / &= / -= / ^=` mutate the target object in-place (preserving aliases and self-operation safety) while enforcing `ExecutionLimits.maxCollectionSize()` and keeping `frozenset` immutable.
 - **JavaBridge Hardening & `MethodHandle` Dispatch (`JavaBridge`, `PyJavaMethod`, `PyJavaClass`, `PyJavaObject`, `PyErrors`)**:
   - Enforced `JavaAccessPolicy` inside `findBestMethod`, added varargs resolution/packing, functional-interface callback proxies (preserving policy, caller state, tracebacks, and recursion limits), public-interface method resolution for non-public JDK classes (`Arrays$ArrayList`), empty-attribute `AttributeError` guard, `StackOverflowError` -> `RecursionError` mapping in `PyErrors.fromJava`, and `MethodHandle` (`asFixedArity().asSpreader(...)`) invocation (`JavaBridgeHardeningTest`).
 - **Generator Frame Isolation & VM Micro-Optimizations**:

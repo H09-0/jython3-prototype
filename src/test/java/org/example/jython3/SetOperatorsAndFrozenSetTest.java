@@ -37,15 +37,44 @@ class SetOperatorsAndFrozenSetTest {
             x1 = a ^ b
             x2 = fs ^ a
 
-            # Compound assignments
+            # Compound assignments mutate mutable sets in-place (preserving aliases!)
             c = {1, 2}
+            c_alias = c
             c |= {2.0, 3}
+            assert c is c_alias and c_alias == {1, 2, 3}
             c &= {2, 3, 4}
+            assert c is c_alias and c_alias == {2, 3}
             c ^= {3, 5}
+            assert c is c_alias and c_alias == {2, 5}
             c -= {5}
+            assert c is c_alias and c_alias == {2}
+
+            # Self-aliasing augmented assignment on set & list
+            s_self = {1, 2}
+            s_self |= s_self
+            assert s_self == {1, 2}
+            s_self &= s_self
+            assert s_self == {1, 2}
+            s_self -= s_self
+            assert s_self == set()
+            s_self2 = {1, 2}
+            s_self2 ^= s_self2
+            assert s_self2 == set()
+
+            lst = [1, 2]
+            lst_alias = lst
+            lst += (3, 4)
+            lst += (x * 10 for x in [5])
+            assert lst is lst_alias and lst_alias == [1, 2, 3, 4, 50]
+            lst *= 2
+            assert lst is lst_alias and lst_alias == [1, 2, 3, 4, 50, 1, 2, 3, 4, 50]
+            lst += lst
+            assert len(lst_alias) == 20
 
             cf = frozenset([1, 2])
+            cf_alias = cf
             cf |= frozenset([3])
+            assert cf is not cf_alias and cf_alias == frozenset([1, 2])
 
             # Partial-order subset / superset comparisons
             checks = [
@@ -82,6 +111,10 @@ class SetOperatorsAndFrozenSetTest {
                 "x = {1} & [2]",
                 "x = {1} - [2]",
                 "x = {1} ^ [2]",
+                "s = {1}\ns |= [2]",
+                "s = {1}\ns &= [2]",
+                "s = {1}\ns -= [2]",
+                "s = {1}\ns ^= [2]",
                 "x = {1} < [1, 2]",
                 "x = {1} <= [1, 2]",
                 "x = {1} > [1]",

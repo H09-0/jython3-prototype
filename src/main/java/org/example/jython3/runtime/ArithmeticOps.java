@@ -92,6 +92,112 @@ public final class ArithmeticOps {
                 "unsupported operand type(s) for -: '" + typeName(rawL) + "' and '" + typeName(rawR) + "'");
     }
 
+    public static PyObject inplaceSubtract(PyObject l, PyObject r) {
+        if (l instanceof PySet s) {
+            if (!PyOps.isSetLike(r)) {
+                throw PyErrors.error("TypeError",
+                        "unsupported operand type(s) for -=: 'set' and '" + typeName(r) + "'");
+            }
+            if (s == r) {
+                s.clear();
+            } else {
+                s.removeAllKeys(PyOps.setKeys(r));
+            }
+            return s;
+        }
+        return subtract(l, r);
+    }
+
+    public static PyObject inplaceBitwiseOr(PyObject l, PyObject r) {
+        if (l instanceof PySet s) {
+            if (!PyOps.isSetLike(r)) {
+                throw PyErrors.error("TypeError",
+                        "unsupported operand type(s) for |=: 'set' and '" + typeName(r) + "'");
+            }
+            if (s != r) {
+                for (PyObject v : setItems(r)) s.add(v);
+            }
+            return s;
+        }
+        return bitwiseOr(l, r);
+    }
+
+    public static PyObject inplaceBitwiseAnd(PyObject l, PyObject r) {
+        if (l instanceof PySet s) {
+            if (!PyOps.isSetLike(r)) {
+                throw PyErrors.error("TypeError",
+                        "unsupported operand type(s) for &=: 'set' and '" + typeName(r) + "'");
+            }
+            if (s != r) {
+                s.retainAllKeys(PyOps.setKeys(r));
+            }
+            return s;
+        }
+        return bitwiseAnd(l, r);
+    }
+
+    public static PyObject inplaceBitwiseXor(PyObject l, PyObject r) {
+        if (l instanceof PySet s) {
+            if (!PyOps.isSetLike(r)) {
+                throw PyErrors.error("TypeError",
+                        "unsupported operand type(s) for ^=: 'set' and '" + typeName(r) + "'");
+            }
+            if (s == r) {
+                s.clear();
+            } else {
+                var snapshot = new ArrayList<PyObject>(setItems(r));
+                for (PyObject v : snapshot) {
+                    if (!s.remove(v)) {
+                        s.add(v);
+                    }
+                }
+            }
+            return s;
+        }
+        return bitwiseXor(l, r);
+    }
+
+    public static PyObject inplaceMultiply(PyObject l, PyObject r, ExecutionLimits limits) {
+        if (l instanceof PyList list) {
+            PyObject nObj = unwrapBool(r);
+            int count;
+            if (nObj instanceof PyInt pi) {
+                count = pi.value();
+            } else if (nObj instanceof BigInt bi) {
+                if (bi.value().signum() <= 0) {
+                    list.items().clear();
+                    return list;
+                }
+                if (list.items().isEmpty()) return list;
+                try {
+                    count = bi.value().intValueExact();
+                } catch (ArithmeticException ae) {
+                    throw PyErrors.error("OverflowError",
+                            "List size exceeds maximum allowed limit: " + limits.maxCollectionSize());
+                }
+            } else {
+                throw PyErrors.error("TypeError",
+                        "can't multiply sequence by non-int of type '" + typeName(r) + "'");
+            }
+            if (count <= 0) {
+                list.items().clear();
+                return list;
+            }
+            int size = list.items().size();
+            long targetLen = (long) size * count;
+            if (targetLen > limits.maxCollectionSize()) {
+                throw PyErrors.error("OverflowError",
+                        "List size exceeds maximum allowed limit: " + limits.maxCollectionSize());
+            }
+            var orig = new ArrayList<PyObject>(list.items());
+            for (int c = 1; c < count; c++) {
+                list.items().addAll(orig);
+            }
+            return list;
+        }
+        return multiply(l, r, limits);
+    }
+
     private static PyObject buildSetResult(boolean mutable, java.util.Map<PyKey, PyObject> entries) {
         if (mutable) {
             var res = new PySet();

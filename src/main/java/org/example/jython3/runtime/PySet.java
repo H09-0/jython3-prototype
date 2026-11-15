@@ -4,6 +4,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Python set — mutable, unordered (insertion-ordered here), no duplicates.
@@ -67,6 +68,16 @@ public final class PySet implements PyObject {
     }
 
     public void clear() { entries.clear(); }
+
+    /** Retains only entries whose keys appear in {@code allowedKeys}. */
+    public void retainAllKeys(Set<PyKey> allowedKeys) {
+        entries.keySet().retainAll(allowedKeys);
+    }
+
+    /** Removes all entries whose keys appear in {@code keysToRemove}. */
+    public void removeAllKeys(Set<PyKey> keysToRemove) {
+        entries.keySet().removeAll(keysToRemove);
+    }
 
     public PySet copy() { return new PySet(entries.values()); }
 
