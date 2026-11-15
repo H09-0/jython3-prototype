@@ -75,6 +75,12 @@ class BytecodeInspectionTest {
         int underflowInstr = OpCode.POP_TOP.code() << 16;
         var underflow = new CompiledCode(new int[]{underflowInstr, OpCode.HALT.code() << 16}, new Object[0], new int[]{1, 1});
         assertThrows(IllegalStateException.class, () -> BytecodeValidator.validate(underflow));
+
+        int yieldTopInstr = OpCode.YIELD_VALUE.code() << 16;
+        var yieldTop = new CompiledCode(
+                new int[]{OpCode.LOAD_CONST.code() << 16 | 0xFFFF, yieldTopInstr, OpCode.HALT.code() << 16},
+                new Object[0], new int[]{1, 1, 1});
+        assertThrows(IllegalStateException.class, () -> BytecodeValidator.validate(yieldTop));
     }
 
     @Test

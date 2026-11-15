@@ -11,7 +11,16 @@ import org.example.jython3.runtime.PyFunction;
 
 public class CompileVisitor extends Jython3BaseVisitor<Void> {
     private final CodeBuilder b;
-    public CompileVisitor(CodeBuilder b) { this.b = b; }
+    private final boolean isFunctionScope;
+
+    public CompileVisitor(CodeBuilder b) {
+        this(b, false);
+    }
+
+    public CompileVisitor(CodeBuilder b, boolean isFunctionScope) {
+        this.b = b;
+        this.isFunctionScope = isFunctionScope;
+    }
 
     // ── Loop context stack for break/continue jump patching ──────────────
     private static class LoopContext {
@@ -399,6 +408,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitYield_stmt(Jython3Parser.Yield_stmtContext c) {
+        if (!isFunctionScope) {
+            throw new CompileError("'yield' outside function");
+        }
         if (c.rhs_tuple() != null) {
             emitRhsTuple(c.rhs_tuple());
         } else {
@@ -507,7 +519,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
         // ── 3. Compile the function body ─────────────────────────────────────
         var fb = new CodeBuilder();
-        var fv = new CompileVisitor(fb);
+        var fv = new CompileVisitor(fb, true);
         fv.visit(suite);
         fb.emit(OpCode.LOAD_CONST, null);
         fb.emit(OpCode.RETURN_VALUE);
@@ -566,12 +578,19 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         cv.visit(c.suite());
         cb.emit(OpCode.HALT);
 
-        if (c.arg_list() != null && !c.arg_list().arg_item().isEmpty()) {
-            var posItems = c.arg_list().arg_item().stream()
-                    .filter(it -> it instanceof Jython3Parser.PositionalArgContext)
-                    .toList();
-            for (var it : posItems) visit(((Jython3Parser.PositionalArgContext) it).expr());
-            b.emitRaw(OpCode.BUILD_LIST, posItems.size());
+        if (c.arg_list() != null) {
+            if (c.arg_list().gen_expr() != null) {
+                throw new CompileError("invalid generator expression in class bases");
+            }
+            if (!c.arg_list().arg_item().isEmpty()) {
+                var posItems = c.arg_list().arg_item().stream()
+                        .filter(it -> it instanceof Jython3Parser.PositionalArgContext)
+                        .toList();
+                for (var it : posItems) visit(((Jython3Parser.PositionalArgContext) it).expr());
+                b.emitRaw(OpCode.BUILD_LIST, posItems.size());
+            } else {
+                b.emit(OpCode.LOAD_CONST, null);
+            }
         } else {
             b.emit(OpCode.LOAD_CONST, null);
         }
@@ -1096,6 +1115,11 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     /** Emit a CALL_FUNCTION, CALL_FUNCTION_KW, or CALL_FUNCTION_EX instruction for the given call. */
     private void emitCall(Jython3Parser.Arg_listContext argList) {
+        if (argList != null && argList.gen_expr() != null) {
+            visit(argList.gen_expr());
+            b.emitRaw(OpCode.CALL_FUNCTION, 1);
+            return;
+        }
         if (argList != null && hasCallSplat(argList)) {
             emitSplatCall(argList);
             return;
@@ -1370,6 +1394,69 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         b.patch(jumpAfter, b.size());
     }
 
+    // ── generator expressions ──────────────────────────────────────────────────
+    @Override public Void visitGenExpr(Jython3Parser.GenExprContext c) {
+        return visitGen_expr(c.gen_expr());
+    }
+
+    @Override public Void visitGen_expr(Jython3Parser.Gen_exprContext c) {
+        // Compile body as an independent generator function `<genexpr>($gen_iter)`:
+        // the outermost iterable is evaluated ONCE in the enclosing scope and turned into
+        // an iterator via GET_ITER at generator creation time, without consuming elements.
+        var gb = new CodeBuilder();
+        var gv = new CompileVisitor(gb, true);
+        emitGenCompClauses(gv, gb, c.expr(), c.comp_for(), 0, true);
+        gb.emit(OpCode.LOAD_CONST, null);
+        gb.emit(OpCode.RETURN_VALUE);
+        gb.emit(OpCode.HALT);
+
+        var proto = new PyFunction("<genexpr>", List.of("$gen_iter"),
+                new org.example.jython3.runtime.PyObject[0], null, null, gb.build(), null);
+        b.emit(OpCode.LOAD_CONST, proto);
+        visit(c.comp_for(0).expr());
+        b.emit(OpCode.GET_ITER);
+        b.emitRaw(OpCode.CALL_FUNCTION, 1);
+        return null;
+    }
+
+    private static void emitGenCompClauses(CompileVisitor gv, CodeBuilder gb,
+                                           Jython3Parser.ExprContext yieldExpr,
+                                           List<Jython3Parser.Comp_forContext> compFors,
+                                           int idx, boolean alreadyIterator) {
+        var cf = compFors.get(idx);
+        if (alreadyIterator) {
+            gb.emit(OpCode.LOAD_FAST, "$gen_iter");
+        } else {
+            gv.visit(cf.expr());
+            gb.emit(OpCode.GET_ITER);
+        }
+        int loopTop = gb.size();
+        int forIter = gb.size();
+        gb.emitRaw(OpCode.FOR_ITER, 0);
+        gv.emitStore(LValue.fromTargetList(cf.target_list()));
+
+        var filterJumps = new ArrayList<Integer>();
+        for (var ci : cf.comp_if()) {
+            gv.visit(ci.expr());
+            int fj = gb.size();
+            gb.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+            filterJumps.add(fj);
+        }
+
+        if (idx + 1 < compFors.size()) {
+            emitGenCompClauses(gv, gb, yieldExpr, compFors, idx + 1, false);
+        } else {
+            gv.visit(yieldExpr);
+            gb.emit(OpCode.YIELD_VALUE);
+        }
+
+        for (int fj : filterJumps) {
+            gb.patch(fj, loopTop);
+        }
+        gb.emitRaw(OpCode.JUMP, loopTop);
+        gb.patch(forIter, gb.size());
+    }
+
     // ── lambda ────────────────────────────────────────────────────────────────
     @Override public Void visitLambdaExpr(Jython3Parser.LambdaExprContext c) {
         // lambda [params]: body_expr
@@ -1406,7 +1493,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         boolean hasKwargs = kwargsParam != null;
         // Compile body: single expression, return its value
         var fb = new CodeBuilder();
-        var fv = new CompileVisitor(fb);
+        var fv = new CompileVisitor(fb, true);
         fv.visit(bodyExpr);
         fb.emit(OpCode.RETURN_VALUE);
         fb.emit(OpCode.HALT);

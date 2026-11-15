@@ -1037,7 +1037,8 @@ public class Jython3Interpreter {
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
                     else if (v instanceof org.example.jython3.runtime.BigInt bi) stack.push(bi);
                     else if (v instanceof PyFunction f) {
-                        if ("<lambda>".equals(f.name()) && currentLocals != null && currentLocals != globals) {
+                        if (("<lambda>".equals(f.name()) || "<genexpr>".equals(f.name()))
+                                && currentLocals != null && currentLocals != globals) {
                             var refs = f.code() != null ? f.code().referencedNames() : java.util.Set.<String>of();
                             var captured = new HashMap<String, PyObject>(f.closure());
                             for (Map.Entry<String, PyObject> e : currentLocals.entrySet()) {

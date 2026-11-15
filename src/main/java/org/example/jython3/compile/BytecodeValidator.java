@@ -24,10 +24,10 @@ public final class BytecodeValidator {
 
     public static void validate(CompiledCode code) {
         var seen = Collections.newSetFromMap(new IdentityHashMap<CompiledCode, Boolean>());
-        validateUnit(code, "<module>", seen);
+        validateUnit(code, "<module>", false, seen);
     }
 
-    private static void validateUnit(CompiledCode code, String name, Set<CompiledCode> seen) {
+    private static void validateUnit(CompiledCode code, String name, boolean allowYield, Set<CompiledCode> seen) {
         if (code == null) throw new IllegalStateException("Null CompiledCode for " + name);
         if (!seen.add(code)) return;
 
@@ -49,6 +49,9 @@ public final class BytecodeValidator {
             OpCode op = (opCode >= 0 && opCode < OP_VALUES.length) ? OP_VALUES[opCode] : null;
             if (op == null) {
                 throw new IllegalStateException(name + "@" + pc + ": invalid opcode " + opCode);
+            }
+            if (op == OpCode.YIELD_VALUE && !allowYield) {
+                throw new IllegalStateException(name + "@" + pc + ": YIELD_VALUE outside generator function");
             }
             if (isJumpOp(op) && (ai < 0 || ai >= bc.length)) {
                 throw new IllegalStateException(name + "@" + pc + " (" + op + "): jump target " + ai + " out of bounds [0, " + bc.length + ")");
@@ -73,9 +76,12 @@ public final class BytecodeValidator {
             int ai = instr & 0xFFFF;
 
             if (op == OpCode.HALT || op == OpCode.RETURN_VALUE || op == OpCode.RAISE
-                    || op == OpCode.RAISE_ACTIVE || op == OpCode.RERAISE || op == OpCode.RAISE_FROM) {
+                    || op == OpCode.RAISE_ACTIVE || op == OpCode.RERAISE || op == OpCode.RAISE_FROM
+                    || op == OpCode.ASSERT) {
                 int minNeed = (op == OpCode.RETURN_VALUE || op == OpCode.RAISE) ? 1
-                        : (op == OpCode.RAISE_FROM ? 2 : (op == OpCode.RERAISE && ai == 0 ? 1 : 0));
+                        : (op == OpCode.RAISE_FROM ? 2
+                        : (op == OpCode.RERAISE && ai == 0 ? 1
+                        : (op == OpCode.ASSERT && ai == 1 ? 1 : 0)));
                 if (depth < minNeed) {
                     throw new IllegalStateException(name + "@" + pc + " (" + op + "): stack underflow (depth=" + depth + ", need=" + minNeed + ")");
                 }
@@ -135,9 +141,9 @@ public final class BytecodeValidator {
         if (pool != null) {
             for (Object c : pool) {
                 if (c instanceof PyFunction fn && fn.code() != null) {
-                    validateUnit(fn.code(), fn.name(), seen);
+                    validateUnit(fn.code(), fn.name(), fn.code().hasYield(), seen);
                 } else if (c instanceof CompiledCode cc) {
-                    validateUnit(cc, "<nested>", seen);
+                    validateUnit(cc, "<nested>", false, seen);
                 }
             }
         }
@@ -198,7 +204,8 @@ public final class BytecodeValidator {
             case DELETE_ATTR -> new int[]{1, -1};
             case DELETE_FAST, DELETE_NAME_SILENT, POP_EXCEPT_HANDLER, BEGIN_EXCEPT_HANDLER,
                  END_EXCEPT_HANDLER -> new int[]{0, 0};
-            case UNARY_MINUS, LOGICAL_NOT, BITWISE_INVERT, GET_ITER, LOAD_ATTR, YIELD_VALUE -> new int[]{1, 0};
+            case UNARY_MINUS, LOGICAL_NOT, BITWISE_INVERT, GET_ITER, LOAD_ATTR -> new int[]{1, 0};
+            case YIELD_VALUE -> new int[]{1, -1};
             case ADD, SUBTRACT, MULTIPLY, DIVIDE, FLOOR_DIVIDE, MODULO, POWER,
                  COMPARE_EQ, COMPARE_NEQ, COMPARE_LT, COMPARE_GT, COMPARE_LTE, COMPARE_GTE,
                  COMPARE_IN, COMPARE_NOT_IN, COMPARE_IS, COMPARE_IS_NOT,
@@ -213,7 +220,7 @@ public final class BytecodeValidator {
             case LIST_COMP_INIT, SET_COMP_INIT -> new int[]{0, 1};
             case LIST_COMP_APPEND, SET_COMP_ADD, LIST_EXTEND, DICT_MERGE -> new int[]{2, -1};
             case UNPACK_SEQUENCE -> new int[]{1, ai - 1};
-            case ASSERT -> new int[]{ai == 1 ? 2 : 1, -(ai == 1 ? 2 : 1)};
+            case ASSERT -> new int[]{ai == 1 ? 1 : 0, ai == 1 ? -1 : 0};
             case IMPORT_MODULE -> new int[]{0, 0};
             case MAKE_FUNCTION -> new int[]{1, -1};
             case MAKE_FUNCTION_DEFAULTS -> {

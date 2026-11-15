@@ -30,7 +30,9 @@ public final class BytecodeDisassembler {
     private static void disassembleUnit(CompiledCode code, String unitName,
                                         StringBuilder sb, Set<CompiledCode> seen) {
         if (code == null || !seen.add(code)) return;
-        sb.append("=== ").append(unitName).append(" ===\n");
+        sb.append("=== ").append(unitName)
+          .append(code.hasYield() ? " [generator]" : "")
+          .append(" ===\n");
         int[] bc = code.bytecode();
         Object[] pool = code.constPool();
         var nested = new ArrayDeque<NamedCode>();
@@ -43,7 +45,7 @@ public final class BytecodeDisassembler {
             int line = code.lineAt(pc);
             sb.append(String.format("%4d  L%-4d %-22s", pc, line, op != null ? op.name() : ("UNKNOWN_" + opCode)));
             if (op != null) {
-                sb.append(formatOperand(op, ai, pool));
+                sb.append(formatOperand(op, ai, pool, pc));
             } else {
                 sb.append(ai);
             }
@@ -64,7 +66,7 @@ public final class BytecodeDisassembler {
         }
     }
 
-    private static String formatOperand(OpCode op, int ai, Object[] pool) {
+    private static String formatOperand(OpCode op, int ai, Object[] pool, int pc) {
         return switch (op) {
             case LOAD_CONST -> ai == NO_ARG ? "None" : formatConst(ai, pool);
             case LOAD_FAST, LOAD_GLOBAL, STORE_FAST, LOAD_GLOBAL_NAME, STORE_GLOBAL_NAME,
@@ -72,6 +74,7 @@ public final class BytecodeDisassembler {
                  IMPORT_MODULE, MAKE_FUNCTION, BUILD_CLASS, CALL_FUNCTION_KW -> formatConst(ai, pool);
             case JUMP, JUMP_IF_FALSE, JUMP_IF_TRUE_OR_POP, JUMP_IF_FALSE_OR_POP,
                  FOR_ITER, PUSH_EXCEPT_HANDLER -> "-> " + ai;
+            case YIELD_VALUE -> "(suspend, resume -> " + (pc + 1) + ")";
             case CALL_FUNCTION, CALL_FUNCTION_EX, BUILD_LIST, BUILD_DICT, BUILD_TUPLE,
                  BUILD_SET, BUILD_SLICE, UNPACK_SEQUENCE, MAKE_FUNCTION_DEFAULTS,
                  ASSERT, RERAISE -> String.valueOf(ai);
