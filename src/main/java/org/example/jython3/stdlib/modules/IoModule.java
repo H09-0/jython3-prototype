@@ -54,20 +54,26 @@ public final class IoModule {
                         if (!hostPolicy.canWriteFile(p)) throw PyErrors.error("SecurityError", "access to write file '" + filename + "' is restricted");
                         try {
                             String data = a.length > 0 ? a[0].toString() : "";
-                            if (mode.contains("a")) Files.writeString(p, data, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-                            else Files.writeString(p, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+                            Files.writeString(p, data, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                             return PyInt.of(data.length());
                         } catch (Exception ex) { throw PyErrors.error("IOError", ex.getMessage()); }
                     }));
                     fattrs.put("close", fn("close", a -> new PyNull()));
-                    return new PyModule("file", fattrs);
+                    PyModule fileObj = new PyModule("file", fattrs);
+                    fattrs.put("__enter__", fn("__enter__", a -> fileObj));
+                    fattrs.put("__exit__", fn("__exit__", a -> new PyNull()));
+                    return fileObj;
                 } else {
                     String content = Files.readString(p);
                     Map<String, PyObject> fattrs = new HashMap<>();
                     fattrs.put("name", new PyStr(p.toString()));
+                    fattrs.put("mode", new PyStr(mode));
                     fattrs.put("read", fn("read", a -> new PyStr(content)));
                     fattrs.put("close", fn("close", a -> new PyNull()));
-                    return new PyModule("file", fattrs);
+                    PyModule fileObj = new PyModule("file", fattrs);
+                    fattrs.put("__enter__", fn("__enter__", a -> fileObj));
+                    fattrs.put("__exit__", fn("__exit__", a -> new PyNull()));
+                    return fileObj;
                 }
             } catch (Exception e) {
                 throw PyErrors.error("IOError", e.getMessage());
