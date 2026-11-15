@@ -47,11 +47,13 @@ import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyCell;
 import org.example.jython3.runtime.PyClass;
+import org.example.jython3.runtime.PyCodeInfo;
 import org.example.jython3.runtime.PyCompiledCodeWrapper;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyException;
 import org.example.jython3.runtime.PyFloat;
+import org.example.jython3.runtime.PyFrameInfo;
 import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
@@ -69,6 +71,7 @@ import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PySet;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
+import org.example.jython3.runtime.PyTraceback;
 import org.example.jython3.runtime.PyTuple;
 import org.example.jython3.runtime.SystemExit;
 import org.example.jython3.security.AllowlistPolicy;
@@ -240,6 +243,8 @@ public class Jython3Interpreter {
      * pops. It is per frame, so a callee never inherits the caller's handler.
      */
     private Deque<PyObject> activeExceptions = new ArrayDeque<>();
+    /** Outer active exception context preserved across re-entrant {@code runNested()} calls. */
+    private final Deque<PyException> outerActiveContexts = new ArrayDeque<>();
     /** Non-null while a generator function is being drained; collects yielded values. */
     private List<PyObject> yieldCollector = null;
     /** Source location of the instruction being executed, for tracebacks. */
@@ -424,12 +429,44 @@ public class Jython3Interpreter {
      * CPython's "most recent call last" ordering.
      */
     public String formatTraceback(InterpreterException e, String filename, String source) {
+        if (e.value() instanceof PyException pe) {
+            var sb = new StringBuilder();
+            var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<PyException, Boolean>());
+            formatExceptionChain(sb, pe, e, filename, source, seen);
+            return sb.toString();
+        }
         var sb = new StringBuilder("Traceback (most recent call last):\n");
-        var frames = e.traceback();
+        appendFrames(sb, e.traceback(), e.line(), e.function(), filename, source);
+        sb.append(e.getMessage());
+        return sb.toString();
+    }
+
+    private void formatExceptionChain(StringBuilder sb, PyException pe, InterpreterException primaryCarrier,
+                                      String filename, String source, java.util.Set<PyException> seen) {
+        if (pe == null || !seen.add(pe)) return;
+        if (pe.cause() != null) {
+            formatExceptionChain(sb, pe.cause(), null, filename, source, seen);
+            sb.append("\n\nThe above exception was the direct cause of the following exception:\n\n");
+        } else if (pe.context() != null && !pe.suppressContext()) {
+            formatExceptionChain(sb, pe.context(), null, filename, source, seen);
+            sb.append("\n\nDuring handling of the above exception, another exception occurred:\n\n");
+        }
+        sb.append("Traceback (most recent call last):\n");
+        var frames = !pe.traceback().isEmpty()
+                ? pe.traceback()
+                : (primaryCarrier != null ? primaryCarrier.traceback() : List.<InterpreterException.TraceEntry>of());
+        int fallbackLine = primaryCarrier != null ? primaryCarrier.line() : 0;
+        String fallbackFunc = primaryCarrier != null ? primaryCarrier.function() : null;
+        appendFrames(sb, frames, fallbackLine, fallbackFunc, filename, source);
+        sb.append(pe);
+    }
+
+    private static void appendFrames(StringBuilder sb, List<InterpreterException.TraceEntry> frames,
+                                     int fallbackLine, String fallbackFunc, String filename, String source) {
         if (frames.isEmpty()) {
-            int line = e.line() > 0 ? e.line() : 1;
+            int line = fallbackLine > 0 ? fallbackLine : 1;
             sb.append("  File \"").append(filename).append("\", line ").append(line)
-              .append(", in ").append(e.function() != null ? e.function() : "<module>").append('\n');
+              .append(", in ").append(fallbackFunc != null ? fallbackFunc : "<module>").append('\n');
             appendSnippet(sb, source, line);
         } else {
             for (int i = frames.size() - 1; i >= 0; i--) {
@@ -438,11 +475,11 @@ public class Jython3Interpreter {
                 String func = t.function() != null ? t.function() : "<module>";
                 sb.append("  File \"").append(file).append("\", line ").append(t.line())
                   .append(", in ").append(func).append('\n');
-                appendSnippet(sb, source, t.line());
+                if (Objects.equals(file, filename)) {
+                    appendSnippet(sb, source, t.line());
+                }
             }
         }
-        sb.append(e.getMessage());
-        return sb.toString();
     }
 
     private static void appendSnippet(StringBuilder sb, String source, int line) {
@@ -455,7 +492,19 @@ public class Jython3Interpreter {
 
     /** Keeps the frames on the value so they survive after the carrier is dropped. */
     private static void captureTraceback(InterpreterException ie) {
-        if (ie.value() instanceof PyException pe) pe.attachTraceback(ie.traceback());
+        if (ie.value() instanceof PyException pe) ie.flushTracebackTo(pe);
+    }
+
+    private PyException currentContextException() {
+        if (activeExceptions.peekLast() instanceof PyException active) {
+            return active;
+        }
+        for (Frame cf : callStack) {
+            if (cf.activeExceptions() != null && cf.activeExceptions().peekLast() instanceof PyException active) {
+                return active;
+            }
+        }
+        return outerActiveContexts.peekLast();
     }
 
     /** Drops active exceptions pushed by handlers that the unwind abandoned. */
@@ -493,7 +542,8 @@ public class Jython3Interpreter {
             throw newRaiseTypeError();
         }
 
-        if (activeExceptions.peekLast() instanceof PyException active) {
+        PyException active = currentContextException();
+        if (active != null) {
             exception.attachContextIfAbsent(active);
         }
         return PyErrors.errorValue(exception);
@@ -525,13 +575,15 @@ public class Jython3Interpreter {
             PyException error = new PyException(
                     ExceptionTypeRegistry.current().type("TypeError"),
                     "exception causes must derive from BaseException");
-            if (activeExceptions.peekLast() instanceof PyException active) {
+            PyException active = currentContextException();
+            if (active != null) {
                 error.attachContextIfAbsent(active);
             }
             throw PyErrors.errorValue(error);
         }
         exception.setExplicitCause(cause);
-        if (activeExceptions.peekLast() instanceof PyException active) {
+        PyException active = currentContextException();
+        if (active != null) {
             exception.attachContextIfAbsent(active);
         }
         return PyErrors.errorValue(exception);
@@ -546,7 +598,8 @@ public class Jython3Interpreter {
         PyException error = new PyException(
                 ExceptionTypeRegistry.current().type("TypeError"),
                 "exceptions must derive from BaseException");
-        if (activeExceptions.peekLast() instanceof PyException active) {
+        PyException active = currentContextException();
+        if (active != null) {
             error.attachContextIfAbsent(active);
         }
         return PyErrors.errorValue(error);
@@ -576,6 +629,7 @@ public class Jython3Interpreter {
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
             nestedDepth = 0;
+            outerActiveContexts.clear();
             yieldCollector = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
@@ -629,6 +683,7 @@ public class Jython3Interpreter {
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
             nestedDepth = 0;
+            outerActiveContexts.clear();
             yieldCollector = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
@@ -666,6 +721,7 @@ public class Jython3Interpreter {
         if (stack != null) stack.clear();
         callStack.clear();
         nestedDepth = 0;
+        outerActiveContexts.clear();
         exceptStack.clear();
         activeExceptions.clear();
         yieldCollector = null;
@@ -1789,6 +1845,18 @@ public class Jython3Interpreter {
                         PyObject val = pe.pythonAttribute(attr);
                         if (val == null) throw PyErrors.error("AttributeError", "'" + pe.typeName() + "' object has no attribute '" + attr + "'");
                         stack.push(val);
+                    } else if (obj instanceof PyTraceback tb) {
+                        PyObject val = tb.pythonAttribute(attr);
+                        if (val == null) throw PyErrors.error("AttributeError", "'traceback' object has no attribute '" + attr + "'");
+                        stack.push(val);
+                    } else if (obj instanceof PyFrameInfo fr) {
+                        PyObject val = fr.pythonAttribute(attr);
+                        if (val == null) throw PyErrors.error("AttributeError", "'frame' object has no attribute '" + attr + "'");
+                        stack.push(val);
+                    } else if (obj instanceof PyCodeInfo co) {
+                        PyObject val = co.pythonAttribute(attr);
+                        if (val == null) throw PyErrors.error("AttributeError", "'code' object has no attribute '" + attr + "'");
+                        stack.push(val);
                     } else if (obj instanceof PyFunction fn) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(fn.name()));
                         else throw PyErrors.error("AttributeError", "'function' object has no attribute '" + attr + "'");
@@ -1839,7 +1907,7 @@ public class Jython3Interpreter {
                     if (active == null) {
                         throw PyErrors.error("RuntimeError", "No active exception to reraise");
                     }
-                    throw PyErrors.errorValue(active);
+                    throw PyErrors.reraise(active);
                 }
                 case COMPARE_EXC_TYPE -> {
                     // Stack: [..., exceptionValue, clauseType]
@@ -1881,7 +1949,7 @@ public class Jython3Interpreter {
                 }
                 case RERAISE -> {
                     PyObject excObj = (ai == 1) ? activeExceptions.removeLast() : stack.pop();
-                    throw PyErrors.errorValue(excObj);
+                    throw PyErrors.reraise(excObj);
                 }
                 case EXECFILE -> {
                     // Stack top = file path string
@@ -2012,8 +2080,10 @@ public class Jython3Interpreter {
                     PyObject exitFn3 = stack.pop();
                     PyObject excType = excVal instanceof PyException pe
                             ? pe.type() : new PyNull();
+                    PyObject excTb = excVal instanceof PyException pe
+                            ? pe.tracebackObject() : new PyNull();
                     PyObject result = callPyCallable(exitFn3,
-                            new PyObject[]{excType, excVal, new PyNull()});
+                            new PyObject[]{excType, excVal, excTb});
                     if (isTruthy(result)) {
                         // Exception suppressed: jump after with
                         stack.push(PyBool.TRUE);
@@ -2025,21 +2095,33 @@ public class Jython3Interpreter {
                 }
             } // end switch
             } catch (InterpreterException ie) {
+                boolean continuation = ie.isContinuation();
+                ie.clearContinuation();
+                if (!continuation && ie.value() instanceof PyException pe) {
+                    PyException activeCtx = currentContextException();
+                    if (activeCtx != null) {
+                        pe.attachContextIfAbsent(activeCtx);
+                    }
+                }
                 if (!exceptStack.isEmpty()) {
                     ExceptHandler h = exceptStack.pop();
                     truncateActiveExceptions(h.activeDepth());
                     truncateStack(h.stackDepth());
-                    ie.setLocation(currentFile, currentLine, currentFunc);
-                    ie.addFrame(currentFile, currentLine, currentFunc);
+                    if (!continuation) {
+                        ie.setLocation(currentFile, currentLine, currentFunc);
+                        ie.addFrame(currentFile, currentLine, currentFunc);
+                    }
                     captureTraceback(ie);
                     stack.push(ie.value());
                     pc = h.exceptPc();
                     continue outer;
                 }
-                // No handler in this frame: record it and unwind one level
-                // (but never into frames owned by an enclosing run()).
-                ie.setLocation(currentFile, currentLine, currentFunc);
-                ie.addFrame(currentFile, currentLine, currentFunc);
+                // No handler in this frame: record it (unless continuing an internal
+                // RERAISE / bare raise whose frame was already recorded) and unwind.
+                if (!continuation) {
+                    ie.setLocation(currentFile, currentLine, currentFunc);
+                    ie.addFrame(currentFile, currentLine, currentFunc);
+                }
                 while (callStack.size() > baseDepth) {
                     Frame cf = callStack.pop();
                     code = cf.code();
@@ -2048,6 +2130,7 @@ public class Jython3Interpreter {
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
                     if (cf.globals() != null) currentGlobals = cf.globals();
+                    globalCells = cf.globalCells();
                     stack = cf.stack();
                     exceptStack = cf.exceptHandlers();
                     activeExceptions = cf.activeExceptions();
@@ -2067,6 +2150,7 @@ public class Jython3Interpreter {
                     }
                     ie.addFrame(currentFile, currentLine, currentFunc);
                 }
+                captureTraceback(ie);
                 throw ie;
             }
             pc++;
@@ -2123,6 +2207,9 @@ public class Jython3Interpreter {
             return (cv == null && "__name__".equals(attr)) ? new PyStr(cls.name()) : cv;
         }
         if (obj instanceof PyException pe) return pe.pythonAttribute(attr);
+        if (obj instanceof PyTraceback tb) return tb.pythonAttribute(attr);
+        if (obj instanceof PyFrameInfo fr) return fr.pythonAttribute(attr);
+        if (obj instanceof PyCodeInfo co) return co.pythonAttribute(attr);
         if (obj instanceof PyFunction fn && "__name__".equals(attr)) return new PyStr(fn.name());
         if (obj instanceof PyBuiltinFunction bf && "__name__".equals(attr)) return new PyStr(bf.name());
         if (obj instanceof PyBoundMethod bm && "__name__".equals(attr)) return new PyStr(bm.fn().name());
@@ -2181,6 +2268,8 @@ public class Jython3Interpreter {
             var savedFile = currentFile;
             var savedGlobals = currentGlobals;
             var savedGlobalCells = globalCells;
+            PyException outerCtx = currentContextException();
+            if (outerCtx != null) outerActiveContexts.addLast(outerCtx);
 
             try {
                 currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
@@ -2193,6 +2282,7 @@ public class Jython3Interpreter {
                 runNested(fn.code(), 0);
                 return stack.isEmpty() ? new PyNull() : stack.pop();
             } finally {
+                if (outerCtx != null) outerActiveContexts.removeLast();
                 // Always restore the caller's frame state, including when the callee raises.
                 stack = savedStack;
                 currentLocals = savedLocals;

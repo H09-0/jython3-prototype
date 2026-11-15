@@ -414,5 +414,17 @@ public class CoreDifferentialTest {
                 + "def f():\n    pass\n"
                 + "x = C()\n"
                 + "print(C.__name__, ValueError.__name__, x.__class__ is C, type(x).__name__, f.__name__, len.__name__, x.m.__name__)");
+        assertMatchesCPython("traceback_frames_and_with_tb",
+                "def tb_names(exc):\n    out = []\n    tb = exc.__traceback__\n    while tb is not None:\n        out.append((tb.tb_frame.f_code.co_name, tb.tb_lineno))\n        tb = tb.tb_next\n    return out\n"
+                + "def boom():\n    raise ValueError('x')\n"
+                + "def middle():\n    try:\n        boom()\n    finally:\n        pass\n"
+                + "def top():\n    middle()\n"
+                + "try:\n    top()\nexcept ValueError as e:\n    print('fin:', tb_names(e))\n"
+                + "class CM:\n    def __enter__(self):\n        return self\n"
+                + "    def __exit__(self, t, v, tb):\n        print('exit_tb:', tb is not None, tb.tb_frame.f_code.co_name, tb.tb_next.tb_frame.f_code.co_name)\n        return True\n"
+                + "def with_fn():\n    with CM():\n        boom()\n"
+                + "with_fn()\n"
+                + "def helper():\n    return 1 / 0\n"
+                + "try:\n    try:\n        raise KeyError('k')\n    except KeyError:\n        helper()\nexcept ZeroDivisionError as z:\n    print('helper_ctx:', z.__context__.__class__.__name__)");
     }
 }

@@ -26,6 +26,10 @@ public class InterpreterException extends RuntimeException {
     private int line;
     private String function;
     private final List<TraceEntry> traceback = new ArrayList<>();
+    /** True when thrown by an internal unwind continuation (RERAISE / bare raise). */
+    private boolean continuation;
+    /** Number of entries already flushed onto the carried PyException. */
+    private int flushedFrames = 0;
 
     /** One frame in a traceback, ordered from outermost to innermost. */
     public record TraceEntry(String file, int line, String function) {}
@@ -78,4 +82,23 @@ public class InterpreterException extends RuntimeException {
     public int line() { return line; }
     public String function() { return function; }
     public List<TraceEntry> traceback() { return traceback; }
+
+    public boolean isContinuation() { return continuation; }
+
+    public InterpreterException markContinuation() {
+        this.continuation = true;
+        return this;
+    }
+
+    public void clearContinuation() {
+        this.continuation = false;
+    }
+
+    /** Appends any un-flushed unwind frames onto {@code pe}, never duplicating. */
+    public void flushTracebackTo(PyException pe) {
+        if (pe != null && flushedFrames < traceback.size()) {
+            pe.attachTraceback(traceback.subList(flushedFrames, traceback.size()));
+            flushedFrames = traceback.size();
+        }
+    }
 }

@@ -87,9 +87,25 @@ public final class PyException implements PyObject {
             case "__cause__" -> cause != null ? cause : new PyNull();
             case "__context__" -> context != null ? context : new PyNull();
             case "__suppress_context__" -> PyBool.of(suppressContext);
+            case "__traceback__" -> tracebackObject();
             case "__class__" -> type;
             default -> null;
         };
+    }
+
+    /**
+     * Builds the Python {@code __traceback__} linked list (outermost first) from
+     * the captured unwind frames, or returns {@link PyNull} when unraised.
+     */
+    public PyObject tracebackObject() {
+        if (traceback.isEmpty()) return new PyNull();
+        PyTraceback head = null;
+        for (InterpreterException.TraceEntry entry : traceback) {
+            var code = new PyCodeInfo(entry.function(), entry.file());
+            var frame = new PyFrameInfo(code, entry.line());
+            head = new PyTraceback(frame, entry.line(), head);
+        }
+        return head;
     }
 
     private static List<PyObject> defaultArgs(String message) {

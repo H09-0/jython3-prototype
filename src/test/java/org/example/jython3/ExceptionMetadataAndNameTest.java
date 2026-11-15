@@ -256,4 +256,101 @@ class ExceptionMetadataAndNameTest {
         org.junit.jupiter.api.Assertions.assertNotNull(pe.context());
         assertEquals("KeyError", pe.context().typeName());
     }
+
+    @Test
+    @DisplayName("__traceback__ exposes tb_next/tb_lineno/tb_frame across try/finally, with, and JavaBridge")
+    void tracebackObjectAndChainedRendering() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            def tb_frames(exc):
+                out = []
+                cur = exc.__traceback__
+                while cur is not None:
+                    out.append((cur.tb_frame.f_code.co_name, cur.tb_lineno, cur.tb_frame.f_lineno))
+                    cur = cur.tb_next
+                return out
+
+            def boom():
+                raise ValueError("x")
+            def middle():
+                try:
+                    boom()
+                finally:
+                    pass
+            def top():
+                middle()
+
+            try:
+                top()
+            except ValueError as e:
+                frames = tb_frames(e)
+                has_tb = hasattr(e, "__traceback__") and getattr(e, "__traceback__") is not None
+                unraised_tb = ValueError("fresh").__traceback__ is None
+
+            # with.__exit__ receives a live traceback object
+            seen_tb = []
+            class CM:
+                def __enter__(self):
+                    return self
+                def __exit__(self, t, v, tb):
+                    seen_tb.append(tb is not None)
+                    seen_tb.append(tb.tb_lineno)
+                    seen_tb.append(tb.tb_next.tb_frame.f_code.co_name)
+                    return True
+            def with_caller():
+                with CM():
+                    boom()
+            with_caller()
+
+            # runtime error (1/0) inside except / finally / helper gets __context__
+            def div_zero():
+                return 1 / 0
+            try:
+                try:
+                    raise KeyError("k")
+                except KeyError:
+                    div_zero()
+            except ZeroDivisionError as z:
+                rt_ctx_helper = z.__context__.__class__.__name__
+
+            try:
+                try:
+                    raise KeyError("k2")
+                finally:
+                    x = 1 / 0
+            except ZeroDivisionError as z2:
+                rt_ctx_finally = z2.__context__.__class__.__name__
+
+            ok = (
+                frames == [("<module>", 20, 20), ("top", 17, 17), ("middle", 13, 13), ("boom", 10, 10)]
+                and has_tb
+                and unraised_tb
+                and seen_tb == [True, 38, "boom"]
+                and rt_ctx_helper == "KeyError"
+                and rt_ctx_finally == "KeyError"
+            )
+            """);
+        assertEquals(PyBool.TRUE, interp.getGlobal("ok"),
+                "frames=" + interp.getGlobal("frames") + " seen_tb=" + interp.getGlobal("seen_tb"));
+
+        // Chained traceback rendering for both implicit context and explicit cause
+        var ctxIe = assertThrows(InterpreterException.class, () -> interp.eval("""
+            try:
+                raise KeyError("first")
+            except KeyError:
+                raise ValueError("second")
+            """));
+        String ctxText = interp.formatTraceback(ctxIe, "<stdin>", "");
+        assertTrue(ctxText.contains("KeyError: first"), ctxText);
+        assertTrue(ctxText.contains("During handling of the above exception, another exception occurred:"), ctxText);
+        assertTrue(ctxText.contains("ValueError: second"), ctxText);
+
+        var causeIe = assertThrows(InterpreterException.class, () -> interp.eval("""
+            raise RuntimeError("outer") from ValueError("cause")
+            """));
+        String causeText = interp.formatTraceback(causeIe, "<stdin>", "");
+        assertTrue(causeText.contains("ValueError: cause"), causeText);
+        assertTrue(causeText.contains("The above exception was the direct cause of the following exception:"), causeText);
+        assertTrue(causeText.contains("RuntimeError: outer"), causeText);
+    }
 }

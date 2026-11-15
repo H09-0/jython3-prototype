@@ -16,11 +16,14 @@ import org.example.jython3.runtime.PyBoundMethod;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyClass;
+import org.example.jython3.runtime.PyCodeInfo;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyException;
 import org.example.jython3.runtime.PyFloat;
+import org.example.jython3.runtime.PyFrameInfo;
 import org.example.jython3.runtime.PyFunction;
+import org.example.jython3.runtime.PyTraceback;
 import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
 import org.example.jython3.runtime.PyInt;
@@ -491,6 +494,9 @@ public final class BuiltinFunctions {
             if (args[0] instanceof PyInstance inst) return PyBool.of(inst.hasField(name) || "__class__".equals(name));
             if (args[0] instanceof PyClass cls) return PyBool.of(cls.hasMember(name) || "__name__".equals(name));
             if (args[0] instanceof PyException pe) return PyBool.of(pe.pythonAttribute(name) != null);
+            if (args[0] instanceof PyTraceback tb) return PyBool.of(tb.pythonAttribute(name) != null);
+            if (args[0] instanceof PyFrameInfo fr) return PyBool.of(fr.pythonAttribute(name) != null);
+            if (args[0] instanceof PyCodeInfo co) return PyBool.of(co.pythonAttribute(name) != null);
             if (args[0] instanceof PyFunction || args[0] instanceof PyBuiltinFunction || args[0] instanceof PyBoundMethod) {
                 return PyBool.of("__name__".equals(name));
             }
@@ -517,6 +523,15 @@ public final class BuiltinFunctions {
                 if ("__name__".equals(name)) return new PyStr(cls.name());
             } else if (args[0] instanceof PyException pe) {
                 PyObject val = pe.pythonAttribute(name);
+                if (val != null) return val;
+            } else if (args[0] instanceof PyTraceback tb) {
+                PyObject val = tb.pythonAttribute(name);
+                if (val != null) return val;
+            } else if (args[0] instanceof PyFrameInfo fr) {
+                PyObject val = fr.pythonAttribute(name);
+                if (val != null) return val;
+            } else if (args[0] instanceof PyCodeInfo co) {
+                PyObject val = co.pythonAttribute(name);
                 if (val != null) return val;
             } else if (args[0] instanceof PyFunction fn && "__name__".equals(name)) {
                 return new PyStr(fn.name());

@@ -35,6 +35,15 @@ public final class PyErrors {
     }
 
     /**
+     * Wraps an existing exception value for internal unwind continuation
+     * ({@code RERAISE} / bare {@code raise}) so already-captured inner frames
+     * are preserved and the re-raising frame is not duplicated.
+     */
+    public static InterpreterException reraise(PyObject value) {
+        return new InterpreterException(value).markContinuation();
+    }
+
+    /**
      * Wraps a JVM throwable as a Python exception value. Returns the original
      * throwable when it already is an {@link InterpreterException}, so Python
      * errors raised inside reflective calls do not turn into
@@ -48,6 +57,7 @@ public final class PyErrors {
     public static InterpreterException fromJava(Throwable throwable) {
         if (throwable instanceof InterpreterException ie) return ie;
         Throwable cause = unwrap(throwable);
+        if (cause instanceof InterpreterException ie) return ie;
         String typeName = javaTypeName(cause);
         String message = javaMessage(cause, typeName);
         PyClass type = ExceptionTypeRegistry.current().type(typeName);

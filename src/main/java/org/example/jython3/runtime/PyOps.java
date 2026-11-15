@@ -157,6 +157,9 @@ public final class PyOps {
                 case PySuper s -> true;
                 case PySlice sl -> true;
                 case PyCell c -> c.isBound() && isTruthy(c.get());
+                case PyTraceback tb -> true;
+                case PyFrameInfo fr -> true;
+                case PyCodeInfo co -> true;
         };
     }
 
@@ -195,7 +198,8 @@ public final class PyOps {
         }
         if (a instanceof PyClass || a instanceof PyException || a instanceof PyFunction
                 || a instanceof PyBuiltinFunction || a instanceof PyBoundMethod
-                || a instanceof PyInstance || a instanceof PyModule) {
+                || a instanceof PyInstance || a instanceof PyModule
+                || a instanceof PyTraceback || a instanceof PyFrameInfo || a instanceof PyCodeInfo) {
             return a == b;
         }
         return false;
@@ -300,6 +304,9 @@ public final class PyOps {
             case PySuper s -> "super";
             case PySlice sl -> "slice";
             case PyCell c -> c.isBound() ? typeName(c.get()) : "cell";
+            case PyTraceback tb -> "traceback";
+            case PyFrameInfo fr -> "frame";
+            case PyCodeInfo co -> "code";
         };
     }
 
