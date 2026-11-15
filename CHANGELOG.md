@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.12.2-beta] - 2026-11-15
+### Security & Build
+- **Host-Attested Adapter Trust & Registration Policy (`ControlRegistry`, `HostAttestation`, `CapabilitySet`, `ControlModule`)**:
+  - Replaced reliance on self-reported `ControlDevice.trustTier()` with host-issued `HostAttestation` and `ControlRegistry.AttestedTier` (`SIMULATED`, `TRUSTED_HOST`, `HARDWARE`, `UNTRUSTED`), rejecting unattested custom adapters and duplicate device-ID shadowing (`ForgedAdapterSecurityTest`).
+  - Added `ControlRegistry.seal()` / `EmbeddedRuntime.lockDeviceRegistrations()` and `CapabilitySet.Builder.allowAdapterOrigin(...)` with full audit logging (`AdapterRegistrationPolicyTest`).
+- **Cross-Platform Workspace Hardening & System Install (`ScopedWorkspaceAdapter`, `build.gradle.kts`)**:
+  - Normalized cross-platform path separators, blocked drive/UNC escapes, and completed non-`SecureDirectoryStream` fallbacks for `list_dir` and `exists` (`CrossPlatformWorkspaceTest`; 516 total tests passing green).
+  - Added `./gradlew installLocal` to sync the built distribution to `~/.local/share/jython3` and updated [SECURITY_REVIEW_HOST_CAPABILITIES.md](docs/SECURITY_REVIEW_HOST_CAPABILITIES.md) with trusted adapter deployment requirements.
+
 ## [v0.12.1-beta] - 2026-11-15
 ### Security
 - **Session-Scoped `PyHostHandle` Enforcement (`PyHostHandle`, `PolicySanitizer`, `HostSession`, `HostAppBridge`)**:
