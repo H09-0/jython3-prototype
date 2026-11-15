@@ -180,6 +180,40 @@ public class FieldIntegrationTest {
     }
 
     @Test
+    @DisplayName("json.dumps detects circular references in lists and dicts while allowing shared siblings")
+    void testJsonDumpsCircularReferenceDetection() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            import json
+
+            # Shared non-circular sibling is valid JSON
+            shared = [1, 2]
+            ok_Sibling = json.dumps([shared, shared])
+
+            # Circular list raises ValueError
+            circ_list = [1]
+            circ_list.append(circ_list)
+            caught_list = False
+            try:
+                json.dumps(circ_list)
+            except ValueError:
+                caught_list = True
+
+            # Circular dict raises ValueError
+            circ_dict = {"a": 1}
+            circ_dict["self"] = circ_dict
+            caught_dict = False
+            try:
+                json.dumps(circ_dict)
+            except ValueError:
+                caught_dict = True
+            """);
+        assertEquals(new PyStr("[[1,2],[1,2]]"), interp.getGlobal("ok_Sibling"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("caught_list"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("caught_dict"));
+    }
+
+    @Test
     @DisplayName("math functions accept bool and BigInt arguments and raise OverflowError on huge BigInt")
     void testMathBoolAndBigIntSupport() {
         var interp = Jython3Interpreter.trusted();
@@ -189,19 +223,30 @@ public class FieldIntegrationTest {
             s_false = math.sqrt(False)
             s_big   = math.sqrt(10 ** 30)
             a_big   = math.abs(-(10 ** 30))
+            fl_big  = math.floor(10 ** 30)
+            cl_big  = math.ceil(10 ** 30)
 
-            overflow_caught = False
+            huge = 10 ** 400
+            overflow_count = 0
+            for fn in [math.sqrt, math.sin, math.cos, math.tan, math.log]:
+                try:
+                    fn(huge)
+                except OverflowError:
+                    overflow_count = overflow_count + 1
+
             try:
-                math.sqrt(10 ** 400)
+                math.pow(huge, 2)
             except OverflowError:
-                overflow_caught = True
+                overflow_count = overflow_count + 1
             """);
+        var expectedBig = new org.example.jython3.runtime.BigInt(new java.math.BigInteger("1000000000000000000000000000000"));
         assertEquals(1.0, ((org.example.jython3.runtime.PyFloat) interp.getGlobal("s_true")).value(), 1e-9);
         assertEquals(0.0, ((org.example.jython3.runtime.PyFloat) interp.getGlobal("s_false")).value(), 1e-9);
         assertEquals(1e15, ((org.example.jython3.runtime.PyFloat) interp.getGlobal("s_big")).value(), 1e2);
-        assertEquals(new org.example.jython3.runtime.BigInt(new java.math.BigInteger("1000000000000000000000000000000")),
-                interp.getGlobal("a_big"));
-        assertEquals(PyBool.TRUE, interp.getGlobal("overflow_caught"));
+        assertEquals(expectedBig, interp.getGlobal("a_big"));
+        assertEquals(expectedBig, interp.getGlobal("fl_big"));
+        assertEquals(expectedBig, interp.getGlobal("cl_big"));
+        assertEquals(new PyInt(6), interp.getGlobal("overflow_count"));
     }
 
     @Test

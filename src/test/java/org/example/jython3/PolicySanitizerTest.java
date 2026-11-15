@@ -157,4 +157,33 @@ public class PolicySanitizerTest {
             PolicySanitizer.sanitize(instance, DenyAllPolicy.INSTANCE);
         });
     }
+
+    @Test
+    @DisplayName("Cycles through PyFunction closures and PyClass members are sanitized without StackOverflowError")
+    void testCircularFunctionAndClassSanitization() {
+        var dummyCode = new CompiledCode(new int[0], new Object[0], new int[0]);
+
+        // 1. Recursive PyFunction whose closure references itself
+        var recFn = new PyFunction("rec", List.of(), dummyCode, new HashMap<>());
+        recFn.closure().put("rec", recFn);
+
+        PyFunction sanitizedFn = (PyFunction) PolicySanitizer.sanitize(recFn, DenyAllPolicy.INSTANCE);
+        assertSame(sanitizedFn, sanitizedFn.closure().get("rec"), "Self-referential function closure must be preserved");
+
+        // 2. PyClass with a method closing over the class AND a singleton PyInstance of that class
+        var cls = new PyClass("Node", null, new HashMap<>());
+        var methodFn = new PyFunction("make", List.of(), dummyCode, new HashMap<>());
+        methodFn.closure().put("Node", cls);
+        cls.setMember("make", methodFn);
+        var singleton = new PyInstance(cls);
+        singleton.setField("self_inst", singleton);
+        cls.setMember("singleton", singleton);
+
+        PyClass sanitizedCls = (PyClass) PolicySanitizer.sanitize(cls, DenyAllPolicy.INSTANCE);
+        PyFunction sanitizedMethod = (PyFunction) sanitizedCls.lookupMember("make");
+        assertSame(sanitizedCls, sanitizedMethod.closure().get("Node"), "Method closure reference to owning class must be preserved");
+        PyInstance sanitizedSingleton = (PyInstance) sanitizedCls.lookupMember("singleton");
+        assertSame(sanitizedCls, sanitizedSingleton.pyClass());
+        assertSame(sanitizedSingleton, sanitizedSingleton.getField("self_inst"));
+    }
 }

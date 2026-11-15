@@ -45,6 +45,10 @@ public final class JsonModule {
     }
 
     private static String simpleJsonDumps(PyObject o) {
+        return simpleJsonDumps(o, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+    }
+
+    private static String simpleJsonDumps(PyObject o, java.util.Set<PyObject> active) {
         if (o instanceof PyNull) return "null";
         if (o instanceof PyBool b) return b.value() ? "true" : "false";
         if (o instanceof PyInt i) return String.valueOf(i.value());
@@ -52,32 +56,53 @@ public final class JsonModule {
         if (o instanceof PyFloat f) return String.valueOf(f.value());
         if (o instanceof PyStr s) return "\"" + s.value().replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         if (o instanceof PyList list) {
-            StringBuilder sb = new StringBuilder("[");
-            for (int i = 0; i < list.items().size(); i++) {
-                if (i > 0) sb.append(",");
-                sb.append(simpleJsonDumps(list.items().get(i)));
+            if (!active.add(list)) {
+                throw PyErrors.error("ValueError", "Circular reference detected");
             }
-            sb.append("]");
-            return sb.toString();
+            try {
+                StringBuilder sb = new StringBuilder("[");
+                for (int i = 0; i < list.items().size(); i++) {
+                    if (i > 0) sb.append(",");
+                    sb.append(simpleJsonDumps(list.items().get(i), active));
+                }
+                sb.append("]");
+                return sb.toString();
+            } finally {
+                active.remove(list);
+            }
         }
         if (o instanceof org.example.jython3.runtime.PyTuple tuple) {
-            StringBuilder sb = new StringBuilder("[");
-            for (int i = 0; i < tuple.items().size(); i++) {
-                if (i > 0) sb.append(",");
-                sb.append(simpleJsonDumps(tuple.items().get(i)));
+            if (!active.add(tuple)) {
+                throw PyErrors.error("ValueError", "Circular reference detected");
             }
-            sb.append("]");
-            return sb.toString();
+            try {
+                StringBuilder sb = new StringBuilder("[");
+                for (int i = 0; i < tuple.items().size(); i++) {
+                    if (i > 0) sb.append(",");
+                    sb.append(simpleJsonDumps(tuple.items().get(i), active));
+                }
+                sb.append("]");
+                return sb.toString();
+            } finally {
+                active.remove(tuple);
+            }
         }
         if (o instanceof PyDict dict) {
-            StringBuilder sb = new StringBuilder("{");
-            int i = 0;
-            for (var e : dict.map().entrySet()) {
-                if (i++ > 0) sb.append(",");
-                sb.append(simpleJsonDumps(e.getKey())).append(":").append(simpleJsonDumps(e.getValue()));
+            if (!active.add(dict)) {
+                throw PyErrors.error("ValueError", "Circular reference detected");
             }
-            sb.append("}");
-            return sb.toString();
+            try {
+                StringBuilder sb = new StringBuilder("{");
+                int i = 0;
+                for (var e : dict.map().entrySet()) {
+                    if (i++ > 0) sb.append(",");
+                    sb.append(simpleJsonDumps(e.getKey(), active)).append(":").append(simpleJsonDumps(e.getValue(), active));
+                }
+                sb.append("}");
+                return sb.toString();
+            } finally {
+                active.remove(dict);
+            }
         }
         return "\"" + o.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
