@@ -76,17 +76,21 @@ class OculixRuntimeReadinessTest {
         try (var interp = new Jython3Interpreter(TEST_JAVA_POLICY, HostAccessPolicy.PERMISSIVE, ExecutionLimits.TRUSTED)) {
             interp.eval("""
                     from org.example.jython3.OculixRuntimeReadinessTest import SampleSettings
-                    from org.example.jython3.OculixRuntimeReadinessTest.SampleSettings import CONSTANT_VAL as CV
+                    from org.example.jython3.OculixRuntimeReadinessTest.SampleSettings import (
+                        CONSTANT_VAL as CV,
+                    )
                     from org.example.jython3.OculixRuntimeReadinessTest.SampleSettings import *
                     SampleSettings.actionLogs = True
                     SampleSettings.minSimilarity = 0.9
                     c = CONSTANT_VAL
                     c2 = CV
+                    u = u"unicode_compat"
                     """);
             assertTrue(SampleSettings.actionLogs);
             assertEquals(0.9, SampleSettings.minSimilarity, 1e-6);
             assertEquals(PyInt.of(42), interp.getGlobal("c"));
             assertEquals(PyInt.of(42), interp.getGlobal("c2"));
+            assertEquals(new PyStr("unicode_compat"), interp.getGlobal("u"));
         }
     }
 

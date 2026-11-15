@@ -1093,6 +1093,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     @Override public Void visitStr(Jython3Parser.StrContext c) {
         String raw = c.STRING().getText();
+        if (!raw.isEmpty() && (raw.charAt(0) == 'u' || raw.charAt(0) == 'U')) {
+            raw = raw.substring(1);
+        }
         String unquoted;
         if (raw.startsWith("'''") || raw.startsWith("\"\"\"")) {
             unquoted = raw.substring(3, raw.length() - 3);

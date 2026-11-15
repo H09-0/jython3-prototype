@@ -102,7 +102,11 @@ aug_op
 /** import module_name or from module import name */
 import_stmt
     : IMPORT dotted_as_name (COMMA dotted_as_name)*
-    | FROM dotted_name IMPORT (MUL | import_as_name (COMMA import_as_name)*)
+    | FROM dotted_name IMPORT (
+        MUL
+        | LPAREN import_as_name (COMMA import_as_name)* COMMA? RPAREN
+        | import_as_name (COMMA import_as_name)*
+      )
     ;
 
 dotted_as_name
@@ -501,10 +505,10 @@ RSTRING
     ;
 
 STRING
-    : '\'' (~['\\] | '\\' .)* '\''
-    | '"'  (~["\\] | '\\' .)* '"'
-    | '\'\'\'' ( ~['\\] | '\\' . | '\'' ~['] | '\'\'' ~['] )* '\'\'\''
-    | '"""' ( ~["\\] | '\\' . | '"' ~["] | '""' ~["] )* '"""'
+    : [uU]? '\'' (~['\\] | '\\' .)* '\''
+    | [uU]? '"'  (~["\\] | '\\' .)* '"'
+    | [uU]? '\'\'\'' ( ~['\\] | '\\' . | '\'' ~['] | '\'\'' ~['] )* '\'\'\''
+    | [uU]? '"""' ( ~["\\] | '\\' . | '"' ~["] | '""' ~["] )* '"""'
     ;
 
 // Newline with following line's leading whitespace
