@@ -71,6 +71,7 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PySet;
+import org.example.jython3.runtime.PySlice;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.PyTraceback;
@@ -416,6 +417,10 @@ public class Jython3Interpreter implements AutoCloseable {
 
             @Override public PyObject closeGenerator(PyGenerator gen) {
                 return Jython3Interpreter.this.closeGenerator(gen);
+            }
+
+            @Override public ExecutionLimits executionLimits() {
+                return executionLimits;
             }
 
             @Override public PyObject resolveZeroArgSuper() {
@@ -1552,101 +1557,20 @@ public class Jython3Interpreter implements AutoCloseable {
                     }
                 }
                 case FLOOR_DIVIDE -> {
-                    var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
-                    if (l instanceof PyInt li && r instanceof PyInt ri) {
-                        if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
-                        stack.push(PyInt.of(Math.floorDiv(li.value(), ri.value())));
-                    } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
-                        java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
-                        java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
-                        java.math.BigInteger q = PyOps.floorDiv(ba, bb);
-                        if (q.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
-                            q.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                            stack.push(PyInt.of(q.intValue()));
-                        } else {
-                            stack.push(new BigInt(q));
-                        }
-                    } else if (isNumeric(l) && isNumeric(r)) {
-                        double rv = toDouble(r);
-                        if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float floor division by zero");
-                        stack.push(new PyFloat(Math.floor(toDouble(l) / rv)));
-                    } else {
-                        throw PyErrors.error("TypeError", "unsupported operand types for //");
-                    }
+                    var r = stack.pop(); var l = stack.pop();
+                    stack.push(ArithmeticOps.floorDiv(l, r));
                 }
                 case MODULO -> {
                     var r = stack.pop(); var l = stack.pop();
                     if (l instanceof PyStr fmt) {
                         stack.push(new PyStr(pyStringFormat(fmt.value(), r)));
                     } else {
-                        l = unwrapBool(l);
-                        r = unwrapBool(r);
-                        if (l instanceof PyInt li && r instanceof PyInt ri) {
-                            if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
-                            stack.push(PyInt.of(Math.floorMod(li.value(), ri.value())));
-                        } else if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
-                            java.math.BigInteger ba = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
-                            java.math.BigInteger bb = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
-                            java.math.BigInteger rem = PyOps.floorMod(ba, bb);
-                            if (rem.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
-                                rem.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                                stack.push(PyInt.of(rem.intValue()));
-                            } else {
-                                stack.push(new BigInt(rem));
-                            }
-                        } else if (isNumeric(l) && isNumeric(r)) {
-                            double rv = toDouble(r), lv = toDouble(l);
-                            if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
-                            stack.push(new PyFloat(lv - Math.floor(lv / rv) * rv));
-                        } else {
-                            throw PyErrors.error("TypeError", "unsupported operand types for %");
-                        }
+                        stack.push(ArithmeticOps.mod(l, r));
                     }
                 }
                 case POWER -> {
-                    var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
-                    if (isNumeric(l) && isNumeric(r)) {
-                        // Integer exact exponentiation
-                        if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
-                            java.math.BigInteger base = l instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
-                            java.math.BigInteger exp = r instanceof PyInt pi ? java.math.BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
-                            if (exp.compareTo(java.math.BigInteger.valueOf(executionLimits.maxExponent())) > 0) {
-                                throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
-                            }
-                            if (exp.compareTo(java.math.BigInteger.ZERO) < 0) {
-                                // Negative exponent produces float: 2 ** -3 -> 0.125
-                                double baseD = toDouble(l instanceof PyInt ? l : new BigInt(base));
-                                double expD = exp.doubleValue();
-                                double res = Math.pow(baseD, expD);
-                                if (Double.isInfinite(res) && !Double.isInfinite(baseD)) {
-                                    throw PyErrors.error("OverflowError", "(34, 'Numerical result out of range')");
-                                }
-                                stack.push(new PyFloat(res));
-                            } else {
-                                int expInt = exp.intValueExact();
-                                java.math.BigInteger res = base.pow(expInt);
-                                if (res.compareTo(java.math.BigInteger.valueOf(Integer.MAX_VALUE)) <= 0 &&
-                                    res.compareTo(java.math.BigInteger.valueOf(Integer.MIN_VALUE)) >= 0) {
-                                    stack.push(PyInt.of(res.intValue()));
-                                } else {
-                                    stack.push(new BigInt(res));
-                                }
-                            }
-                        } else {
-                            double exp = toDouble(r);
-                            if (exp > executionLimits.maxExponent()) {
-                                throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + executionLimits.maxExponent());
-                            }
-                            double base = toDouble(l);
-                            double res = Math.pow(base, exp);
-                            if (Double.isInfinite(res) && !Double.isInfinite(base)) {
-                                throw PyErrors.error("OverflowError", "(34, 'Numerical result out of range')");
-                            }
-                            stack.push(new PyFloat(res));
-                        }
-                    } else {
-                        throw PyErrors.error("TypeError", "unsupported operand types for **");
-                    }
+                    var r = stack.pop(); var l = stack.pop();
+                    stack.push(ArithmeticOps.pow(l, r, executionLimits));
                 }
                 case UNARY_MINUS -> {
                     var v = unwrapBool(stack.pop());
@@ -2455,6 +2379,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push("__class__".equals(attr)
                                 ? BuiltinFunctions.typeOf(gen, builtinTypes)
                                 : BuiltinMethodDispatcher.generatorMethod(gen, attr));
+                    } else if (obj instanceof PySlice sl) {
+                        stack.push("__class__".equals(attr)
+                                ? BuiltinFunctions.typeOf(sl, builtinTypes)
+                                : BuiltinMethodDispatcher.sliceAttr(sl, attr));
                     } else if (obj instanceof PyHostHandle hh) {
                         if ("__class__".equals(attr)) {
                             stack.push(BuiltinFunctions.typeOf(hh, builtinTypes));

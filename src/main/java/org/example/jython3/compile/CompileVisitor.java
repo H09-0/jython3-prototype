@@ -820,18 +820,16 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
                 b.emit(OpCode.POP_TOP);
             }
 
-            int handlerPushIdx = -1;
-            if (finallySuite != null) {
-                // If this try statement has a finally suite, register a handler around the
-                // except clause body so an exception raised inside the handler still runs finally.
-                handlerPushIdx = b.size();
-                b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
-            }
+            // Always register an exception handler around the except clause body so that
+            // any exception raised inside the handler deletes the 'as e' binding (PEP 3110),
+            // restores the outer active exception, and runs any finally block before re-raising.
+            int handlerPushIdx = b.size();
+            b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
 
             boolean prevActiveScope = scope.handlerActive;
             boolean prevInHandler = scope.inHandler;
             String prevBoundVar = scope.boundVar;
-            scope.handlerActive = (finallySuite != null);
+            scope.handlerActive = true;
             scope.inHandler = true;
             scope.boundVar = boundVarName;
 
@@ -843,9 +841,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
                 scope.boundVar = prevBoundVar;
             }
 
-            if (finallySuite != null) {
-                b.emit(OpCode.POP_EXCEPT_HANDLER);
-            }
+            b.emit(OpCode.POP_EXCEPT_HANDLER);
 
             // In Python 3, 'as e' variable is explicitly deleted at the end of the except block.
             if (boundVarName != null) {
@@ -860,15 +856,14 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             b.emitRaw(OpCode.JUMP, 0);
             clauseEndPatches.add(jmpEnd);
 
-            if (finallySuite != null) {
-                // Exceptional path out of this except clause: run finally then reraise.
-                b.patch(handlerPushIdx, b.size());
-                if (boundVarName != null) {
-                    b.emit(OpCode.DELETE_NAME_SILENT, boundVarName);
-                }
-                b.emit(OpCode.END_EXCEPT_HANDLER);
-                emitExceptionalFinallyAndReraise(scope);
+            // Exceptional path out of this except clause: delete boundVar (PEP 3110),
+            // restore outer active exception, run any finally block, then reraise.
+            b.patch(handlerPushIdx, b.size());
+            if (boundVarName != null) {
+                b.emit(OpCode.DELETE_NAME_SILENT, boundVarName);
             }
+            b.emit(OpCode.END_EXCEPT_HANDLER);
+            emitExceptionalFinallyAndReraise(scope);
 
             if (hasType) {
                 b.patch(nextClauseIdx, b.size());

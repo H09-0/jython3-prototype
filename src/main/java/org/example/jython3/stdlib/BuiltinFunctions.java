@@ -70,7 +70,18 @@ public final class BuiltinFunctions {
     public static final PyBuiltinFunction GENERATOR_TYPE = uninstantiableType("generator");
     public static final PyBuiltinFunction ITERATOR_TYPE = uninstantiableType("iterator");
     public static final PyBuiltinFunction MODULE_TYPE = uninstantiableType("module");
-    public static final PyBuiltinFunction SLICE_TYPE = uninstantiableType("slice");
+    public static final PyBuiltinFunction SLICE_TYPE = PyBuiltinFunction.builtinType("slice", args -> {
+        if (args.length == 1) {
+            return new PySlice(PyNull.INSTANCE, args[0], PyNull.INSTANCE);
+        }
+        if (args.length == 2) {
+            return new PySlice(args[0], args[1], PyNull.INSTANCE);
+        }
+        if (args.length == 3) {
+            return new PySlice(args[0], args[1], args[2]);
+        }
+        throw PyErrors.error("TypeError", "slice() takes 1 to 3 arguments (" + args.length + " given)");
+    });
     public static final PyBuiltinFunction TRACEBACK_TYPE = uninstantiableType("traceback");
     public static final PyBuiltinFunction FRAME_TYPE = uninstantiableType("frame");
     public static final PyBuiltinFunction CODE_TYPE = uninstantiableType("code");
@@ -265,10 +276,56 @@ public final class BuiltinFunctions {
         define.accept("abs", new PyBuiltinFunction("abs", args -> {
             checkArgCount("abs", args, 1);
             PyObject o = args[0];
-            if (o instanceof PyInt i) return new PyInt(Math.abs(i.value()));
+            if (o instanceof PyInt i) {
+                if (i.value() == Integer.MIN_VALUE) {
+                    return new BigInt(java.math.BigInteger.valueOf(Integer.MIN_VALUE).abs());
+                }
+                return PyInt.of(Math.abs(i.value()));
+            }
+            if (o instanceof BigInt bi) return new BigInt(bi.value().abs());
+            if (o instanceof PyBool b) return b.value() ? PyInt.ONE : PyInt.ZERO;
             if (o instanceof PyFloat f) return new PyFloat(Math.abs(f.value()));
             throw PyErrors.error("TypeError", "bad operand type for abs(): '" + typeName(o) + "'");
         }));
+
+        // pow(base, exp[, mod])
+        define.accept("pow", new PyBuiltinFunction("pow", args -> {
+            if (args.length < 2 || args.length > 3) {
+                throw PyErrors.error("TypeError", "pow() takes 2 or 3 arguments (" + args.length + " given)");
+            }
+            if (args.length == 2 || args[2] instanceof PyNull) {
+                return org.example.jython3.runtime.ArithmeticOps.pow(args[0], args[1], caller.executionLimits());
+            }
+            java.math.BigInteger base = toBigIntStrict(args[0], "pow");
+            java.math.BigInteger exp = toBigIntStrict(args[1], "pow");
+            java.math.BigInteger mod = toBigIntStrict(args[2], "pow");
+            if (mod.signum() == 0) {
+                throw PyErrors.error("ValueError", "pow() 3rd argument cannot be 0");
+            }
+            if (exp.signum() < 0) {
+                try {
+                    return toPyInteger(base.modPow(exp, mod.abs()));
+                } catch (ArithmeticException ae) {
+                    throw PyErrors.error("ValueError", "base is not invertible for the given modulus");
+                }
+            }
+            java.math.BigInteger res = base.modPow(exp, mod.abs());
+            if (mod.signum() < 0 && res.signum() != 0) {
+                res = res.add(mod);
+            }
+            return toPyInteger(res);
+        }));
+
+        // divmod(a, b)
+        define.accept("divmod", new PyBuiltinFunction("divmod", args -> {
+            checkArgCount("divmod", args, 2);
+            PyObject q = org.example.jython3.runtime.ArithmeticOps.floorDiv(args[0], args[1]);
+            PyObject r = org.example.jython3.runtime.ArithmeticOps.mod(args[0], args[1]);
+            return new PyTuple(List.of(q, r));
+        }));
+
+        // slice(stop) or slice(start, stop[, step])
+        defineType.accept("slice", SLICE_TYPE);
 
         // min(a, b, ...) or min(iterable)
         define.accept("min", new PyBuiltinFunction("min", args -> {
@@ -338,12 +395,32 @@ public final class BuiltinFunctions {
             return new org.example.jython3.runtime.PyFrozenSet(collectIterable(args[0], javaPolicy));
         }));
 
-        // dict()
-        defineType.accept("dict", PyBuiltinFunction.builtinType("dict", args -> {
-            if (args.length == 0) return new PyDict(new LinkedHashMap<>());
-            checkArgCount("dict", args, 1);
-            if (args[0] instanceof PyDict d) return new PyDict(new LinkedHashMap<>(d.map()));
-            throw PyErrors.error("TypeError", "cannot convert argument to dict");
+        // dict([mapping_or_iterable], **kwargs)
+        defineType.accept("dict", PyBuiltinFunction.builtinType("dict", (args, kwargs) -> {
+            if (args.length > 1) {
+                throw PyErrors.error("TypeError", "dict expected at most 1 argument, got " + args.length);
+            }
+            var map = new LinkedHashMap<org.example.jython3.runtime.PyKey, PyObject>();
+            var d = new PyDict();
+            if (args.length == 1) {
+                if (args[0] instanceof PyDict src) {
+                    for (var e : src.map().entrySet()) d.put(e.getKey(), e.getValue());
+                } else {
+                    List<PyObject> pairs = collectIterable(args[0], javaPolicy);
+                    for (PyObject pair : pairs) {
+                        List<PyObject> kv = collectIterable(pair, javaPolicy);
+                        if (kv.size() != 2) {
+                            throw PyErrors.error("ValueError",
+                                    "dictionary update sequence element has length " + kv.size() + "; 2 is required");
+                        }
+                        d.put(kv.get(0), kv.get(1));
+                    }
+                }
+            }
+            for (var kw : kwargs.entrySet()) {
+                d.put(new PyStr(kw.getKey()), kw.getValue());
+            }
+            return d;
         }));
 
         // range(stop) or range(start, stop) or range(start, stop, step)
@@ -390,11 +467,16 @@ public final class BuiltinFunctions {
             List<PyObject> items = collectIterable(args[0], javaPolicy);
 
             if (keyFn != null && !(keyFn instanceof PyNull)) {
-                items.sort((a, b) -> {
-                    PyObject ka = caller.call(keyFn, new PyObject[]{a});
-                    PyObject kb = caller.call(keyFn, new PyObject[]{b});
-                    return compareObjects(ka, kb);
-                });
+                record KeyedItem(PyObject key, PyObject item) {}
+                var decorated = new ArrayList<KeyedItem>(items.size());
+                for (PyObject item : items) {
+                    decorated.add(new KeyedItem(caller.call(keyFn, new PyObject[]{item}), item));
+                }
+                decorated.sort((a, b) -> compareObjects(a.key(), b.key()));
+                items = new ArrayList<>(decorated.size());
+                for (KeyedItem ki : decorated) {
+                    items.add(ki.item());
+                }
             } else {
                 items.sort(PyOps::compareObjects);
             }
@@ -404,19 +486,66 @@ public final class BuiltinFunctions {
             return new PyList(items);
         }));
 
-        // reversed(iterable)
+        // reversed(seq)
         define.accept("reversed", new PyBuiltinFunction("reversed", args -> {
             checkArgCount("reversed", args, 1);
-            List<PyObject> items = collectIterable(args[0], javaPolicy);
+            PyObject seq = args[0];
+            if (seq instanceof PyInstance inst && inst.hasField("__reversed__")) {
+                return toIterator(caller.call(inst.getField("__reversed__"), new PyObject[0]), javaPolicy);
+            }
+            List<PyObject> items = collectIterable(seq, javaPolicy);
             Collections.reverse(items);
             return new PyList(items);
         }));
 
-        // iter(obj) and next(iterator[, default])
+        // iter(obj) or iter(callable, sentinel) and next(iterator[, default])
         define.accept("iter", new PyBuiltinFunction("iter", args -> {
-            checkArgCount("iter", args, 1);
-            if (args[0] instanceof PyGenerator gen) return gen;
-            return toIterator(args[0], javaPolicy);
+            if (args.length == 1) {
+                if (args[0] instanceof PyGenerator gen) return gen;
+                return toIterator(args[0], javaPolicy);
+            }
+            if (args.length == 2) {
+                PyObject fn = args[0];
+                PyObject sentinel = args[1];
+                return new PyIterator(new java.util.Iterator<PyObject>() {
+                    private PyObject buffered = null;
+                    private boolean hasBuffered = false;
+                    private boolean exhausted = false;
+
+                    @Override
+                    public boolean hasNext() {
+                        if (hasBuffered) return true;
+                        if (exhausted) return false;
+                        try {
+                            PyObject nextVal = caller.call(fn, new PyObject[0]);
+                            if (PyOps.pyEquals(nextVal, sentinel)) {
+                                exhausted = true;
+                                return false;
+                            }
+                            buffered = nextVal;
+                            hasBuffered = true;
+                            return true;
+                        } catch (InterpreterException ie) {
+                            if ("StopIteration".equals(ie.typeName())) {
+                                exhausted = true;
+                                return false;
+                            }
+                            exhausted = true;
+                            throw ie;
+                        }
+                    }
+
+                    @Override
+                    public PyObject next() {
+                        if (!hasNext()) throw new java.util.NoSuchElementException();
+                        PyObject out = buffered;
+                        buffered = null;
+                        hasBuffered = false;
+                        return out;
+                    }
+                });
+            }
+            throw PyErrors.error("TypeError", "iter expected at most 2 arguments, got " + args.length);
         }));
 
         define.accept("next", new PyBuiltinFunction("next", args -> {
@@ -567,30 +696,59 @@ public final class BuiltinFunctions {
             checkArgCount("chr", args, 1);
             int cp = toInt(args[0]);
             if (cp < 0 || cp > 0x10FFFF) throw PyErrors.error("ValueError", "chr() arg not in range(0x110000)");
-            return new PyStr(String.valueOf((char) cp));
+            return new PyStr(Character.toString(cp));
         }));
 
         // ord(c)
         define.accept("ord", new PyBuiltinFunction("ord", args -> {
             checkArgCount("ord", args, 1);
-            if (!(args[0] instanceof PyStr s) || s.value().length() != 1)
+            if (!(args[0] instanceof PyStr s) || s.value().codePointCount(0, s.value().length()) != 1)
                 throw PyErrors.error("TypeError", "ord() expected a character");
-            return new PyInt(s.value().charAt(0));
+            return PyInt.of(s.value().codePointAt(0));
         }));
 
         // hex, oct, bin
-        define.accept("hex", new PyBuiltinFunction("hex", args -> { checkArgCount("hex", args, 1); return new PyStr("0x" + Integer.toHexString(toInt(args[0]))); }));
-        define.accept("oct", new PyBuiltinFunction("oct", args -> { checkArgCount("oct", args, 1); return new PyStr("0o" + Integer.toOctalString(toInt(args[0]))); }));
-        define.accept("bin", new PyBuiltinFunction("bin", args -> { checkArgCount("bin", args, 1); return new PyStr("0b" + Integer.toBinaryString(toInt(args[0]))); }));
+        define.accept("hex", new PyBuiltinFunction("hex", args -> {
+            checkArgCount("hex", args, 1);
+            return new PyStr(formatIntBase(toBigIntStrict(args[0], "hex"), 16, "0x"));
+        }));
+        define.accept("oct", new PyBuiltinFunction("oct", args -> {
+            checkArgCount("oct", args, 1);
+            return new PyStr(formatIntBase(toBigIntStrict(args[0], "oct"), 8, "0o"));
+        }));
+        define.accept("bin", new PyBuiltinFunction("bin", args -> {
+            checkArgCount("bin", args, 1);
+            return new PyStr(formatIntBase(toBigIntStrict(args[0], "bin"), 2, "0b"));
+        }));
 
         // round(x, n?)
         define.accept("round", new PyBuiltinFunction("round", args -> {
             if (args.length < 1 || args.length > 2) throw PyErrors.error("TypeError", "round() takes 1 or 2 arguments");
-            double val = toDouble(args[0]);
-            if (args.length == 1) return new PyInt((int) Math.round(val));
+            if (args.length == 1) {
+                if (args[0] instanceof PyInt || args[0] instanceof BigInt) return args[0];
+                if (args[0] instanceof PyBool b) return b.value() ? PyInt.ONE : PyInt.ZERO;
+                double val = toDouble(args[0]);
+                if (Double.isNaN(val) || Double.isInfinite(val)) {
+                    throw PyErrors.error(Double.isNaN(val) ? "ValueError" : "OverflowError",
+                            "cannot convert float " + val + " to integer");
+                }
+                long r = Math.round(val);
+                if (r >= Integer.MIN_VALUE && r <= Integer.MAX_VALUE) return PyInt.of((int) r);
+                return new BigInt(java.math.BigInteger.valueOf(r));
+            }
             int digits = toInt(args[1]);
-            double factor = Math.pow(10, digits);
-            return new PyFloat(Math.round(val * factor) / factor);
+            if (args[0] instanceof PyInt || args[0] instanceof BigInt || args[0] instanceof PyBool) {
+                java.math.BigInteger bi = toBigIntStrict(args[0], "round");
+                if (digits >= 0) return toPyInteger(bi);
+                java.math.BigDecimal bd = new java.math.BigDecimal(bi)
+                        .setScale(digits, java.math.RoundingMode.HALF_EVEN);
+                return toPyInteger(bd.toBigInteger());
+            }
+            double val = toDouble(args[0]);
+            if (Double.isNaN(val) || Double.isInfinite(val)) return args[0];
+            if (digits > 308 || digits < -308) return args[0];
+            return new PyFloat(java.math.BigDecimal.valueOf(val)
+                    .setScale(digits, java.math.RoundingMode.HALF_EVEN).doubleValue());
         }));
 
         // hasattr(obj, name)
@@ -615,6 +773,9 @@ public final class BuiltinFunctions {
             }
             if (args[0] instanceof PyGenerator) {
                 return PyBool.of("send".equals(name) || "throw".equals(name) || "close".equals(name));
+            }
+            if (args[0] instanceof PySlice) {
+                return PyBool.of("start".equals(name) || "stop".equals(name) || "step".equals(name) || "indices".equals(name));
             }
             if (args[0] instanceof org.example.jython3.runtime.PyHostHandle hh) {
                 return PyBool.of(hh.hasAttr(name));
@@ -664,6 +825,12 @@ public final class BuiltinFunctions {
             } else if (args[0] instanceof PyGenerator gen) {
                 try {
                     return BuiltinMethodDispatcher.generatorMethod(gen, name);
+                } catch (InterpreterException ie) {
+                    if (!"AttributeError".equals(ie.typeName())) throw ie;
+                }
+            } else if (args[0] instanceof PySlice sl) {
+                try {
+                    return BuiltinMethodDispatcher.sliceAttr(sl, name);
                 } catch (InterpreterException ie) {
                     if (!"AttributeError".equals(ie.typeName())) throw ie;
                 }
@@ -865,6 +1032,7 @@ public final class BuiltinFunctions {
                     case '\t' -> sb.append("\\t");
                     default -> {
                         if (ch == quote) sb.append('\\').append(quote);
+                        else if (ch < 0x20 || ch == 0x7F) sb.append(String.format("\\x%02x", (int) ch));
                         else sb.append(ch);
                     }
                 }
@@ -936,6 +1104,8 @@ public final class BuiltinFunctions {
                     "issubset", "issuperset", "symmetric_difference", "union");
         } else if (o instanceof PyGenerator) {
             Collections.addAll(names, "close", "send", "throw");
+        } else if (o instanceof PySlice) {
+            Collections.addAll(names, "indices", "start", "step", "stop");
         } else if (o instanceof org.example.jython3.runtime.PyHostHandle hh) {
             names.addAll(hh.attrNames());
         } else if (o instanceof PyStr) {
@@ -1103,5 +1273,24 @@ public final class BuiltinFunctions {
         // In Python, bool is a subclass of int
         if ("bool".equals(dName) && "int".equals(tName)) return true;
         return "object".equals(tName);
+    }
+
+    private static java.math.BigInteger toBigIntStrict(PyObject o, String fn) {
+        if (o instanceof PyInt i) return java.math.BigInteger.valueOf(i.value());
+        if (o instanceof BigInt bi) return bi.value();
+        if (o instanceof PyBool b) return b.value() ? java.math.BigInteger.ONE : java.math.BigInteger.ZERO;
+        throw PyErrors.error("TypeError", "'" + typeName(o) + "' object cannot be interpreted as an integer in " + fn + "()");
+    }
+
+    private static PyObject toPyInteger(java.math.BigInteger bi) {
+        if (bi.bitLength() < 32) return PyInt.of(bi.intValue());
+        return new BigInt(bi);
+    }
+
+    private static String formatIntBase(java.math.BigInteger val, int radix, String prefix) {
+        if (val.signum() < 0) {
+            return "-" + prefix + val.negate().toString(radix);
+        }
+        return prefix + val.toString(radix);
     }
 }

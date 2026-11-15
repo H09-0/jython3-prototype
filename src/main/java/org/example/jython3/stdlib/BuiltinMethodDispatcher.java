@@ -12,7 +12,9 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PySet;
+import org.example.jython3.runtime.PySlice;
 import org.example.jython3.runtime.PyStr;
+import org.example.jython3.runtime.PyTuple;
 import org.example.jython3.security.JavaAccessPolicy;
 
 import java.util.ArrayList;
@@ -290,6 +292,22 @@ public final class BuiltinMethodDispatcher {
     private static PySet toSetView(PyObject obj, JavaAccessPolicy policy) {
         if (obj instanceof PySet s) return s;
         return new PySet(BuiltinFunctions.collectIterable(obj, policy));
+    }
+
+    public static PyObject sliceAttr(PySlice sl, String attr) {
+        return switch (attr) {
+            case "start" -> sl.start();
+            case "stop" -> sl.stop();
+            case "step" -> sl.step();
+            case "indices" -> new PyBuiltinFunction("slice.indices", args -> {
+                checkArgCount("slice.indices", args, 1);
+                int len = toInt(args[0]);
+                if (len < 0) throw PyErrors.error("ValueError", "length should not be negative");
+                PySlice.Indices idx = sl.computeIndices(len);
+                return new PyTuple(java.util.List.of(PyInt.of(idx.start()), PyInt.of(idx.stop()), PyInt.of(idx.step())));
+            });
+            default -> throw PyErrors.error("AttributeError", "'slice' object has no attribute '" + attr + "'");
+        };
     }
 
     public static PyObject generatorMethod(PyGenerator gen, String method) {

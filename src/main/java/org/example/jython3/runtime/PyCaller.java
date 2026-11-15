@@ -1,5 +1,7 @@
 package org.example.jython3.runtime;
 
+import org.example.jython3.security.ExecutionLimits;
+
 import java.util.List;
 import java.util.Map;
 
@@ -39,6 +41,11 @@ public interface PyCaller {
     /** Returns the active frame's local scope (or globals at module level) if available. */
     default Map<String, PyObject> currentScope() {
         return null;
+    }
+
+    /** Returns the active interpreter's execution limits. */
+    default ExecutionLimits executionLimits() {
+        return ExecutionLimits.TRUSTED;
     }
 
     ThreadLocal<PyCaller> CURRENT = new ThreadLocal<>();

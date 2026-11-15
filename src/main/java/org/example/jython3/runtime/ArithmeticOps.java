@@ -469,4 +469,83 @@ public final class ArithmeticOps {
         }
         return new BigInt(val);
     }
+
+    public static PyObject floorDiv(PyObject rawL, PyObject rawR) {
+        var l = unwrapBool(rawL);
+        var r = unwrapBool(rawR);
+        if (l instanceof PyInt li && r instanceof PyInt ri) {
+            if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer division or modulo by zero");
+            if (li.value() == Integer.MIN_VALUE && ri.value() == -1) {
+                return new BigInt(BigInteger.valueOf(Integer.MIN_VALUE).negate());
+            }
+            return PyInt.of(Math.floorDiv(li.value(), ri.value()));
+        }
+        if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+            BigInteger ba = l instanceof PyInt pi ? BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+            BigInteger bb = r instanceof PyInt pi ? BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+            return fromBigInteger(PyOps.floorDiv(ba, bb));
+        }
+        if (isNumeric(l) && isNumeric(r)) {
+            double rv = toDouble(r);
+            if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float floor division by zero");
+            return new PyFloat(Math.floor(toDouble(l) / rv));
+        }
+        throw PyErrors.error("TypeError", "unsupported operand types for //");
+    }
+
+    public static PyObject mod(PyObject rawL, PyObject rawR) {
+        var l = unwrapBool(rawL);
+        var r = unwrapBool(rawR);
+        if (l instanceof PyInt li && r instanceof PyInt ri) {
+            if (ri.value() == 0) throw PyErrors.error("ZeroDivisionError", "integer modulo by zero");
+            return PyInt.of(Math.floorMod(li.value(), ri.value()));
+        }
+        if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+            BigInteger ba = l instanceof PyInt pi ? BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+            BigInteger bb = r instanceof PyInt pi ? BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+            return fromBigInteger(PyOps.floorMod(ba, bb));
+        }
+        if (isNumeric(l) && isNumeric(r)) {
+            double rv = toDouble(r), lv = toDouble(l);
+            if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
+            return new PyFloat(lv - Math.floor(lv / rv) * rv);
+        }
+        throw PyErrors.error("TypeError", "unsupported operand types for %");
+    }
+
+    public static PyObject pow(PyObject rawL, PyObject rawR, ExecutionLimits limits) {
+        var l = unwrapBool(rawL);
+        var r = unwrapBool(rawR);
+        if (!isNumeric(l) || !isNumeric(r)) {
+            throw PyErrors.error("TypeError", "unsupported operand types for **");
+        }
+        if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
+            BigInteger base = l instanceof PyInt pi ? BigInteger.valueOf(pi.value()) : ((BigInt) l).value();
+            BigInteger exp = r instanceof PyInt pi ? BigInteger.valueOf(pi.value()) : ((BigInt) r).value();
+            if (limits != null && exp.compareTo(BigInteger.valueOf(limits.maxExponent())) > 0) {
+                throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + limits.maxExponent());
+            }
+            if (exp.compareTo(BigInteger.ZERO) < 0) {
+                double baseD = toDouble(l instanceof PyInt ? l : new BigInt(base));
+                double expD = exp.doubleValue();
+                double res = Math.pow(baseD, expD);
+                if (Double.isInfinite(res) && !Double.isInfinite(baseD)) {
+                    throw PyErrors.error("OverflowError", "(34, 'Numerical result out of range')");
+                }
+                return new PyFloat(res);
+            }
+            int expInt = exp.intValueExact();
+            return fromBigInteger(base.pow(expInt));
+        }
+        double exp = toDouble(r);
+        if (limits != null && exp > limits.maxExponent()) {
+            throw PyErrors.error("ValueError", "Exponent exceeds maximum allowed limit: " + limits.maxExponent());
+        }
+        double base = toDouble(l);
+        double res = Math.pow(base, exp);
+        if (Double.isInfinite(res) && !Double.isInfinite(base)) {
+            throw PyErrors.error("OverflowError", "(34, 'Numerical result out of range')");
+        }
+        return new PyFloat(res);
+    }
 }

@@ -1969,11 +1969,18 @@ class Jython3InterpreterTest {
                 try:
                     raise ValueError("once")
                 except ValueError as original:
+                    saved = original
                     raise original
             except ValueError as again:
-                same = original is again
+                same = saved is again
+                try:
+                    _ = original
+                    leaked = True
+                except NameError:
+                    leaked = False
             """);
         assertEquals("True", py.getGlobal("same").toString());
+        assertEquals("False", py.getGlobal("leaked").toString());
     }
 
     @Test void testRaiseValueKeepsIdentityWhenGainingContext() {
