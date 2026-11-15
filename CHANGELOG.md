@@ -83,6 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **Embedded Runtime Integration Contract & Production Hardening**:
+  - Published [docs/EMBEDDED_INTEGRATION_CONTRACT.md](docs/EMBEDDED_INTEGRATION_CONTRACT.md) locking the Integration Beta API contract for Oculix/Cinnamon (`HostAppBridge`, `CapabilitySet`, `HostSession`, `PyHostHandle`, `UiToolkit`, `ControlDevice`).
+  - Blocked cross-interpreter `PyHostHandle` smuggling in `PolicySanitizer`, synchronized interpreter `eval`/`resetExecutionState`/`close` teardown without deadlocks, coalesced `HeadlessTimer` ticks, added `HostDispatchBenchmark` (`182k` UI events/sec, `386k` control cmds/sec), and expanded tests to `486` passing tests (`HostConcurrencyAndTeardownTest`, `SwingAndJavaFxDispatchTest`, `HostSecurityAuditTest`, `ControlDeviceConcurrencyTest`, `HostDispatchPerformanceTest`).
 - **Host UI/Control Hardening (`HeadlessUiToolkit`, `HostSession`, `ExecutionContext`, `ControlModule`, `PyHostHandle`)**:
   - Made `HeadlessDispatcher` thread ownership immutable (explicit `HeadlessDispatcher.dedicatedThread()` + `pumpEvents()` queue).
   - Enforced `callbackTimeout` across nested `eval()` calls and blocking calls (via child `ExecutionContext` + `CALLBACK_WATCHDOG` with clean interrupt recovery).

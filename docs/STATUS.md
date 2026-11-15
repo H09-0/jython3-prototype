@@ -14,6 +14,7 @@
 | **`docs/STATUS.md`** | **Current verified runtime state, active capabilities, and core concept glossary.** |
 | **`docs/COMPATIBILITY.md`** | Feature-by-feature compatibility matrix against CPython 3.14 (`T0`–`T3`). |
 | **`docs/ROADMAP.md`** | Future planned work and upcoming optimization/language phases only. |
+| **`docs/EMBEDDED_INTEGRATION_CONTRACT.md`** | Stable host embedding, capability, UI/control, and lifecycle contract (Integration Beta). |
 | **`CHANGELOG.md`** | Historical record of changes per release. |
 | **`README.md`** | Project overview, quickstart commands, and links (no duplicated metrics). |
 | **`docs/ARCHITECTURE.md`** | Pipeline design, layer boundaries, bytecode format, and VM invariants. |
