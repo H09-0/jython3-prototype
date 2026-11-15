@@ -420,6 +420,8 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
         private ScheduledFuture<?> future;
         private volatile boolean running = false;
         private volatile boolean disposed = false;
+        private final java.util.concurrent.atomic.AtomicBoolean tickInFlight =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
 
         HeadlessTimer(String id, HostSession session, int intervalMs, PyObject callback) {
             this.id = id;
@@ -442,19 +444,26 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
                 t.setDaemon(true);
                 return t;
             });
-            future = exec.scheduleAtFixedRate(() -> {
+            future = exec.scheduleWithFixedDelay(() -> {
                 if (!running || session.isClosed()) {
                     stop();
                     return;
                 }
+                if (!tickInFlight.compareAndSet(false, true)) {
+                    return; // coalesce: do not pile up ticks if UI thread is busy
+                }
                 dispatcher.runLater(() -> {
-                    if (running && !session.isClosed()) {
-                        try {
-                            session.invokeCallback(callback);
-                        } catch (RuntimeException ex) {
-                            stop();
-                            session.recordCallbackFailure(id, ex);
+                    try {
+                        if (running && !session.isClosed()) {
+                            try {
+                                session.invokeCallback(callback);
+                            } catch (RuntimeException ex) {
+                                stop();
+                                session.recordCallbackFailure(id, ex);
+                            }
                         }
+                    } finally {
+                        tickInFlight.set(false);
                     }
                 });
             }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);

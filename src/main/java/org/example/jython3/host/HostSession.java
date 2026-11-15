@@ -56,6 +56,17 @@ public final class HostSession implements AutoCloseable {
 
     public boolean isClosed() { return closed; }
 
+    /** Marks the session closing/invalidated immediately (non-blocking) to abort in-flight callbacks. */
+    public void beginTeardown() {
+        closed = true;
+        epoch.incrementAndGet();
+    }
+
+    /** Advances epoch immediately (non-blocking) to invalidate handles prior to full reset. */
+    public void invalidateHandles() {
+        epoch.incrementAndGet();
+    }
+
     public long epoch() { return epoch.get(); }
 
     public void requireValidEpoch(long handleEpoch, String handleType) {

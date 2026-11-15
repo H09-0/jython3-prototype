@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Capability-gated Python {@code control} module providing {@code Controller},
@@ -101,10 +102,10 @@ public final class ControlModule {
 
     private static PyHostHandle createControllerHandle(HostSession session, ControlDevice device) {
         final List<PyObject> listeners = new CopyOnWriteArrayList<>();
-        final boolean[] closed = {false};
+        final AtomicBoolean closed = new AtomicBoolean(false);
 
         AutoCloseable cleanup = () -> {
-            closed[0] = true;
+            closed.set(true);
             listeners.clear();
         };
         session.registerResource(cleanup);
@@ -112,9 +113,9 @@ public final class ControlModule {
         return PyHostHandle.builder("control.Controller")
                 .bindSession(session)
                 .prop("device_id", () -> new PyStr(device.id()))
-                .prop("closed", () -> PyBool.of(closed[0]))
+                .prop("closed", () -> PyBool.of(closed.get()))
                 .method("send", new PyBuiltinFunction("Controller.send", (args, kwargs) -> {
-                    if (closed[0]) {
+                    if (closed.get()) {
                         throw PyErrors.error("RuntimeError", "controller '" + device.id() + "' is closed");
                     }
                     String cmdName;
@@ -151,7 +152,7 @@ public final class ControlModule {
                     return res;
                 }))
                 .method("state", new PyBuiltinFunction("Controller.state", a -> {
-                    if (closed[0]) {
+                    if (closed.get()) {
                         throw PyErrors.error("RuntimeError", "controller '" + device.id() + "' is closed");
                     }
                     session.require(HostCapability.CONTROL, "read_state", device.id());
@@ -162,7 +163,7 @@ public final class ControlModule {
                             .bindSession(session)
                             .prop("device_id", () -> new PyStr(device.id()))
                             .method("get", new PyBuiltinFunction("State.get", ga -> {
-                                if (closed[0]) {
+                                if (closed.get()) {
                                     throw PyErrors.error("RuntimeError", "controller '" + device.id() + "' is closed");
                                 }
                                 if (ga.length < 1 || ga.length > 2) throw PyErrors.error("TypeError", "State.get() takes 1 or 2 arguments");
@@ -171,8 +172,8 @@ public final class ControlModule {
                                 if (v != null) return v;
                                 return ga.length == 2 ? ga[1] : PyNull.INSTANCE;
                             }))
-                            .method("to_dict", new PyBuiltinFunction("State.to_dict", ga -> toStateDict(device, closed[0])))
-                            .method("snapshot", new PyBuiltinFunction("State.snapshot", ga -> toStateDict(device, closed[0])))
+                            .method("to_dict", new PyBuiltinFunction("State.to_dict", ga -> toStateDict(device, closed.get())))
+                            .method("snapshot", new PyBuiltinFunction("State.snapshot", ga -> toStateDict(device, closed.get())))
                             .build();
                 }))
                 .method("on_event", new PyBuiltinFunction("Controller.on_event", a -> {
@@ -184,7 +185,7 @@ public final class ControlModule {
                     return PyNull.INSTANCE;
                 }))
                 .method("close", new PyBuiltinFunction("Controller.close", a -> {
-                    closed[0] = true;
+                    closed.set(true);
                     listeners.clear();
                     session.unregisterResource(cleanup);
                     return PyNull.INSTANCE;

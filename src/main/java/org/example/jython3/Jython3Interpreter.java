@@ -589,12 +589,15 @@ public class Jython3Interpreter implements AutoCloseable {
     public void close() {
         closed = true;
         cancel();
-        hostSession.close();
-        globals.clear();
-        moduleLoader.clear();
-        freeStacks.clear();
-        freeExceptStacks.clear();
-        freeActiveExceptions.clear();
+        hostSession.beginTeardown();
+        synchronized (this) {
+            hostSession.close();
+            globals.clear();
+            moduleLoader.clear();
+            freeStacks.clear();
+            freeExceptStacks.clear();
+            freeActiveExceptions.clear();
+        }
     }
 
     /** The exception classes owned by this interpreter. */
@@ -823,7 +826,7 @@ public class Jython3Interpreter implements AutoCloseable {
      * Compile and run {@code source}, attributing any traceback frames to
      * {@code filename}.
      */
-    public void eval(String source, String filename) {
+    public synchronized void eval(String source, String filename) {
         if (closed) throw PyErrors.error("RuntimeError", "interpreter is closed");
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
         PyCaller previousCaller = PyCaller.CURRENT.get();
@@ -883,7 +886,7 @@ public class Jython3Interpreter implements AutoCloseable {
     /**
      * Executes precompiled bytecode directly, attributing traceback frames to {@code filename}.
      */
-    public void evalCode(CompiledCode code, String filename) {
+    public synchronized void evalCode(CompiledCode code, String filename) {
         if (closed) throw PyErrors.error("RuntimeError", "interpreter is closed");
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
         PyCaller previousCaller = PyCaller.CURRENT.get();
@@ -932,27 +935,31 @@ public class Jython3Interpreter implements AutoCloseable {
      * without reconstructing the interpreter or re-registering policies.
      */
     public void resetExecutionState() {
-        hostSession.reset();
-        globals.clear();
-        moduleLoader.clear();
-        registerBuiltins();
-        currentGlobals = globals;
-        currentLocals = globals;
-        if (stack != null) stack.clear();
-        callStack.clear();
-        nestedDepth = 0;
-        outerActiveContexts.clear();
-        exceptStack.clear();
-        activeExceptions.clear();
-        freeStacks.clear();
-        freeExceptStacks.clear();
-        freeActiveExceptions.clear();
-        activeGenerator = null;
-        globalCells = null;
-        currentFunc = "<module>";
-        currentFunction = null;
-        currentFile = "<stdin>";
-        currentLine = 0;
+        cancel();
+        hostSession.invalidateHandles();
+        synchronized (this) {
+            hostSession.reset();
+            globals.clear();
+            moduleLoader.clear();
+            registerBuiltins();
+            currentGlobals = globals;
+            currentLocals = globals;
+            if (stack != null) stack.clear();
+            callStack.clear();
+            nestedDepth = 0;
+            outerActiveContexts.clear();
+            exceptStack.clear();
+            activeExceptions.clear();
+            freeStacks.clear();
+            freeExceptStacks.clear();
+            freeActiveExceptions.clear();
+            activeGenerator = null;
+            globalCells = null;
+            currentFunc = "<module>";
+            currentFunction = null;
+            currentFile = "<stdin>";
+            currentLine = 0;
+        }
     }
 
     /**
