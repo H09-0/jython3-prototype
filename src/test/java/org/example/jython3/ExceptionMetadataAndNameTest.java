@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Python-visible exception metadata (__context__, __cause__, __suppress_context__,
@@ -190,5 +191,69 @@ class ExceptionMetadataAndNameTest {
                 y = e.nonexistent
             """));
         assertEquals("AttributeError", ae.typeName());
+    }
+
+    @Test
+    @DisplayName("Traceback captures nested functions, Java Bridge errors, and cleans frames on unwind")
+    void tracebackNestedJavaBridgeAndCleanup() {
+        var interp = Jython3Interpreter.trusted();
+        var ie = assertThrows(InterpreterException.class, () -> interp.eval("""
+            def level3():
+                raise KeyError("deep")
+            def level2():
+                level3()
+            def level1():
+                level2()
+            level1()
+            """));
+        String tb = interp.formatTraceback(ie, "<test>", """
+            def level3():
+                raise KeyError("deep")
+            def level2():
+                level3()
+            def level1():
+                level2()
+            level1()
+            """);
+        assertTrue(tb.contains("in <module>"), tb);
+        assertTrue(tb.contains("in level1"), tb);
+        assertTrue(tb.contains("in level2"), tb);
+        assertTrue(tb.contains("in level3"), tb);
+        assertTrue(tb.contains("KeyError: deep"), tb);
+
+        // Java Bridge exception unwinds cleanly and leaves interpreter/frames intact
+        var jIe = assertThrows(InterpreterException.class, () -> interp.eval("""
+            from java.util import ArrayList
+            def j_call():
+                lst = ArrayList()
+                return lst.get(0)
+            def wrapper():
+                return j_call()
+            wrapper()
+            """));
+        assertEquals("IndexError", jIe.typeName());
+        String jTb = interp.formatTraceback(jIe, "<j>", "");
+        assertTrue(jTb.contains("in wrapper") && jTb.contains("in j_call"), jTb);
+
+        // Interpreter remains healthy and bare raise outside handler still errors
+        interp.eval("x = 1 + 2");
+        assertEquals("3", interp.getGlobal("x").toString());
+        var bare = assertThrows(InterpreterException.class, () -> interp.eval("raise"));
+        assertEquals("RuntimeError", bare.typeName());
+
+        // Exception in finally replaces pending one, sets __context__, and clears active handler on unwind
+        var finIe = assertThrows(InterpreterException.class, () -> interp.eval("""
+            def f():
+                try:
+                    raise KeyError("orig")
+                finally:
+                    raise ValueError("override")
+            f()
+            """));
+        assertEquals("ValueError", finIe.typeName());
+        var pe = org.junit.jupiter.api.Assertions.assertInstanceOf(
+                org.example.jython3.runtime.PyException.class, finIe.value());
+        org.junit.jupiter.api.Assertions.assertNotNull(pe.context());
+        assertEquals("KeyError", pe.context().typeName());
     }
 }
