@@ -171,9 +171,7 @@ public final class ControlModule {
                     if (a.length != 1) throw PyErrors.error("TypeError", "on_event() takes 1 callback");
                     session.require(HostCapability.CONTROL, "on_event", device.id());
                     session.require(HostCapability.EVENTS, "on_event", device.id());
-                    if (listeners.size() >= session.capabilities().maxListenersPerNode()) {
-                        throw PyErrors.error("RuntimeError", "maximum listeners exceeded");
-                    }
+                    session.checkListenerQuota(listeners.size(), device.id());
                     listeners.add(a[0]);
                     return PyNull.INSTANCE;
                 }))

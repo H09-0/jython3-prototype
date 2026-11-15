@@ -28,6 +28,10 @@ public final class HostSession implements AutoCloseable {
     private volatile ExecutionContext activeContext;
     private volatile boolean closed = false;
     private int activeCallbackDepth = 0;
+    private int windowCount = 0;
+    private int timerCount = 0;
+    private final Set<AutoCloseable> activeWindows = new LinkedHashSet<>();
+    private final Set<AutoCloseable> activeTimers = new LinkedHashSet<>();
 
     public HostSession(CapabilitySet capabilities, CallbackInvoker callbackInvoker) {
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
@@ -101,6 +105,64 @@ public final class HostSession implements AutoCloseable {
         return managedResources.size();
     }
 
+    public synchronized int openWindowCount() {
+        return windowCount;
+    }
+
+    public synchronized int liveTimerCount() {
+        return timerCount;
+    }
+
+    public synchronized void acquireWindowSlot(AutoCloseable window, String title) {
+        if (closed) throw PyErrors.error("SecurityError", "host session is closed");
+        int maxW = capabilities.maxWindows();
+        if (windowCount >= maxW) {
+            auditLog.recordDenied(HostCapability.UI, "create_window", title, "maxWindows=" + maxW);
+            throw PyErrors.error("RuntimeError", "maximum open UI windows exceeded: " + maxW);
+        }
+        windowCount++;
+        if (window != null) {
+            activeWindows.add(window);
+            managedResources.add(window);
+        }
+    }
+
+    public synchronized void releaseWindowSlot(AutoCloseable window) {
+        if (window != null && activeWindows.remove(window)) {
+            windowCount = Math.max(0, windowCount - 1);
+            managedResources.remove(window);
+        }
+    }
+
+    public synchronized void acquireTimerSlot(AutoCloseable timer, String target) {
+        if (closed) throw PyErrors.error("SecurityError", "host session is closed");
+        int maxT = capabilities.maxTimers();
+        if (timerCount >= maxT) {
+            auditLog.recordDenied(HostCapability.TIMER, "create_timer", target, "maxTimers=" + maxT);
+            throw PyErrors.error("RuntimeError", "maximum timers exceeded: " + maxT);
+        }
+        timerCount++;
+        if (timer != null) {
+            activeTimers.add(timer);
+            managedResources.add(timer);
+        }
+    }
+
+    public synchronized void releaseTimerSlot(AutoCloseable timer) {
+        if (timer != null && activeTimers.remove(timer)) {
+            timerCount = Math.max(0, timerCount - 1);
+            managedResources.remove(timer);
+        }
+    }
+
+    public void checkListenerQuota(int currentCount, String nodeId) {
+        int maxL = capabilities.maxListenersPerNode();
+        if (currentCount >= maxL) {
+            auditLog.recordDenied(HostCapability.EVENTS, "attach_listener", nodeId, "maxListenersPerNode=" + maxL);
+            throw PyErrors.error("RuntimeError", "maximum listeners per node exceeded: " + maxL);
+        }
+    }
+
     /** Invokes a Python callback from a host adapter while enforcing depth, cancellation, and session state. */
     public PyObject invokeCallback(PyObject callable, PyObject... args) {
         if (closed) {
@@ -132,6 +194,10 @@ public final class HostSession implements AutoCloseable {
         synchronized (this) {
             toClose = new ArrayList<>(managedResources);
             managedResources.clear();
+            activeWindows.clear();
+            activeTimers.clear();
+            windowCount = 0;
+            timerCount = 0;
         }
         for (int i = toClose.size() - 1; i >= 0; i--) {
             safeClose(toClose.get(i));

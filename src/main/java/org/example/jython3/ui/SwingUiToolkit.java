@@ -72,7 +72,7 @@ public final class SwingUiToolkit implements UiToolkit {
             throw PyErrors.error("RuntimeError", "SwingUiToolkit cannot create JFrame in headless JVM");
         }
         var win = new SwingWindow("swing-win-" + idSeq.getAndIncrement(), session, title, width, height);
-        session.registerResource(win);
+        session.acquireWindowSlot(win, title);
         return win;
     }
 
@@ -113,7 +113,7 @@ public final class SwingUiToolkit implements UiToolkit {
         session.require(HostCapability.TIMER, "create_timer", intervalMs + "ms");
         if (intervalMs < 1) throw PyErrors.error("ValueError", "timer interval must be >= 1 ms");
         var t = new SwingTimer("swing-tmr-" + idSeq.getAndIncrement(), session, intervalMs, callback);
-        session.registerResource(t);
+        session.acquireTimerSlot(t, intervalMs + "ms");
         return t;
     }
 
@@ -149,7 +149,7 @@ public final class SwingUiToolkit implements UiToolkit {
             closed = true;
             var snap = List.copyOf(closeListeners);
             closeListeners.clear();
-            session.unregisterResource(this);
+            session.releaseWindowSlot(this);
             if (!session.isClosed() && !snap.isEmpty()) {
                 var ev = new UiEvent("window.close", id, frame.getTitle(), System.currentTimeMillis()).toPyHandle();
                 for (PyObject cb : snap) session.invokeCallback(cb, ev);
@@ -185,9 +185,7 @@ public final class SwingUiToolkit implements UiToolkit {
 
         @Override public void onClose(PyObject callback) {
             session.require(HostCapability.EVENTS, "window.on_close", id);
-            if (closeListeners.size() >= session.capabilities().maxListenersPerNode()) {
-                throw PyErrors.error("RuntimeError", "maximum listeners exceeded");
-            }
+            session.checkListenerQuota(closeListeners.size(), id);
             closeListeners.add(callback);
         }
 
@@ -217,9 +215,7 @@ public final class SwingUiToolkit implements UiToolkit {
         @Override public void onClick(PyObject callback) {
             session.require(HostCapability.INPUT, "button.on_click", id);
             session.require(HostCapability.EVENTS, "button.on_click", id);
-            if (listeners.size() >= session.capabilities().maxListenersPerNode()) {
-                throw PyErrors.error("RuntimeError", "maximum listeners exceeded");
-            }
+            session.checkListenerQuota(listeners.size(), id);
             listeners.add(callback);
         }
 
@@ -271,9 +267,7 @@ public final class SwingUiToolkit implements UiToolkit {
         @Override public void onChange(PyObject callback) {
             session.require(HostCapability.INPUT, "textfield.on_change", id);
             session.require(HostCapability.EVENTS, "textfield.on_change", id);
-            if (listeners.size() >= session.capabilities().maxListenersPerNode()) {
-                throw PyErrors.error("RuntimeError", "maximum listeners exceeded");
-            }
+            session.checkListenerQuota(listeners.size(), id);
             listeners.add(callback);
         }
 

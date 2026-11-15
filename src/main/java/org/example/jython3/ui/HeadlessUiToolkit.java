@@ -131,7 +131,6 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
     private final AtomicLong idSeq = new AtomicLong(1);
     private final AtomicInteger openWindows = new AtomicInteger(0);
     private final AtomicInteger activeTimers = new AtomicInteger(0);
-    private final AtomicInteger liveTimers = new AtomicInteger(0);
     private final List<UiEvent> eventHistory = Collections.synchronizedList(new ArrayList<>());
     private final UiDispatcher dispatcher;
 
@@ -175,13 +174,9 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
     public UiWindow createWindow(HostSession session, String title, int width, int height) {
         session.require(HostCapability.UI, "create_window", title);
         dispatcher.assertUiThread("create_window");
-        int maxW = session.capabilities().maxWindows();
-        if (openWindows.get() >= maxW) {
-            throw PyErrors.error("RuntimeError", "maximum open UI windows exceeded: " + maxW);
-        }
         var win = new HeadlessWindow("win-" + idSeq.getAndIncrement(), session, title, width, height);
+        session.acquireWindowSlot(win, title);
         openWindows.incrementAndGet();
-        session.registerResource(win);
         return win;
     }
 
@@ -223,22 +218,14 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
         if (intervalMs < 1) {
             throw PyErrors.error("ValueError", "timer interval must be >= 1 ms");
         }
-        int maxT = session.capabilities().maxTimers();
-        if (liveTimers.get() >= maxT) {
-            throw PyErrors.error("RuntimeError", "maximum timers exceeded: " + maxT);
-        }
-        liveTimers.incrementAndGet();
         var timer = new HeadlessTimer("tmr-" + idSeq.getAndIncrement(), session, intervalMs, callback);
-        session.registerResource(timer);
+        session.acquireTimerSlot(timer, intervalMs + "ms");
         return timer;
     }
 
     private void addListenerChecked(HostSession session, List<PyObject> listeners, PyObject cb, String target) {
         session.require(HostCapability.EVENTS, "attach_listener", target);
-        int maxL = session.capabilities().maxListenersPerNode();
-        if (listeners.size() >= maxL) {
-            throw PyErrors.error("RuntimeError", "maximum listeners per UI node exceeded: " + maxL);
-        }
+        session.checkListenerQuota(listeners.size(), target);
         listeners.add(Objects.requireNonNull(cb, "callback"));
     }
 
@@ -296,7 +283,7 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
             var snapshot = List.copyOf(closeListeners);
             closeListeners.clear();
             children.clear();
-            session.unregisterResource(this);
+            session.releaseWindowSlot(this);
             if (!session.isClosed() && !snapshot.isEmpty()) {
                 dispatchEvent(session, snapshot, new UiEvent("window.close", id, title, System.currentTimeMillis()));
             }
@@ -493,7 +480,7 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
             stop();
             if (!disposed) {
                 disposed = true;
-                liveTimers.decrementAndGet();
+                session.releaseTimerSlot(this);
             }
         }
     }
