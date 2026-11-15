@@ -26,7 +26,10 @@ public final class CapabilitySet {
     private final int maxListenersPerNode;
     private final int maxCallbackDepth;
     private final int maxThreads;
+    private final int maxThreadPools;
+    private final int maxQueuedTasks;
     private final Duration callbackTimeout;
+    private final Duration executorShutdownTimeout;
 
     private CapabilitySet(Builder b) {
         this.granted = b.granted.isEmpty() ? EnumSet.noneOf(HostCapability.class) : EnumSet.copyOf(b.granted);
@@ -39,7 +42,10 @@ public final class CapabilitySet {
         this.maxListenersPerNode = b.maxListenersPerNode;
         this.maxCallbackDepth = b.maxCallbackDepth;
         this.maxThreads = b.maxThreads;
+        this.maxThreadPools = b.maxThreadPools;
+        this.maxQueuedTasks = b.maxQueuedTasks;
         this.callbackTimeout = b.callbackTimeout;
+        this.executorShutdownTimeout = b.executorShutdownTimeout;
     }
 
     /** Returns an empty capability set (deny-by-default). */
@@ -83,7 +89,10 @@ public final class CapabilitySet {
     public int maxListenersPerNode() { return maxListenersPerNode; }
     public int maxCallbackDepth() { return maxCallbackDepth; }
     public int maxThreads() { return maxThreads; }
+    public int maxThreadPools() { return maxThreadPools; }
+    public int maxQueuedTasks() { return maxQueuedTasks; }
     public Duration callbackTimeout() { return callbackTimeout; }
+    public Duration executorShutdownTimeout() { return executorShutdownTimeout; }
 
     public static final class Builder {
         private final EnumSet<HostCapability> granted = EnumSet.noneOf(HostCapability.class);
@@ -96,7 +105,10 @@ public final class CapabilitySet {
         private int maxListenersPerNode = 32;
         private int maxCallbackDepth = 16;
         private int maxThreads = 16;
+        private int maxThreadPools = 8;
+        private int maxQueuedTasks = 1024;
         private Duration callbackTimeout = Duration.ofMillis(500);
+        private Duration executorShutdownTimeout = Duration.ofSeconds(2);
 
         public Builder allowHardwareAdapters(boolean allow) {
             this.allowHardwareAdapters = allow;
@@ -162,6 +174,23 @@ public final class CapabilitySet {
         public Builder maxThreads(int maxThreads) {
             if (maxThreads < 0) throw new IllegalArgumentException("maxThreads < 0");
             this.maxThreads = maxThreads;
+            return this;
+        }
+
+        public Builder maxThreadPools(int maxThreadPools) {
+            if (maxThreadPools < 0) throw new IllegalArgumentException("maxThreadPools < 0");
+            this.maxThreadPools = maxThreadPools;
+            return this;
+        }
+
+        public Builder maxQueuedTasks(int maxQueuedTasks) {
+            if (maxQueuedTasks < 1) throw new IllegalArgumentException("maxQueuedTasks < 1");
+            this.maxQueuedTasks = maxQueuedTasks;
+            return this;
+        }
+
+        public Builder executorShutdownTimeout(Duration timeout) {
+            this.executorShutdownTimeout = Objects.requireNonNull(timeout, "executorShutdownTimeout");
             return this;
         }
 

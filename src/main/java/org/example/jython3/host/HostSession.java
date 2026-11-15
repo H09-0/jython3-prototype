@@ -47,9 +47,11 @@ public final class HostSession implements AutoCloseable {
     private int windowCount = 0;
     private int timerCount = 0;
     private int threadCount = 0;
+    private int threadPoolCount = 0;
     private final Set<AutoCloseable> activeWindows = new LinkedHashSet<>();
     private final Set<AutoCloseable> activeTimers = new LinkedHashSet<>();
     private final Set<AutoCloseable> activeThreads = new LinkedHashSet<>();
+    private final Set<AutoCloseable> activeThreadPools = new LinkedHashSet<>();
 
     public HostSession(CapabilitySet capabilities, CallbackInvoker callbackInvoker) {
         this(capabilities, callbackInvoker, DenyAllPolicy.INSTANCE);
@@ -208,6 +210,33 @@ public final class HostSession implements AutoCloseable {
         }
     }
 
+    public synchronized int activeThreadPoolCount() {
+        return threadPoolCount;
+    }
+
+    public synchronized void acquireThreadPoolSlot(AutoCloseable poolHandle) {
+        if (closed) {
+            throw PyErrors.error("SecurityError", "host session is closed");
+        }
+        int maxP = capabilities.maxThreadPools();
+        if (threadPoolCount >= maxP) {
+            auditLog.recordDenied(HostCapability.THREADS, "create_thread_pool", "", "maxThreadPools=" + maxP);
+            throw PyErrors.error("RuntimeError", "maximum thread pool quota (" + maxP + ") exceeded");
+        }
+        threadPoolCount++;
+        if (poolHandle != null) {
+            activeThreadPools.add(poolHandle);
+            managedResources.add(poolHandle);
+        }
+    }
+
+    public synchronized void releaseThreadPoolSlot(AutoCloseable poolHandle) {
+        if (poolHandle != null && activeThreadPools.remove(poolHandle)) {
+            threadPoolCount = Math.max(0, threadPoolCount - 1);
+            managedResources.remove(poolHandle);
+        }
+    }
+
     public synchronized void acquireWindowSlot(AutoCloseable window, String title) {
         if (closed) throw PyErrors.error("SecurityError", "host session is closed");
         int maxW = capabilities.maxWindows();
@@ -298,10 +327,12 @@ public final class HostSession implements AutoCloseable {
             activeWindows.clear();
             activeTimers.clear();
             activeThreads.clear();
+            activeThreadPools.clear();
             callbackFailures.clear();
             windowCount = 0;
             timerCount = 0;
             threadCount = 0;
+            threadPoolCount = 0;
         }
         for (int i = toClose.size() - 1; i >= 0; i--) {
             safeClose(toClose.get(i));

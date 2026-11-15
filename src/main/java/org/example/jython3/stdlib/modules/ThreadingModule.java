@@ -188,10 +188,17 @@ public final class ThreadingModule {
                     }
                     try {
                         if (timeout < 0) {
-                            lock.lockInterruptibly();
+                            while (!lock.tryLock(50, TimeUnit.MILLISECONDS)) {
+                                checkWaitCancelled(session, "Lock");
+                            }
                             return PyBool.TRUE;
                         }
-                        return PyBool.of(lock.tryLock((long) (timeout * 1000.0), TimeUnit.MILLISECONDS));
+                        long deadline = System.currentTimeMillis() + Math.max(0L, (long) (timeout * 1000.0));
+                        while (!lock.tryLock(Math.min(50L, Math.max(1L, deadline - System.currentTimeMillis())), TimeUnit.MILLISECONDS)) {
+                            checkWaitCancelled(session, "Lock");
+                            if (System.currentTimeMillis() >= deadline) return PyBool.FALSE;
+                        }
+                        return PyBool.TRUE;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         throw PyErrors.error("KeyboardInterrupt", "Interrupted acquiring lock");
@@ -207,7 +214,9 @@ public final class ThreadingModule {
                 .method("locked", new PyBuiltinFunction("locked", args -> PyBool.of(lock.isLocked())))
                 .method("__enter__", new PyBuiltinFunction("__enter__", args -> {
                     try {
-                        lock.lockInterruptibly();
+                        while (!lock.tryLock(50, TimeUnit.MILLISECONDS)) {
+                            checkWaitCancelled(session, "Lock");
+                        }
                         return PyBool.TRUE;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -276,9 +285,21 @@ public final class ThreadingModule {
                 .method("acquire", new PyBuiltinFunction("Semaphore.acquire", (args, kwargs) -> {
                     boolean blocking = !kwargs.containsKey("blocking") || PyOps.isTruthy(kwargs.get("blocking"));
                     if (args.length >= 1) blocking = PyOps.isTruthy(args[0]);
+                    double timeout = kwargs.containsKey("timeout") ? PyOps.toDouble(kwargs.get("timeout"))
+                            : (args.length >= 2 && !(args[1] instanceof PyNull) ? PyOps.toDouble(args[1]) : -1.0);
                     if (!blocking) return PyBool.of(sem.tryAcquire());
                     try {
-                        sem.acquire();
+                        if (timeout < 0) {
+                            while (!sem.tryAcquire(50, TimeUnit.MILLISECONDS)) {
+                                checkWaitCancelled(session, "Semaphore");
+                            }
+                            return PyBool.TRUE;
+                        }
+                        long deadline = System.currentTimeMillis() + Math.max(0L, (long) (timeout * 1000.0));
+                        while (!sem.tryAcquire(Math.min(50L, Math.max(1L, deadline - System.currentTimeMillis())), TimeUnit.MILLISECONDS)) {
+                            checkWaitCancelled(session, "Semaphore");
+                            if (System.currentTimeMillis() >= deadline) return PyBool.FALSE;
+                        }
                         return PyBool.TRUE;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -293,7 +314,9 @@ public final class ThreadingModule {
                 }))
                 .method("__enter__", new PyBuiltinFunction("__enter__", args -> {
                     try {
-                        sem.acquire();
+                        while (!sem.tryAcquire(50, TimeUnit.MILLISECONDS)) {
+                            checkWaitCancelled(session, "Semaphore");
+                        }
                         return PyBool.TRUE;
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -305,5 +328,19 @@ public final class ThreadingModule {
                     return PyBool.FALSE;
                 }))
                 .build();
+    }
+
+    private static void checkWaitCancelled(HostSession session, String what) {
+        if (session.isClosed()) {
+            throw PyErrors.error("KeyboardInterrupt", "Session closed while waiting on " + what);
+        }
+        var ctx = org.example.jython3.security.ExecutionContext.current();
+        if (ctx != null && ctx.isCancelled()) {
+            throw PyErrors.error("KeyboardInterrupt", "Cancelled while waiting on " + what);
+        }
+        var active = session.activeContext();
+        if (active != null && active.isCancelled()) {
+            throw PyErrors.error("KeyboardInterrupt", "Cancelled while waiting on " + what);
+        }
     }
 }

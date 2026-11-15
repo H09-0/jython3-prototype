@@ -17,6 +17,7 @@ import org.example.jython3.security.DenyAllPolicy;
 import org.example.jython3.security.ExecutionContext;
 import org.example.jython3.stdlib.BuiltinFunctions;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -25,6 +26,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.WeakHashMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -37,7 +39,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Capability-gated {@code concurrent.futures} module backed by Java 21 Virtual Threads.
  * Supports true completion-ordered {@code as_completed}, {@code Future.cancel()},
- * pool/queue quotas, and bounded cancellation-aware {@code shutdown}.
+ * pool/queue/task quotas, and bounded cancellation-aware {@code shutdown}.
  */
 public final class ConcurrentFuturesModule {
     private ConcurrentFuturesModule() {}
@@ -52,7 +54,6 @@ public final class ConcurrentFuturesModule {
         final AtomicReference<Thread> workerThread = new AtomicReference<>();
         final CountDownLatch latch = new CountDownLatch(1);
         final List<Runnable> onComplete = new CopyOnWriteArrayList<>();
-        volatile PyHostHandle handle;
 
         void markCompleted() {
             if (done.compareAndSet(false, true)) {
@@ -71,8 +72,10 @@ public final class ConcurrentFuturesModule {
         }
     }
 
+    private record QueuedTask(FutureState state, Runnable runnable) {}
+
     private static final Map<PyHostHandle, FutureState> FUTURE_STATES =
-            Collections.synchronizedMap(new IdentityHashMap<>());
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     public static PyModule createPackage(HostSession session, ThreadingModule.ThreadSpawner spawner) {
         PyModule futuresMod = createFutures(session, spawner);
@@ -97,19 +100,20 @@ public final class ConcurrentFuturesModule {
                 throw PyErrors.error("ValueError", "max_workers must be greater than 0");
             }
             final int maxWorkers = Math.min(requested, maxAllowed);
+            final int maxQueued = session.capabilities().maxQueuedTasks();
+            final Duration shutdownTimeout = session.capabilities().executorShutdownTimeout();
             final AtomicBoolean shutdown = new AtomicBoolean(false);
             final List<ThreadingModule.SpawnedThread> spawned = new ArrayList<>();
-            final BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>();
+            final BlockingQueue<QueuedTask> workQueue = new LinkedBlockingQueue<>();
             final AtomicInteger activeWorkers = new AtomicInteger(0);
             final Object poolLock = new Object();
 
-            AutoCloseable poolCleanup = () -> {
-                shutdown.set(true);
-                workQueue.clear();
-            };
-            session.registerResource(poolCleanup);
-            final PyHostHandle[] selfRef = new PyHostHandle[1];
+            final AutoCloseable[] poolCleanupRef = new AutoCloseable[1];
+            poolCleanupRef[0] = () -> performShutdown(
+                    true, true, shutdownTimeout, session, shutdown, workQueue, spawned, poolLock, null);
+            session.acquireThreadPoolSlot(poolCleanupRef[0]);
 
+            final PyHostHandle[] selfRef = new PyHostHandle[1];
             selfRef[0] = PyHostHandle.builder("concurrent.futures.ThreadPoolExecutor")
                     .bindSession(session)
                     .method("submit", new PyBuiltinFunction("ThreadPoolExecutor.submit", (sArgs, sKwargs) -> {
@@ -123,44 +127,92 @@ public final class ConcurrentFuturesModule {
                         PyObject[] fnArgs = new PyObject[sArgs.length - 1];
                         System.arraycopy(sArgs, 1, fnArgs, 0, fnArgs.length);
                         return submitTask(session, spawner, workQueue, spawned, activeWorkers,
-                                poolLock, maxWorkers, shutdown, fn, fnArgs, sKwargs);
+                                poolLock, maxWorkers, maxQueued, shutdown, fn, fnArgs, sKwargs);
                     }))
-                    .method("map", new PyBuiltinFunction("ThreadPoolExecutor.map", mArgs -> {
+                    .method("map", new PyBuiltinFunction("ThreadPoolExecutor.map", (mArgs, mKwargs) -> {
                         if (mArgs.length < 2) throw PyErrors.error("TypeError", "map() takes at least 2 arguments");
+                        if (shutdown.get() || session.isClosed()) {
+                            throw PyErrors.error("RuntimeError", "cannot schedule new futures after shutdown");
+                        }
                         PyObject fn = mArgs[0];
-                        List<PyObject> items = BuiltinFunctions.collectIterable(mArgs[1], DenyAllPolicy.INSTANCE);
-                        PyCaller caller = PyCaller.current();
-                        List<PyObject> futures = new ArrayList<>(items.size());
-                        for (PyObject item : items) {
+                        Double timeoutSecs = null;
+                        PyObject rawTo = mKwargs.get("timeout");
+                        if (rawTo != null && !(rawTo instanceof PyNull)) {
+                            double d = PyOps.toDouble(rawTo);
+                            if (d < 0 || Double.isNaN(d)) throw PyErrors.error("ValueError", "timeout must be >= 0");
+                            timeoutSecs = d;
+                        }
+                        int chunksize = mKwargs.containsKey("chunksize") ? PyOps.toInt(mKwargs.get("chunksize")) : 1;
+                        if (chunksize < 1) throw PyErrors.error("ValueError", "chunksize must be >= 1");
+
+                        PyIterator srcIter = toPyIterator(mArgs[1]);
+                        int windowSize = Math.max(1, Math.min(maxQueued, maxWorkers * Math.max(2, chunksize)));
+                        List<PyHostHandle> futures = new ArrayList<>();
+                        // Bounded streaming: submit up to maxQueued tasks in batches, never unbounded pre-collect
+                        while (srcIter.hasNext()) {
+                            if (futures.size() >= maxQueued) {
+                                break;
+                            }
+                            PyObject item = srcIter.next();
                             futures.add(submitTask(session, spawner, workQueue, spawned, activeWorkers,
-                                    poolLock, maxWorkers, shutdown, fn, new PyObject[]{item}, Map.of()));
+                                    poolLock, maxWorkers, maxQueued, shutdown, fn, new PyObject[]{item}, Map.of()));
                         }
-                        List<PyObject> results = new ArrayList<>(futures.size());
-                        for (PyObject f : futures) {
-                            PyObject resFn = ((PyHostHandle) f).getAttr("result");
-                            results.add(caller.call(resFn, new PyObject[0]));
-                        }
-                        return new PyIterator(results, 0);
+
+                        final long deadlineNanos = timeoutSecs != null
+                                ? System.nanoTime() + Math.round(timeoutSecs * 1_000_000_000.0)
+                                : Long.MAX_VALUE;
+                        final boolean hasTimeout = timeoutSecs != null;
+                        final int batchSize = windowSize;
+
+                        return new PyIterator(new Iterator<PyObject>() {
+                            private int idx = 0;
+
+                            @Override
+                            public boolean hasNext() {
+                                if (idx < futures.size()) return true;
+                                if (!srcIter.hasNext()) return false;
+                                futures.clear();
+                                idx = 0;
+                                while (srcIter.hasNext() && futures.size() < batchSize) {
+                                    PyObject item = srcIter.next();
+                                    futures.add(submitTask(session, spawner, workQueue, spawned, activeWorkers,
+                                            poolLock, maxWorkers, maxQueued, shutdown, fn, new PyObject[]{item}, Map.of()));
+                                }
+                                return !futures.isEmpty();
+                            }
+
+                            @Override
+                            public PyObject next() {
+                                if (!hasNext()) throw new NoSuchElementException();
+                                PyHostHandle fh = futures.get(idx++);
+                                FutureState st = FUTURE_STATES.get(fh);
+                                PyObject[] resArgs;
+                                if (hasTimeout) {
+                                    long remMs = Math.max(1L, (deadlineNanos - System.nanoTime()) / 1_000_000L);
+                                    if (System.nanoTime() >= deadlineNanos && !st.done.get()) {
+                                        throw PyErrors.error("TimeoutError", "map() timed out");
+                                    }
+                                    resArgs = new PyObject[]{new org.example.jython3.runtime.PyFloat(remMs / 1000.0)};
+                                } else {
+                                    resArgs = new PyObject[0];
+                                }
+                                return awaitFutureResult(st, resArgs, session);
+                            }
+                        });
                     }))
                     .method("shutdown", new PyBuiltinFunction("ThreadPoolExecutor.shutdown", (shArgs, shKwargs) -> {
                         boolean wait = !shKwargs.containsKey("wait") || PyOps.isTruthy(shKwargs.get("wait"));
                         if (shArgs.length >= 1) wait = PyOps.isTruthy(shArgs[0]);
-                        shutdown.set(true);
-                        if (wait) {
-                            List<ThreadingModule.SpawnedThread> snap;
-                            synchronized (poolLock) { snap = new ArrayList<>(spawned); }
-                            for (var st : snap) st.join(-1);
-                        }
-                        session.unregisterResource(poolCleanup);
+                        boolean cancelFutures = shKwargs.containsKey("cancel_futures")
+                                && PyOps.isTruthy(shKwargs.get("cancel_futures"));
+                        performShutdown(wait, cancelFutures, shutdownTimeout, session, shutdown,
+                                workQueue, spawned, poolLock, poolCleanupRef[0]);
                         return PyNull.INSTANCE;
                     }))
                     .method("__enter__", new PyBuiltinFunction("ThreadPoolExecutor.__enter__", a -> selfRef[0]))
                     .method("__exit__", new PyBuiltinFunction("ThreadPoolExecutor.__exit__", a -> {
-                        shutdown.set(true);
-                        List<ThreadingModule.SpawnedThread> snap;
-                        synchronized (poolLock) { snap = new ArrayList<>(spawned); }
-                        for (var st : snap) st.join(-1);
-                        session.unregisterResource(poolCleanup);
+                        performShutdown(true, false, shutdownTimeout, session, shutdown,
+                                workQueue, spawned, poolLock, poolCleanupRef[0]);
                         return PyBool.FALSE;
                     }))
                     .build();
@@ -260,21 +312,72 @@ public final class ConcurrentFuturesModule {
         return new PyModule("concurrent.futures", attrs);
     }
 
+    private static void performShutdown(
+            boolean wait,
+            boolean cancelFutures,
+            Duration shutdownTimeout,
+            HostSession session,
+            AtomicBoolean shutdown,
+            BlockingQueue<QueuedTask> workQueue,
+            List<ThreadingModule.SpawnedThread> spawned,
+            Object poolLock,
+            AutoCloseable poolCleanup) {
+        shutdown.set(true);
+        if (cancelFutures || session.isClosed()) {
+            List<QueuedTask> drained = new ArrayList<>();
+            workQueue.drainTo(drained);
+            for (QueuedTask qt : drained) {
+                qt.state().cancelled.set(true);
+                qt.state().markCompleted();
+            }
+        }
+        if (wait) {
+            List<ThreadingModule.SpawnedThread> snap;
+            synchronized (poolLock) {
+                snap = new ArrayList<>(spawned);
+            }
+            long deadlineMs = System.currentTimeMillis()
+                    + Math.max(100L, shutdownTimeout != null ? shutdownTimeout.toMillis() : 2000L);
+            for (var st : snap) {
+                if (!st.isAlive()) continue;
+                long rem = deadlineMs - System.currentTimeMillis();
+                if (rem <= 0 || session.isClosed()) break;
+                st.join(Math.min(rem, 200L));
+                while (st.isAlive() && System.currentTimeMillis() < deadlineMs && !session.isClosed()) {
+                    var ctx = session.activeContext();
+                    if (ctx != null && ctx.isCancelled()) break;
+                    st.join(Math.min(50L, Math.max(1L, deadlineMs - System.currentTimeMillis())));
+                }
+            }
+        }
+        if (poolCleanup != null) {
+            session.releaseThreadPoolSlot(poolCleanup);
+        }
+    }
+
+    private static PyIterator toPyIterator(PyObject iterable) {
+        if (iterable instanceof PyIterator it) return it;
+        if (iterable instanceof org.example.jython3.runtime.PyRange r) return r.iterator();
+        if (iterable instanceof org.example.jython3.runtime.PyGenerator g) return PyIterator.fromGenerator(g);
+        return new PyIterator(BuiltinFunctions.collectIterable(iterable, DenyAllPolicy.INSTANCE), 0);
+    }
+
     private static PyHostHandle submitTask(
             HostSession session,
             ThreadingModule.ThreadSpawner spawner,
-            BlockingQueue<Runnable> workQueue,
+            BlockingQueue<QueuedTask> workQueue,
             List<ThreadingModule.SpawnedThread> spawned,
             AtomicInteger activeWorkers,
             Object poolLock,
             int maxWorkers,
+            int maxQueued,
             AtomicBoolean shutdown,
             PyObject fn,
             PyObject[] fnArgs,
             Map<String, PyObject> kwArgs) {
         final FutureState state = new FutureState();
         Runnable work = () -> {
-            if (state.cancelled.get() || shutdown.get() || session.isClosed()) {
+            if (state.cancelled.get() || session.isClosed()) {
                 state.markCompleted();
                 return;
             }
@@ -300,18 +403,23 @@ public final class ConcurrentFuturesModule {
                 state.markCompleted();
             }
         };
+        final QueuedTask qt = new QueuedTask(state, work);
 
         synchronized (poolLock) {
-            workQueue.add(work);
+            if (workQueue.size() >= maxQueued) {
+                session.auditLog().recordDenied(HostCapability.THREADS, "submit_task", "", "maxQueuedTasks=" + maxQueued);
+                throw PyErrors.error("RuntimeError", "executor task queue limit (" + maxQueued + ") exceeded");
+            }
+            workQueue.add(qt);
             if (activeWorkers.get() < maxWorkers) {
                 activeWorkers.incrementAndGet();
                 PyObject workerLoop = new PyBuiltinFunction("pool.worker", wArgs -> {
                     try {
-                        while (!shutdown.get() && !session.isClosed()) {
-                            Runnable nextTask = workQueue.poll(20, TimeUnit.MILLISECONDS);
+                        while (!session.isClosed()) {
+                            QueuedTask nextTask = workQueue.poll(20, TimeUnit.MILLISECONDS);
                             if (nextTask != null) {
-                                nextTask.run();
-                            } else if (workQueue.isEmpty()) {
+                                nextTask.runnable().run();
+                            } else if (shutdown.get() || workQueue.isEmpty()) {
                                 break;
                             }
                         }
@@ -340,7 +448,7 @@ public final class ConcurrentFuturesModule {
                         return PyBool.FALSE;
                     }
                     if (state.cancelled.compareAndSet(false, true)) {
-                        workQueue.remove(work);
+                        workQueue.remove(qt);
                         state.markCompleted();
                         return PyBool.TRUE;
                     }
@@ -358,7 +466,6 @@ public final class ConcurrentFuturesModule {
                     return PyErrors.fromJava(err).value();
                 }))
                 .build();
-        state.handle = futureHandle;
         FUTURE_STATES.put(futureHandle, state);
         return futureHandle;
     }
