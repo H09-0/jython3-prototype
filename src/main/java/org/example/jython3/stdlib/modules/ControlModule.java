@@ -4,6 +4,7 @@ import org.example.jython3.control.ControlDevice;
 import org.example.jython3.control.ControlRegistry;
 import org.example.jython3.host.HostCapability;
 import org.example.jython3.host.HostSession;
+import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyDict;
@@ -14,6 +15,7 @@ import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyStr;
+import org.example.jython3.security.PolicySanitizer;
 import org.example.jython3.ui.UiToolkit;
 
 import java.util.HashMap;
@@ -137,7 +139,13 @@ public final class ControlModule {
                     }
                     cmdArgs.putAll(kwargs);
                     session.requireControlCommand(device.id(), cmdName);
-                    PyObject res = device.execute(cmdName, cmdArgs);
+                    Map<String, PyObject> safeArgs = new LinkedHashMap<>(cmdArgs.size());
+                    for (var e : cmdArgs.entrySet()) {
+                        safeArgs.put(e.getKey(), sanitizeControlValue(session, "sanitize_arg",
+                                device.id() + ":" + cmdName + ":" + e.getKey(), e.getValue()));
+                    }
+                    PyObject res = sanitizeControlValue(session, "sanitize_result",
+                            device.id() + ":" + cmdName, device.execute(cmdName, safeArgs));
 
                     if (!listeners.isEmpty()) {
                         PyHostHandle ev = PyHostHandle.builder("control.Event")
@@ -170,12 +178,17 @@ public final class ControlModule {
                                 }
                                 if (ga.length < 1 || ga.length > 2) throw PyErrors.error("TypeError", "State.get() takes 1 or 2 arguments");
                                 Map<String, PyObject> live = device.snapshotState();
-                                PyObject v = live.get(ga[0].toString());
-                                if (v != null) return v;
-                                return ga.length == 2 ? ga[1] : PyNull.INSTANCE;
+                                String key = ga[0].toString();
+                                PyObject v = live.get(key);
+                                if (v != null) {
+                                    return sanitizeControlValue(session, "sanitize_state", device.id() + ":" + key, v);
+                                }
+                                return ga.length == 2
+                                        ? sanitizeControlValue(session, "sanitize_state", device.id() + ":default", ga[1])
+                                        : PyNull.INSTANCE;
                             }))
-                            .method("to_dict", new PyBuiltinFunction("State.to_dict", ga -> toStateDict(device, closed.get())))
-                            .method("snapshot", new PyBuiltinFunction("State.snapshot", ga -> toStateDict(device, closed.get())))
+                            .method("to_dict", new PyBuiltinFunction("State.to_dict", ga -> toStateDict(session, device, closed.get())))
+                            .method("snapshot", new PyBuiltinFunction("State.snapshot", ga -> toStateDict(session, device, closed.get())))
                             .build();
                 }))
                 .method("on_event", new PyBuiltinFunction("Controller.on_event", a -> {
@@ -195,14 +208,25 @@ public final class ControlModule {
                 .build();
     }
 
-    private static PyDict toStateDict(ControlDevice device, boolean controllerClosed) {
+    private static PyDict toStateDict(HostSession session, ControlDevice device, boolean controllerClosed) {
         if (controllerClosed) {
             throw PyErrors.error("RuntimeError", "controller '" + device.id() + "' is closed");
         }
         var dict = new PyDict();
         for (var e : device.snapshotState().entrySet()) {
-            dict.put(new PyStr(e.getKey()), e.getValue());
+            dict.put(new PyStr(e.getKey()),
+                    sanitizeControlValue(session, "sanitize_state", device.id() + ":" + e.getKey(), e.getValue()));
         }
         return dict;
+    }
+
+    private static PyObject sanitizeControlValue(HostSession session, String action, String target, PyObject value) {
+        if (value == null) return PyNull.INSTANCE;
+        try {
+            return PolicySanitizer.sanitize(value, session.javaAccessPolicy(), session);
+        } catch (InterpreterException ex) {
+            session.auditLog().recordDenied(HostCapability.CONTROL, action, target, ex.getMessage());
+            throw ex;
+        }
     }
 }

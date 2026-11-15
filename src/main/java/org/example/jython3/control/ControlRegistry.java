@@ -7,6 +7,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Per-interpreter registry of simulated or host-bridged {@link ControlDevice}s.
+ *
+ * <p><b>Trust Boundary:</b> Registering devices is a trusted internal host-only
+ * operation and must never be exposed to untrusted script code.
  */
 public final class ControlRegistry {
 
