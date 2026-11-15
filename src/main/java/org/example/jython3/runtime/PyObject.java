@@ -6,6 +6,7 @@ public sealed interface PyObject permits
         PyInt, BigInt, PyStr, PyNull, PyBool, PyFunction, PyClass, PyInstance, PyBoundMethod, PySuper,
         PyList, PyTuple, PySet, PyFrozenSet, PyDict, PyIterator, PyModule, PyBuiltinFunction, PyFloat, PyException,
         PyCompiledCodeWrapper, PyGenerator, PySlice, PyCell,
+        PyProperty, PyStaticMethod, PyClassMethod,
         PyTraceback, PyFrameInfo, PyCodeInfo,
         PyHostHandle,
         PyJavaClass, PyJavaObject, PyJavaMethod,

@@ -48,6 +48,7 @@ import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyCell;
 import org.example.jython3.runtime.PyClass;
+import org.example.jython3.runtime.PyClassMethod;
 import org.example.jython3.runtime.PyCodeInfo;
 import org.example.jython3.runtime.PyCompiledCodeWrapper;
 import org.example.jython3.runtime.PyDict;
@@ -58,6 +59,7 @@ import org.example.jython3.runtime.PyFrameInfo;
 import org.example.jython3.runtime.PyFrozenSet;
 import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyGenerator;
+import org.example.jython3.runtime.PyHostHandle;
 import org.example.jython3.runtime.PyInstance;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyIterator;
@@ -70,8 +72,10 @@ import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
+import org.example.jython3.runtime.PyProperty;
 import org.example.jython3.runtime.PySet;
 import org.example.jython3.runtime.PySlice;
+import org.example.jython3.runtime.PyStaticMethod;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.PyTraceback;
@@ -401,6 +405,19 @@ public class Jython3Interpreter implements AutoCloseable {
         this.interpreterCaller = new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
                 return callPyCallable(callable, args);
+            }
+
+            @Override public PyObject callWithKw(PyObject callable, PyObject[] posArgs, Map<String, PyObject> kwargs) {
+                if (kwargs == null || kwargs.isEmpty()) return callPyCallable(callable, posArgs);
+                String[] kwNames = new String[kwargs.size()];
+                PyObject[] kwVals = new PyObject[kwargs.size()];
+                int idx = 0;
+                for (var e : kwargs.entrySet()) {
+                    kwNames[idx] = e.getKey();
+                    kwVals[idx] = e.getValue();
+                    idx++;
+                }
+                return callPyCallableKw(callable, posArgs, kwNames, kwVals);
             }
 
             @Override public PyObject stepGenerator(PyGenerator gen) {
@@ -1719,11 +1736,20 @@ public class Jython3Interpreter implements AutoCloseable {
                     if (basesObj instanceof PyList bl) {
                         for (PyObject b : bl.items()) {
                             if (b instanceof PyClass bcls) bases.add(bcls);
+                            else if (b instanceof PyBuiltinFunction bf && bf.isType() && "object".equals(bf.name())) {
+                                // 'object' is implicit root
+                            } else {
+                                throw PyErrors.error("TypeError", "base class must be a type, not " + typeName(b));
+                            }
                         }
                     } else if (basesObj instanceof PyClass bc2) {
                         bases.add(bc2);
+                    } else if (basesObj instanceof PyBuiltinFunction bf && bf.isType() && "object".equals(bf.name())) {
+                        // implicit root
                     } else if (basesObj == null || basesObj instanceof PyNull) {
                         // no bases
+                    } else {
+                        throw PyErrors.error("TypeError", "base class must be a type, not " + typeName(basesObj));
                     }
 
                     // Execute class suite in an isolated scope to collect members
@@ -2287,43 +2313,62 @@ public class Jython3Interpreter implements AutoCloseable {
                     String attr = (String) pool[ai];
                     PyObject obj = stack.pop();
                     if (obj instanceof PyInstance inst) {
-                        PyObject val = inst.fields().get(attr);
-                        if (val != null) {
-                            stack.push(val);
+                        Object[] cache = code.attrCache();
+                        AttrCacheEntry entry = (cache != null && pc < cache.length) ? (AttrCacheEntry) cache[pc] : null;
+                        PyClass cls = inst.pyClass();
+                        PyObject member;
+                        if (entry != null && entry.cachedClass() == cls && entry.cachedClassVersion() == cls.version()) {
+                            member = entry.cachedMember();
                         } else {
-                            Object[] cache = code.attrCache();
-                            AttrCacheEntry entry = (cache != null && pc < cache.length) ? (AttrCacheEntry) cache[pc] : null;
-                            PyClass cls = inst.pyClass();
-                            PyObject member;
-                            if (entry != null && entry.cachedClass() == cls && entry.cachedClassVersion() == cls.version()) {
-                                member = entry.cachedMember();
-                            } else {
-                                member = cls.lookupMember(attr);
-                                if (member == null && inst.fields().containsKey(attr)) {
-                                    member = inst.fields().get(attr);
-                                }
-                                if (member == null && "__class__".equals(attr)) {
-                                    member = (cls == BuiltinFunctions.OBJECT_CLASS) ? builtinTypes.get("object") : cls;
-                                }
-                                if (member == null) {
-                                    throw PyErrors.error("AttributeError", "'" + cls.name() + "' object has no attribute '" + attr + "'");
-                                }
-                                if (cache != null && pc < cache.length) {
-                                    cache[pc] = new AttrCacheEntry(cls, cls.version(), member);
-                                }
+                            member = cls.lookupMember(attr);
+                            if (cache != null && pc < cache.length && member != null) {
+                                cache[pc] = new AttrCacheEntry(cls, cls.version(), member);
                             }
-                            if (member instanceof PyFunction fn) {
-                                stack.push(new PyBoundMethod(inst, fn));
+                        }
+                        if (member instanceof PyProperty prop && prop.isDataDescriptor()) {
+                            if (prop.fget() == null) {
+                                throw PyErrors.error("AttributeError", "property '" + attr + "' of '" + cls.name() + "' object has no getter");
+                            }
+                            stack.push(callPyCallable(prop.fget(), new PyObject[]{inst}));
+                        } else {
+                            PyObject val = inst.fields().get(attr);
+                            if (val != null) {
+                                stack.push(val);
+                            } else if (member != null) {
+                                if (member instanceof PyProperty prop) {
+                                    if (prop.fget() == null) {
+                                        throw PyErrors.error("AttributeError", "property '" + attr + "' of '" + cls.name() + "' object has no getter");
+                                    }
+                                    stack.push(callPyCallable(prop.fget(), new PyObject[]{inst}));
+                                } else if (member instanceof PyStaticMethod sm) {
+                                    stack.push(sm.callable());
+                                } else if (member instanceof PyClassMethod cm) {
+                                    stack.push(cm.bind(cls));
+                                } else if (member instanceof PyFunction fn) {
+                                    stack.push(new PyBoundMethod(inst, fn));
+                                } else {
+                                    stack.push(member);
+                                }
+                            } else if (inst.fields().containsKey(attr)) {
+                                stack.push(inst.fields().get(attr));
+                            } else if ("__class__".equals(attr)) {
+                                stack.push((cls == BuiltinFunctions.OBJECT_CLASS) ? builtinTypes.get("object") : cls);
                             } else {
-                                stack.push(member);
+                                throw PyErrors.error("AttributeError", "'" + cls.name() + "' object has no attribute '" + attr + "'");
                             }
                         }
                     } else if (obj instanceof PyClass cls) {
                         PyObject val = cls.lookupMember(attr);
+                        if (val instanceof PyStaticMethod sm) val = sm.callable();
+                        else if (val instanceof PyClassMethod cm) val = cm.bind(cls);
                         if (val == null && "__name__".equals(attr)) val = new PyStr(cls.name());
                         if (val == null && "__class__".equals(attr)) val = builtinTypes.get("type");
+                        if (val == null && "__mro__".equals(attr)) val = BuiltinFunctions.classMroTuple(cls, builtinTypes);
+                        if (val == null && "__bases__".equals(attr)) val = BuiltinFunctions.classBasesTuple(cls, builtinTypes);
                         if (val == null) throw PyErrors.error("AttributeError", "type object '" + cls.name() + "' has no attribute '" + attr + "'");
                         stack.push(val);
+                    } else if (obj instanceof PyProperty prop) {
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("property") : prop.getAttr(attr));
                     } else if (obj instanceof PyException pe) {
                         PyObject val = pe.pythonAttribute(attr);
                         if (val == null) throw PyErrors.error("AttributeError", "'" + pe.typeName() + "' object has no attribute '" + attr + "'");
@@ -2726,9 +2771,13 @@ public class Jython3Interpreter implements AutoCloseable {
         }
         if (obj instanceof PyClass cls) {
             PyObject cv = cls.lookupMember(attr);
+            if (cv instanceof PyStaticMethod sm) return sm.callable();
+            if (cv instanceof PyClassMethod cm) return cm.bind(cls);
             if (cv != null) return cv;
             if ("__name__".equals(attr)) return new PyStr(cls.name());
             if ("__class__".equals(attr)) return builtinTypes.get("type");
+            if ("__mro__".equals(attr)) return BuiltinFunctions.classMroTuple(cls, builtinTypes);
+            if ("__bases__".equals(attr)) return BuiltinFunctions.classBasesTuple(cls, builtinTypes);
             return null;
         }
         if (obj instanceof PyException pe) return pe.pythonAttribute(attr);

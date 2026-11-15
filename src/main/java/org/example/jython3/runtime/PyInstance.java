@@ -19,20 +19,27 @@ public final class PyInstance implements PyObject {
     }
 
     public boolean isInstanceOf(PyClass target) {
-        PyClass c = pyClass;
-        while (c != null) {
-            if (c == target || c.name().equals(target.name())) return true;
-            c = c.baseClass();
-        }
-        return false;
+        return pyClass.isSubclassOf(target);
     }
 
     public PyObject getField(String name) {
+        PyObject member = pyClass.lookupMember(name);
+        if (member instanceof PyProperty prop && prop.isDataDescriptor()) {
+            return invokePropertyGetter(prop, name);
+        }
         PyObject val = fields.get(name);
         if (val != null) {
             return val;
         }
-        PyObject member = pyClass.lookupMember(name);
+        if (member instanceof PyProperty prop) {
+            return invokePropertyGetter(prop, name);
+        }
+        if (member instanceof PyStaticMethod sm) {
+            return sm.callable();
+        }
+        if (member instanceof PyClassMethod cm) {
+            return cm.bind(pyClass);
+        }
         if (member instanceof PyFunction fn) {
             long currentVer = pyClass.version();
             if (boundMethodCache == null) {
@@ -60,7 +67,32 @@ public final class PyInstance implements PyObject {
         throw PyErrors.error("AttributeError", "'" + pyClass.name() + "' object has no attribute '" + name + "'");
     }
 
+    private PyObject invokePropertyGetter(PyProperty prop, String name) {
+        if (prop.fget() == null) {
+            throw PyErrors.error("AttributeError",
+                    "property '" + name + "' of '" + pyClass.name() + "' object has no getter");
+        }
+        PyCaller caller = PyCaller.current();
+        if (caller == null) {
+            throw PyErrors.error("RuntimeError", "no active interpreter for property");
+        }
+        return caller.call(prop.fget(), new PyObject[]{this});
+    }
+
     public void setField(String name, PyObject val) {
+        PyObject member = pyClass.lookupMember(name);
+        if (member instanceof PyProperty prop) {
+            if (prop.fset() == null) {
+                throw PyErrors.error("AttributeError",
+                        "property '" + name + "' of '" + pyClass.name() + "' object has no setter");
+            }
+            PyCaller caller = PyCaller.current();
+            if (caller == null) {
+                throw PyErrors.error("RuntimeError", "no active interpreter for property");
+            }
+            caller.call(prop.fset(), new PyObject[]{this, val});
+            return;
+        }
         fields.put(name, val);
         if (boundMethodCache != null) {
             boundMethodCache.remove(name);
@@ -68,6 +100,19 @@ public final class PyInstance implements PyObject {
     }
 
     public boolean deleteField(String name) {
+        PyObject member = pyClass.lookupMember(name);
+        if (member instanceof PyProperty prop) {
+            if (prop.fdel() == null) {
+                throw PyErrors.error("AttributeError",
+                        "property '" + name + "' of '" + pyClass.name() + "' object has no deleter");
+            }
+            PyCaller caller = PyCaller.current();
+            if (caller == null) {
+                throw PyErrors.error("RuntimeError", "no active interpreter for property");
+            }
+            caller.call(prop.fdel(), new PyObject[]{this});
+            return true;
+        }
         if (!fields.containsKey(name)) return false;
         fields.remove(name);
         if (boundMethodCache != null) {

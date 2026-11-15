@@ -1,9 +1,11 @@
 package org.example.jython3.runtime;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -12,9 +14,10 @@ public final class PyClass implements PyObject {
     private final String name;
     private final PyClass baseClass;
     private final Map<String, PyObject> members;
-    private final java.util.List<PyClass> bases = new java.util.ArrayList<>();
+    private final List<PyClass> bases = new ArrayList<>();
     private final Map<String, PyObject> memberCache = new HashMap<>();
     private final Set<PyClass> subclasses = Collections.newSetFromMap(new WeakHashMap<>());
+    private List<PyClass> mro;
     private long version = 1;
 
     /**
@@ -32,27 +35,34 @@ public final class PyClass implements PyObject {
             this.bases.add(baseClass);
             baseClass.addSubclass(this);
         }
+        this.mro = computeC3Mro();
     }
 
-    public PyClass(String name, PyClass baseClass, Map<String, PyObject> members, java.util.List<PyClass> basesList) {
+    public PyClass(String name, PyClass baseClass, Map<String, PyObject> members, List<PyClass> basesList) {
         this.name = name;
         this.baseClass = baseClass;
         this.members = members == null ? new HashMap<>() : new HashMap<>(members);
         if (basesList != null) {
-            this.bases.addAll(basesList);
+            Set<PyClass> seenBases = Collections.newSetFromMap(new IdentityHashMap<>());
             for (PyClass b : basesList) {
+                if (!seenBases.add(b)) {
+                    throw PyErrors.error("TypeError", "duplicate base class " + b.name());
+                }
+                this.bases.add(b);
                 b.addSubclass(this);
             }
         } else if (baseClass != null) {
             this.bases.add(baseClass);
             baseClass.addSubclass(this);
         }
+        this.mro = computeC3Mro();
     }
 
     public String name() { return name; }
     public PyClass baseClass() { return baseClass; }
     public Map<String, PyObject> members() { return Collections.unmodifiableMap(members); }
-    public java.util.List<PyClass> getBases() { return bases; }
+    public List<PyClass> getBases() { return bases; }
+    public List<PyClass> mro() { return mro; }
 
     public long version() {
         return version;
@@ -91,18 +101,72 @@ public final class PyClass implements PyObject {
         invalidateHierarchy();
     }
 
-    public PyObject lookupMember(String attr) {
-        PyObject cached = memberCache.get(attr);
-        if (cached != null) return cached;
-        PyObject val = members.get(attr);
-        if (val == null) {
-            for (PyClass b : bases) {
-                PyObject v = b.lookupMember(attr);
-                if (v != null) {
-                    val = v;
+    private List<PyClass> computeC3Mro() {
+        if (bases.isEmpty()) {
+            return List.of(this);
+        }
+        if (bases.size() == 1) {
+            List<PyClass> baseMro = bases.get(0).mro();
+            List<PyClass> result = new ArrayList<>(1 + baseMro.size());
+            result.add(this);
+            result.addAll(baseMro);
+            return Collections.unmodifiableList(result);
+        }
+        List<List<PyClass>> seqs = new ArrayList<>(bases.size() + 1);
+        for (PyClass b : bases) {
+            seqs.add(new ArrayList<>(b.mro()));
+        }
+        seqs.add(new ArrayList<>(bases));
+
+        List<PyClass> merged = new ArrayList<>();
+        merged.add(this);
+        while (true) {
+            seqs.removeIf(List::isEmpty);
+            if (seqs.isEmpty()) break;
+            PyClass candidate = null;
+            for (List<PyClass> seq : seqs) {
+                PyClass head = seq.get(0);
+                boolean inTail = false;
+                for (List<PyClass> other : seqs) {
+                    for (int i = 1; i < other.size(); i++) {
+                        if (other.get(i) == head) {
+                            inTail = true;
+                            break;
+                        }
+                    }
+                    if (inTail) break;
+                }
+                if (!inTail) {
+                    candidate = head;
                     break;
                 }
             }
+            if (candidate == null) {
+                StringBuilder baseNames = new StringBuilder();
+                for (int i = 0; i < bases.size(); i++) {
+                    if (i > 0) baseNames.append(", ");
+                    baseNames.append(bases.get(i).name());
+                }
+                throw PyErrors.error("TypeError",
+                        "Cannot create a consistent method resolution order (MRO) for bases " + baseNames);
+            }
+            merged.add(candidate);
+            for (List<PyClass> seq : seqs) {
+                if (!seq.isEmpty() && seq.get(0) == candidate) {
+                    seq.remove(0);
+                }
+            }
+        }
+        return Collections.unmodifiableList(merged);
+    }
+
+    public PyObject lookupMember(String attr) {
+        PyObject cached = memberCache.get(attr);
+        if (cached != null) return cached;
+        PyObject val = null;
+        for (PyClass cls : mro) {
+            val = cls.members.get(attr);
+            if (val != null) break;
         }
         if (val != null) {
             memberCache.put(attr, val);

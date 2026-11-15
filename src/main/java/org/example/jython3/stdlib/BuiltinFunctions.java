@@ -16,6 +16,7 @@ import org.example.jython3.runtime.PyBoundMethod;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyClass;
+import org.example.jython3.runtime.PyClassMethod;
 import org.example.jython3.runtime.PyCodeInfo;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
@@ -37,7 +38,9 @@ import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
+import org.example.jython3.runtime.PyProperty;
 import org.example.jython3.runtime.PySlice;
+import org.example.jython3.runtime.PyStaticMethod;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.PyTuple;
@@ -266,10 +269,71 @@ public final class BuiltinFunctions {
             return new PyInstance(OBJECT_CLASS);
         }));
 
-        // type(obj)
+        // type(obj) or type(name, bases, dict)
         defineType.accept("type", PyBuiltinFunction.builtinType("type", args -> {
-            checkArgCount("type", args, 1);
-            return typeOf(args[0], builtinTypes);
+            if (args.length == 1) {
+                return typeOf(args[0], builtinTypes);
+            }
+            if (args.length == 3) {
+                if (!(args[0] instanceof PyStr nameStr)) {
+                    throw PyErrors.error("TypeError", "type() argument 1 must be str, not " + typeName(args[0]));
+                }
+                if (!(args[1] instanceof PyTuple basesTuple)) {
+                    throw PyErrors.error("TypeError", "type() argument 2 must be tuple, not " + typeName(args[1]));
+                }
+                if (!(args[2] instanceof PyDict nsDict)) {
+                    throw PyErrors.error("TypeError", "type() argument 3 must be dict, not " + typeName(args[2]));
+                }
+                var bases = new ArrayList<PyClass>();
+                for (PyObject b : basesTuple.items()) {
+                    if (b instanceof PyClass bc) {
+                        bases.add(bc);
+                    } else if (b instanceof PyBuiltinFunction bf && bf.isType() && "object".equals(bf.name())) {
+                        // 'object' is the implicit base of all PyClass instances
+                    } else {
+                        throw PyErrors.error("TypeError", "type() bases must be classes, not " + typeName(b));
+                    }
+                }
+                var members = new java.util.HashMap<String, PyObject>();
+                for (var entry : nsDict.map().entrySet()) {
+                    PyObject k = entry.getKey();
+                    if (!(k instanceof PyStr ks)) {
+                        throw PyErrors.error("TypeError", "type() namespace keys must be str");
+                    }
+                    members.put(ks.value(), entry.getValue());
+                }
+                return new PyClass(nameStr.value(), bases.isEmpty() ? null : bases.get(0), members, bases);
+            }
+            throw PyErrors.error("TypeError", "type() takes 1 or 3 arguments");
+        }));
+
+        // property(fget=None, fset=None, fdel=None, doc=None)
+        defineType.accept("property", PyBuiltinFunction.builtinType("property", (args, kwargs) -> {
+            if (args.length > 4) {
+                throw PyErrors.error("TypeError", "property() takes at most 4 arguments (" + args.length + " given)");
+            }
+            PyObject fget = args.length >= 1 ? args[0] : kwargs.getOrDefault("fget", PyNull.INSTANCE);
+            PyObject fset = args.length >= 2 ? args[1] : kwargs.getOrDefault("fset", PyNull.INSTANCE);
+            PyObject fdel = args.length >= 3 ? args[2] : kwargs.getOrDefault("fdel", PyNull.INSTANCE);
+            PyObject docObj = args.length >= 4 ? args[3] : kwargs.getOrDefault("doc", PyNull.INSTANCE);
+            String doc = (docObj instanceof PyStr s) ? s.value() : null;
+            return new PyProperty(
+                    fget instanceof PyNull ? null : fget,
+                    fset instanceof PyNull ? null : fset,
+                    fdel instanceof PyNull ? null : fdel,
+                    doc);
+        }));
+
+        // staticmethod(func)
+        defineType.accept("staticmethod", PyBuiltinFunction.builtinType("staticmethod", args -> {
+            checkArgCount("staticmethod", args, 1);
+            return new PyStaticMethod(args[0]);
+        }));
+
+        // classmethod(func)
+        defineType.accept("classmethod", PyBuiltinFunction.builtinType("classmethod", args -> {
+            checkArgCount("classmethod", args, 1);
+            return new PyClassMethod(args[0]);
         }));
 
         // abs(x)
@@ -763,7 +827,11 @@ public final class BuiltinFunctions {
             if (args[0] instanceof PyModule mod) return PyBool.of(mod.attrs().containsKey(name));
             if (args[0] instanceof PyDict d) return PyBool.of(d.map().containsKey(new PyStr(name)));
             if (args[0] instanceof PyInstance inst) return PyBool.of(inst.hasField(name));
-            if (args[0] instanceof PyClass cls) return PyBool.of(cls.hasMember(name) || "__name__".equals(name));
+            if (args[0] instanceof PyClass cls) return PyBool.of(cls.hasMember(name) || "__name__".equals(name) || "__mro__".equals(name) || "__bases__".equals(name));
+            if (args[0] instanceof PyProperty prop) {
+                return PyBool.of("fget".equals(name) || "fset".equals(name) || "fdel".equals(name)
+                        || "__doc__".equals(name) || "getter".equals(name) || "setter".equals(name) || "deleter".equals(name));
+            }
             if (args[0] instanceof PyException pe) return PyBool.of(pe.pythonAttribute(name) != null);
             if (args[0] instanceof PyTraceback tb) return PyBool.of(tb.pythonAttribute(name) != null);
             if (args[0] instanceof PyFrameInfo fr) return PyBool.of(fr.pythonAttribute(name) != null);
@@ -802,8 +870,18 @@ public final class BuiltinFunctions {
                 }
             } else if (args[0] instanceof PyClass cls) {
                 PyObject val = cls.lookupMember(name);
+                if (val instanceof PyStaticMethod sm) return sm.callable();
+                if (val instanceof PyClassMethod cm) return cm.bind(cls);
                 if (val != null) return val;
                 if ("__name__".equals(name)) return new PyStr(cls.name());
+                if ("__mro__".equals(name)) return classMroTuple(cls, builtinTypes);
+                if ("__bases__".equals(name)) return classBasesTuple(cls, builtinTypes);
+            } else if (args[0] instanceof PyProperty prop) {
+                try {
+                    return prop.getAttr(name);
+                } catch (InterpreterException ie) {
+                    if (!"AttributeError".equals(ie.typeName())) throw ie;
+                }
             } else if (args[0] instanceof PyException pe) {
                 PyObject val = pe.pythonAttribute(name);
                 if (val != null) return val;
@@ -1081,6 +1159,8 @@ public final class BuiltinFunctions {
             collectClassMembers(inst.pyClass(), names);
         } else if (o instanceof PyClass cls) {
             names.add("__name__");
+            names.add("__mro__");
+            names.add("__bases__");
             collectClassMembers(cls, names);
         } else if (o instanceof PyModule mod) {
             names.addAll(mod.attrs().keySet());
@@ -1162,7 +1242,28 @@ public final class BuiltinFunctions {
         if (obj instanceof PyTraceback) return TRACEBACK_TYPE;
         if (obj instanceof PyFrameInfo) return FRAME_TYPE;
         if (obj instanceof PyCodeInfo) return CODE_TYPE;
+        if (obj instanceof PyProperty) return builtinTypes.get("property");
+        if (obj instanceof PyStaticMethod) return builtinTypes.get("staticmethod");
+        if (obj instanceof PyClassMethod) return builtinTypes.get("classmethod");
         return new PyStr("<class '" + typeName(obj) + "'>");
+    }
+
+    public static PyTuple classMroTuple(PyClass cls, Map<String, PyBuiltinFunction> builtinTypes) {
+        var list = new ArrayList<PyObject>(cls.mro().size() + 1);
+        for (PyClass c : cls.mro()) list.add(c);
+        PyBuiltinFunction objType = builtinTypes.get("object");
+        if (objType != null) list.add(objType);
+        return new PyTuple(list);
+    }
+
+    public static PyTuple classBasesTuple(PyClass cls, Map<String, PyBuiltinFunction> builtinTypes) {
+        if (cls.getBases().isEmpty()) {
+            PyBuiltinFunction objType = builtinTypes.get("object");
+            return objType != null ? new PyTuple(List.of(objType)) : PyTuple.EMPTY;
+        }
+        var list = new ArrayList<PyObject>(cls.getBases().size());
+        for (PyClass b : cls.getBases()) list.add(b);
+        return new PyTuple(list);
     }
 
     private static boolean checkIsInstance(PyObject obj, PyObject typeArg) {

@@ -18,7 +18,10 @@ import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
+import org.example.jython3.runtime.PyProperty;
 import org.example.jython3.runtime.PySet;
+import org.example.jython3.runtime.PyStaticMethod;
+import org.example.jython3.runtime.PyClassMethod;
 import org.example.jython3.runtime.PyTuple;
 
 import java.util.ArrayList;
@@ -117,6 +120,25 @@ public final class PolicySanitizer {
             var inst = (PyInstance) sanitize(bm.instance(), policy, targetSession, visited);
             var fn = (PyFunction) sanitize(bm.fn(), policy, targetSession, visited);
             var res = new PyBoundMethod(inst, fn);
+            visited.put(val, res);
+            return res;
+        }
+        if (val instanceof PyStaticMethod sm) {
+            var res = new PyStaticMethod(sanitize(sm.callable(), policy, targetSession, visited));
+            visited.put(val, res);
+            return res;
+        }
+        if (val instanceof PyClassMethod cm) {
+            var res = new PyClassMethod(sanitize(cm.callable(), policy, targetSession, visited));
+            visited.put(val, res);
+            return res;
+        }
+        if (val instanceof PyProperty prop) {
+            var res = new PyProperty(
+                    sanitize(prop.fget(), policy, targetSession, visited),
+                    sanitize(prop.fset(), policy, targetSession, visited),
+                    sanitize(prop.fdel(), policy, targetSession, visited),
+                    prop.doc());
             visited.put(val, res);
             return res;
         }

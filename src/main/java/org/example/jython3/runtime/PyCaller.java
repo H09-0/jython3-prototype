@@ -10,6 +10,13 @@ import java.util.Map;
 public interface PyCaller {
     PyObject call(PyObject callable, PyObject[] args);
 
+    default PyObject callWithKw(PyObject callable, PyObject[] posArgs, Map<String, PyObject> kwargs) {
+        if (kwargs == null || kwargs.isEmpty()) {
+            return call(callable, posArgs);
+        }
+        throw new UnsupportedOperationException("keyword arguments not supported by this caller");
+    }
+
     /**
      * Advances a lazy {@link PyGenerator} by one step until its next {@code yield},
      * completion ({@code StopIteration}), or exception.

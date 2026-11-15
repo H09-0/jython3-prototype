@@ -162,6 +162,9 @@ public final class PyOps {
                 case PyFrameInfo fr -> true;
                 case PyCodeInfo co -> true;
                 case PyHostHandle hh -> true;
+                case PyProperty pr -> true;
+                case PyStaticMethod sm -> true;
+                case PyClassMethod cm -> true;
         };
     }
 
@@ -356,6 +359,9 @@ public final class PyOps {
             case PyFrameInfo fr -> "frame";
             case PyCodeInfo co -> "code";
             case PyHostHandle hh -> hh.handleTypeName();
+            case PyProperty pr -> "property";
+            case PyStaticMethod sm -> "staticmethod";
+            case PyClassMethod cm -> "classmethod";
         };
     }
 

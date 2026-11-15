@@ -502,11 +502,12 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     @Override public Void visitFunc_def(Jython3Parser.Func_defContext c) {
         String name = c.ID().getText();
-        compileFunctionDef(name, c.param_list(), c.suite());
+        compileFunctionDef(name, name, c.param_list(), c.suite());
         return null;
     }
 
-    private void compileFunctionDef(String name,
+    private void compileFunctionDef(String fnName,
+                                     String storeName,
                                      Jython3Parser.Param_listContext paramList,
                                      Jython3Parser.SuiteContext suite) {
         // ── 1. Parse parameter list ──────────────────────────────────────────
@@ -552,12 +553,12 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         // Build a prototype PyFunction that holds params/argsParam/kwargsParam/code.
         // Defaults are attached by the VM when it processes MAKE_FUNCTION_DEFAULTS.
         b.emit(OpCode.LOAD_CONST,
-               new PyFunction(name, positional, new org.example.jython3.runtime.PyObject[0],
+               new PyFunction(fnName, positional, new org.example.jython3.runtime.PyObject[0],
                               argsParam, kwargsParam, fb.build(), null));
 
         if (nDefaults == 0 && !hasArgs && !hasKwargs) {
             // Fast path: simple function, no advanced signature features
-            b.emit(OpCode.MAKE_FUNCTION, name);
+            b.emit(OpCode.MAKE_FUNCTION, storeName);
         } else {
             // Evaluate each default value expression in the enclosing scope
             for (var dExpr : defaultExprs) visit(dExpr);
@@ -565,27 +566,26 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             b.emitRaw(OpCode.MAKE_FUNCTION_DEFAULTS, (nDefaults << 2) | flags);
             // MAKE_FUNCTION_DEFAULTS also captures closure & stores under name;
             // but we still need to emit the name so the VM knows where to store it.
-            b.emit(OpCode.MAKE_FUNCTION, name);
+            b.emit(OpCode.MAKE_FUNCTION, storeName);
         }
     }
 
     @Override public Void visitDecorated_func_def(Jython3Parser.Decorated_func_defContext c) {
         Jython3Parser.Func_defContext funcDef = c.func_def();
         String name = funcDef.ID().getText();
-        // Compile function first, store in current scope
-        compileFunctionDef(name, funcDef.param_list(), funcDef.suite());
-        // Apply decorators from bottom to top
+        // Evaluate decorators top-to-bottom BEFORE binding 'name' (required for @prop.setter)
         List<Jython3Parser.DecoratorContext> decorators = c.decorator();
-        for (int i = decorators.size() - 1; i >= 0; i--) {
-            // Load decorator
+        for (int i = 0; i < decorators.size(); i++) {
             visit(decorators.get(i).expr());
-            // Load function
-            b.emit(OpCode.LOAD_FAST, name);
-            // Call decorator with function
-            b.emitRaw(OpCode.CALL_FUNCTION, 1);
-            // Store result back
-            b.emit(OpCode.STORE_FAST, name);
         }
+        String tempFn = "$dec_fn_" + (compCounter++);
+        compileFunctionDef(name, tempFn, funcDef.param_list(), funcDef.suite());
+        b.emit(OpCode.LOAD_FAST, tempFn);
+        b.emit(OpCode.DELETE_NAME_SILENT, tempFn);
+        for (int i = decorators.size() - 1; i >= 0; i--) {
+            b.emitRaw(OpCode.CALL_FUNCTION, 1);
+        }
+        b.emit(OpCode.STORE_FAST, name);
         return null;
     }
 
