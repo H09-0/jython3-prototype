@@ -804,17 +804,24 @@ public class Jython3Interpreter {
         var savedFunc = currentFunc;
         var savedFunction = currentFunction;
         var savedLine = currentLine;
+        var savedFile = currentFile;
+        var savedGlobals = currentGlobals;
+        var savedGlobalCells = globalCells;
+        PyException outerCtx = currentContextException();
+        if (outerCtx != null) outerActiveContexts.addLast(outerCtx);
         try {
             callStack.clear();
             stack = new FastStack();
             currentLocals = new HashMap<>(initialLocals);
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
+            globalCells = null;
             currentFunc = fn.name();
             currentFunction = fn;
             yieldCollector = collected;
             runNested(fn.code(), savedFrames.size());
         } finally {
+            if (outerCtx != null) outerActiveContexts.removeLast();
             yieldCollector = savedCollector;
             callStack.clear();
             callStack.addAll(savedFrames);
@@ -825,6 +832,9 @@ public class Jython3Interpreter {
             currentFunc = savedFunc;
             currentFunction = savedFunction;
             currentLine = savedLine;
+            currentFile = savedFile;
+            currentGlobals = savedGlobals;
+            globalCells = savedGlobalCells;
         }
         return collected;
     }
@@ -1899,6 +1909,9 @@ public class Jython3Interpreter {
                         stack.push(jp.getMember(attr));
                     } else if (obj instanceof PySuper sup) {
                         stack.push(sup.getMethod(attr));
+                    } else if (obj instanceof PyGenerator && ("send".equals(attr) || "throw".equals(attr) || "close".equals(attr))) {
+                        throw PyErrors.error("NotImplementedError",
+                                "generator." + attr + "() is not supported by eager generator implementation");
                     } else if ("__class__".equals(attr)) {
                         stack.push(BuiltinFunctions.typeOf(obj, builtinTypes));
                     } else {

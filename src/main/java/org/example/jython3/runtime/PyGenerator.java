@@ -42,10 +42,12 @@ public final class PyGenerator implements PyObject {
     private void ensureInitialized() {
         if (initialized) return;
         initialized = true;
+        // Initialize to empty upfront so if collecting yields throws, subsequent
+        // next() calls see an exhausted generator (StopIteration) instead of NPE.
+        yielded = java.util.Collections.emptyList();
 
         PyCaller caller = PyCaller.CURRENT.get();
         if (caller == null) {
-            yielded = new ArrayList<>();
             return;
         }
         if (boundLocals != null) {
