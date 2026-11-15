@@ -170,9 +170,14 @@ public final class PolicySanitizer {
             gen.replaceLocals(sanitizedLocals);
             return gen;
         }
+        if (val instanceof org.example.jython3.runtime.PyCoroutine coro) {
+            visited.put(val, coro);
+            sanitize(coro.runner(), policy, targetSession, visited);
+            return coro;
+        }
         if (val instanceof PyFunction fn) {
             var res = new PyFunction(fn.name(), fn.params(), fn.defaults(),
-                    fn.argsParam(), fn.kwargsParam(), fn.code(), new HashMap<>());
+                    fn.argsParam(), fn.kwargsParam(), fn.code(), new HashMap<>(), fn.isAsync());
             visited.put(val, res);
             for (var entry : fn.closure().entrySet()) {
                 res.closure().put(entry.getKey(), sanitize(entry.getValue(), policy, targetSession, visited));

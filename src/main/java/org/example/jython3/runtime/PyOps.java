@@ -447,6 +447,7 @@ public final class PyOps {
         if (o instanceof PySuper) return "super";
         if (o instanceof PySlice) return "slice";
         if (o instanceof PyCell c) return c.isBound() ? typeName(c.get()) : "cell";
+        if (o instanceof PyCoroutine) return "coroutine";
         if (o instanceof PyNotImplemented) return "NotImplementedType";
         if (o instanceof PyTraceback) return "traceback";
         if (o instanceof PyFrameInfo) return "frame";

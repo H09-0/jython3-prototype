@@ -80,7 +80,11 @@ public enum OpCode {
     YIELD_FROM(94),         // arg: donePc; stack: [..., sub_iter, sentVal] -> suspends or jumps to donePc with [..., retVal]
     // ── array-indexed local variable slots
     LOAD_SLOT(95),          // arg: local slot index -> pushes slotLocals[ai]
-    STORE_SLOT(96);         // arg: local slot index -> pops value into slotLocals[ai]
+    STORE_SLOT(96),         // arg: local slot index -> pops value into slotLocals[ai]
+    // ── PEP 492 coroutines (async/await)
+    GET_AWAITABLE(97),      // pops expr, validates coroutine/__await__, pushes awaitable iterator
+    AWAIT_FROM(98),         // arg: donePc; like YIELD_FROM but accepts PyCoroutine + iterators
+    GET_AITER(99);          // pops obj, calls __aiter__(), pushes async iterator
 
     private final int code;
 

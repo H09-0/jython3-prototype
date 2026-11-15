@@ -74,7 +74,7 @@ public final class BytecodeDisassembler {
                  IMPORT_MODULE, MAKE_FUNCTION, BUILD_CLASS, CALL_FUNCTION_KW -> formatConst(ai, pool);
             case JUMP, JUMP_IF_FALSE, JUMP_IF_TRUE_OR_POP, JUMP_IF_FALSE_OR_POP,
                  FOR_ITER, PUSH_EXCEPT_HANDLER -> "-> " + ai;
-            case YIELD_FROM -> "(delegate, done -> " + ai + ")";
+            case YIELD_FROM, AWAIT_FROM -> "(delegate, done -> " + ai + ")";
             case YIELD_VALUE -> "(suspend, resume -> " + (pc + 1) + ")";
             case CALL_FUNCTION, CALL_FUNCTION_EX, BUILD_LIST, BUILD_DICT, BUILD_TUPLE,
                  BUILD_SET, BUILD_SLICE, UNPACK_SEQUENCE, MAKE_FUNCTION_DEFAULTS,

@@ -12,14 +12,20 @@ import org.example.jython3.runtime.PyFunction;
 public class CompileVisitor extends Jython3BaseVisitor<Void> {
     private final CodeBuilder b;
     private final boolean isFunctionScope;
+    private final boolean inAsyncFunction;
 
     public CompileVisitor(CodeBuilder b) {
-        this(b, false);
+        this(b, false, false);
     }
 
     public CompileVisitor(CodeBuilder b, boolean isFunctionScope) {
+        this(b, isFunctionScope, false);
+    }
+
+    public CompileVisitor(CodeBuilder b, boolean isFunctionScope, boolean inAsyncFunction) {
         this.b = b;
         this.isFunctionScope = isFunctionScope;
+        this.inAsyncFunction = inAsyncFunction;
     }
 
     // ── Loop context stack for break/continue jump patching ──────────────
@@ -411,6 +417,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         if (!isFunctionScope) {
             throw new CompileError("'yield' outside function");
         }
+        if (inAsyncFunction) {
+            throw new CompileError("'yield' inside async function");
+        }
         if (c.FROM() != null) {
             visit(c.expr());
             b.emit(OpCode.GET_ITER);
@@ -492,14 +501,21 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     @Override public Void visitFunc_def(Jython3Parser.Func_defContext c) {
         String name = c.ID().getText();
-        compileFunctionDef(name, name, c.param_list(), c.suite());
+        compileFunctionDef(name, name, c.param_list(), c.suite(), false);
+        return null;
+    }
+
+    @Override public Void visitAsync_func_def(Jython3Parser.Async_func_defContext c) {
+        String name = c.ID().getText();
+        compileFunctionDef(name, name, c.param_list(), c.suite(), true);
         return null;
     }
 
     private void compileFunctionDef(String fnName,
                                      String storeName,
                                      Jython3Parser.Param_listContext paramList,
-                                     Jython3Parser.SuiteContext suite) {
+                                     Jython3Parser.SuiteContext suite,
+                                     boolean isAsync) {
         // ── 1. Parse parameter list ──────────────────────────────────────────
         var positional   = new ArrayList<String>();  // plain and default params
         var defaultExprs = new ArrayList<Jython3Parser.ExprContext>();  // default value exprs
@@ -533,7 +549,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
         // ── 3. Compile the function body ─────────────────────────────────────
         var fb = new CodeBuilder();
-        var fv = new CompileVisitor(fb, true);
+        var fv = new CompileVisitor(fb, true, isAsync);
         fv.visit(suite);
         fb.emit(OpCode.LOAD_CONST, null);
         fb.emit(OpCode.RETURN_VALUE);
@@ -543,11 +559,13 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         // Build a prototype PyFunction that holds params/argsParam/kwargsParam/code.
         // Defaults are attached by the VM when it processes MAKE_FUNCTION_DEFAULTS.
         CompiledCode fnCode = fb.build()
-                .withFunctionLocals(positional, argsParam, kwargsParam)
-                .optimizeSlots(positional, argsParam, kwargsParam);
+                .withFunctionLocals(positional, argsParam, kwargsParam);
+        if (!isAsync) {
+            fnCode = fnCode.optimizeSlots(positional, argsParam, kwargsParam);
+        }
         b.emit(OpCode.LOAD_CONST,
                new PyFunction(fnName, positional, new org.example.jython3.runtime.PyObject[0],
-                              argsParam, kwargsParam, fnCode, null));
+                              argsParam, kwargsParam, fnCode, null, isAsync));
 
         if (nDefaults == 0 && !hasArgs && !hasKwargs) {
             // Fast path: simple function, no advanced signature features
@@ -564,15 +582,28 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitDecorated_func_def(Jython3Parser.Decorated_func_defContext c) {
-        Jython3Parser.Func_defContext funcDef = c.func_def();
-        String name = funcDef.ID().getText();
+        String name;
+        Jython3Parser.Param_listContext params;
+        Jython3Parser.SuiteContext suite;
+        boolean isAsync;
+        if (c.func_def() != null) {
+            name = c.func_def().ID().getText();
+            params = c.func_def().param_list();
+            suite = c.func_def().suite();
+            isAsync = false;
+        } else {
+            name = c.async_func_def().ID().getText();
+            params = c.async_func_def().param_list();
+            suite = c.async_func_def().suite();
+            isAsync = true;
+        }
         // Evaluate decorators top-to-bottom BEFORE binding 'name' (required for @prop.setter)
         List<Jython3Parser.DecoratorContext> decorators = c.decorator();
         for (int i = 0; i < decorators.size(); i++) {
             visit(decorators.get(i).expr());
         }
         String tempFn = "$dec_fn_" + (compCounter++);
-        compileFunctionDef(name, tempFn, funcDef.param_list(), funcDef.suite());
+        compileFunctionDef(name, tempFn, params, suite, isAsync);
         b.emit(OpCode.LOAD_FAST, tempFn);
         b.emit(OpCode.DELETE_NAME_SILENT, tempFn);
         for (int i = decorators.size() - 1; i >= 0; i--) {
@@ -580,6 +611,155 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         }
         b.emit(OpCode.STORE_FAST, name);
         return null;
+    }
+
+    @Override public Void visitAwaitExpr(Jython3Parser.AwaitExprContext c) {
+        if (!inAsyncFunction) {
+            throw new CompileError("'await' outside async function");
+        }
+        visit(c.expr());
+        b.emit(OpCode.GET_AWAITABLE);
+        b.emit(OpCode.LOAD_CONST, null);
+        int afIdx = b.size();
+        b.emitRaw(OpCode.AWAIT_FROM, 0);
+        b.patch(afIdx, b.size());
+        return null;
+    }
+
+    @Override public Void visitAsync_for_stmt(Jython3Parser.Async_for_stmtContext c) {
+        if (!inAsyncFunction) {
+            throw new CompileError("'async for' outside async function");
+        }
+        visit(c.expr());
+        b.emit(OpCode.GET_AITER);
+        int loopTarget = b.size();
+        int pushHandler = b.size();
+        b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
+        b.emit(OpCode.DUP_TOP);
+        b.emit(OpCode.LOAD_ATTR, "__anext__");
+        b.emitRaw(OpCode.CALL_FUNCTION, 0);
+        b.emit(OpCode.GET_AWAITABLE);
+        b.emit(OpCode.LOAD_CONST, null);
+        int afIdx = b.size();
+        b.emitRaw(OpCode.AWAIT_FROM, 0);
+        b.patch(afIdx, b.size());
+        b.emit(OpCode.POP_EXCEPT_HANDLER);
+        emitStore(LValue.fromTargetList(c.target_list()));
+
+        var ctx = new LoopContext();
+        ctx.continueTarget = loopTarget;
+        ctx.isForLoop = true;
+        loopStack.push(ctx);
+        ctx.depth = loopStack.size();
+        visit(c.suite(0));
+        loopStack.pop();
+        b.emitRaw(OpCode.JUMP, loopTarget);
+
+        // Exception handler around await it.__anext__()
+        b.patch(pushHandler, b.size());
+        b.emit(OpCode.LOAD_FAST, "StopAsyncIteration");
+        b.emit(OpCode.COMPARE_EXC_TYPE);
+        int notStop = b.size();
+        b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+        b.emit(OpCode.POP_TOP); // pop StopAsyncIteration
+        b.emit(OpCode.POP_TOP); // pop aiter
+        if (c.ELSE() != null && c.suite().size() > 1) {
+            visit(c.suite(1));
+        }
+        int endJump = b.size();
+        b.emitRaw(OpCode.JUMP, 0);
+
+        b.patch(notStop, b.size());
+        b.emit(OpCode.ROT_TWO);
+        b.emit(OpCode.POP_TOP); // drop aiter beneath unexpected exception
+        b.emit(OpCode.RERAISE);
+
+        int afterLoop = b.size();
+        b.patch(endJump, afterLoop);
+        for (int bp : ctx.breakPatches) b.patch(bp, afterLoop);
+        return null;
+    }
+
+    @Override public Void visitAsync_with_stmt(Jython3Parser.Async_with_stmtContext c) {
+        if (!inAsyncFunction) {
+            throw new CompileError("'async with' outside async function");
+        }
+        compileAsyncWithItems(c.with_item(), 0, c.suite());
+        return null;
+    }
+
+    private void compileAsyncWithItems(List<Jython3Parser.With_itemContext> items, int idx, Jython3Parser.SuiteContext body) {
+        if (idx >= items.size()) {
+            visit(body);
+            return;
+        }
+        var item = items.get(idx);
+        visit(item.expr());
+        b.emit(OpCode.DUP_TOP);
+        b.emit(OpCode.LOAD_ATTR, "__aexit__");
+        b.emit(OpCode.ROT_TWO);
+        b.emit(OpCode.LOAD_ATTR, "__aenter__");
+        b.emitRaw(OpCode.CALL_FUNCTION, 0);
+        b.emit(OpCode.GET_AWAITABLE);
+        b.emit(OpCode.LOAD_CONST, null);
+        int enterAw = b.size();
+        b.emitRaw(OpCode.AWAIT_FROM, 0);
+        b.patch(enterAw, b.size());
+
+        if (item.AS() != null && item.ID() != null) {
+            b.emit(OpCode.STORE_FAST, item.ID().getText());
+        } else {
+            b.emit(OpCode.POP_TOP);
+        }
+
+        int pushH = b.size();
+        b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
+        compileAsyncWithItems(items, idx + 1, body);
+        b.emit(OpCode.POP_EXCEPT_HANDLER);
+
+        // Normal exit: await __aexit__(None, None, None)
+        b.emit(OpCode.LOAD_CONST, null);
+        b.emit(OpCode.LOAD_CONST, null);
+        b.emit(OpCode.LOAD_CONST, null);
+        b.emitRaw(OpCode.CALL_FUNCTION, 3);
+        b.emit(OpCode.GET_AWAITABLE);
+        b.emit(OpCode.LOAD_CONST, null);
+        int exitAw = b.size();
+        b.emitRaw(OpCode.AWAIT_FROM, 0);
+        b.patch(exitAw, b.size());
+        b.emit(OpCode.POP_TOP);
+        int jumpAfter = b.size();
+        b.emitRaw(OpCode.JUMP, 0);
+
+        // Exception path: stack has [aexit, exc]
+        b.patch(pushH, b.size());
+        String excTmp = "$aexc_" + (compCounter++);
+        b.emit(OpCode.STORE_FAST, excTmp);
+        b.emit(OpCode.LOAD_FAST, excTmp);
+        b.emit(OpCode.LOAD_ATTR, "__class__");
+        b.emit(OpCode.LOAD_FAST, excTmp);
+        b.emit(OpCode.LOAD_FAST, excTmp);
+        b.emit(OpCode.LOAD_ATTR, "__traceback__");
+        b.emitRaw(OpCode.CALL_FUNCTION, 3);
+        b.emit(OpCode.GET_AWAITABLE);
+        b.emit(OpCode.LOAD_CONST, null);
+        int excExitAw = b.size();
+        b.emitRaw(OpCode.AWAIT_FROM, 0);
+        b.patch(excExitAw, b.size());
+        int notSupp = b.size();
+        b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+        b.emit(OpCode.DELETE_NAME_SILENT, excTmp);
+        int jumpSuppressed = b.size();
+        b.emitRaw(OpCode.JUMP, 0);
+
+        b.patch(notSupp, b.size());
+        b.emit(OpCode.LOAD_FAST, excTmp);
+        b.emit(OpCode.DELETE_NAME_SILENT, excTmp);
+        b.emit(OpCode.RERAISE);
+
+        int after = b.size();
+        b.patch(jumpAfter, after);
+        b.patch(jumpSuppressed, after);
     }
 
     @Override public Void visitClass_def(Jython3Parser.Class_defContext c) {

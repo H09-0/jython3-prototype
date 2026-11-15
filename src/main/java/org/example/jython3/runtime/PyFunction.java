@@ -40,17 +40,18 @@ public final class PyFunction implements PyObject {
     private final String kwargsParam;
     private final CompiledCode code;
     private final Map<String, PyObject> closure;
+    private final boolean isAsync;
     private Map<String, PyObject> attrs;
 
     /** Simple constructor — no defaults, no *args/**kwargs (backward-compat). */
     public PyFunction(String name, List<String> params, CompiledCode code) {
-        this(name, params, new PyObject[0], null, null, code, null);
+        this(name, params, new PyObject[0], null, null, code, null, false);
     }
 
     /** Constructor with closure — no defaults, no *args/**kwargs (backward-compat). */
     public PyFunction(String name, List<String> params, CompiledCode code,
                       Map<String, PyObject> closure) {
-        this(name, params, new PyObject[0], null, null, code, closure);
+        this(name, params, new PyObject[0], null, null, code, closure, false);
     }
 
     /** Full constructor used by MAKE_FUNCTION_DEFAULTS. */
@@ -61,6 +62,17 @@ public final class PyFunction implements PyObject {
                       String kwargsParam,
                       CompiledCode code,
                       Map<String, PyObject> closure) {
+        this(name, params, defaults, argsParam, kwargsParam, code, closure, false);
+    }
+
+    public PyFunction(String name,
+                      List<String> params,
+                      PyObject[] defaults,
+                      String argsParam,
+                      String kwargsParam,
+                      CompiledCode code,
+                      Map<String, PyObject> closure,
+                      boolean isAsync) {
         this.name = name;
         this.params = List.copyOf(params);
         this.defaults = defaults == null ? new PyObject[0] : defaults.clone();
@@ -68,6 +80,7 @@ public final class PyFunction implements PyObject {
         this.kwargsParam = kwargsParam;
         this.code = code;
         this.closure = closure == null ? new HashMap<>() : new HashMap<>(closure);
+        this.isAsync = isAsync;
     }
 
     public String name()          { return name; }
@@ -77,6 +90,7 @@ public final class PyFunction implements PyObject {
     public String kwargsParam()   { return kwargsParam; }
     public CompiledCode code()    { return code; }
     public Map<String, PyObject> closure() { return closure; }
+    public boolean isAsync()      { return isAsync; }
 
     public PyObject getExtraAttr(String key) {
         return attrs != null ? attrs.get(key) : null;

@@ -74,6 +74,7 @@ public final class BuiltinFunctions {
     public static final PyBuiltinFunction BUILTIN_FN_TYPE = uninstantiableType("builtin_function_or_method");
     public static final PyBuiltinFunction METHOD_TYPE = uninstantiableType("method");
     public static final PyBuiltinFunction GENERATOR_TYPE = uninstantiableType("generator");
+    public static final PyBuiltinFunction COROUTINE_TYPE = uninstantiableType("coroutine");
     public static final PyBuiltinFunction ITERATOR_TYPE = uninstantiableType("iterator");
     public static final PyBuiltinFunction MODULE_TYPE = uninstantiableType("module");
     public static final PyBuiltinFunction SLICE_TYPE = PyBuiltinFunction.builtinType("slice", args -> {
@@ -890,6 +891,9 @@ public final class BuiltinFunctions {
             if (args[0] instanceof PyGenerator) {
                 return PyBool.of("send".equals(name) || "throw".equals(name) || "close".equals(name));
             }
+            if (args[0] instanceof org.example.jython3.runtime.PyCoroutine) {
+                return PyBool.of("send".equals(name) || "throw".equals(name) || "close".equals(name) || "__await__".equals(name));
+            }
             if (args[0] instanceof PySlice) {
                 return PyBool.of("start".equals(name) || "stop".equals(name) || "step".equals(name) || "indices".equals(name));
             }
@@ -955,6 +959,12 @@ public final class BuiltinFunctions {
             } else if (args[0] instanceof PyGenerator gen) {
                 try {
                     return BuiltinMethodDispatcher.generatorMethod(gen, name);
+                } catch (InterpreterException ie) {
+                    if (!"AttributeError".equals(ie.typeName())) throw ie;
+                }
+            } else if (args[0] instanceof org.example.jython3.runtime.PyCoroutine coro) {
+                try {
+                    return BuiltinMethodDispatcher.coroutineMethod(coro, name);
                 } catch (InterpreterException ie) {
                     if (!"AttributeError".equals(ie.typeName())) throw ie;
                 }
@@ -1366,6 +1376,8 @@ public final class BuiltinFunctions {
                     "issubset", "issuperset", "symmetric_difference", "union");
         } else if (o instanceof PyGenerator) {
             Collections.addAll(names, "close", "send", "throw");
+        } else if (o instanceof org.example.jython3.runtime.PyCoroutine) {
+            Collections.addAll(names, "__await__", "close", "send", "throw");
         } else if (o instanceof PySlice) {
             Collections.addAll(names, "indices", "start", "step", "stop");
         } else if (o instanceof PyRange) {
@@ -1448,6 +1460,7 @@ public final class BuiltinFunctions {
         if (obj instanceof PyBoundMethod) return METHOD_TYPE;
         if (obj instanceof PyNull) return NONE_TYPE;
         if (obj instanceof PyGenerator) return GENERATOR_TYPE;
+        if (obj instanceof org.example.jython3.runtime.PyCoroutine) return COROUTINE_TYPE;
         if (obj instanceof PyIterator) return ITERATOR_TYPE;
         if (obj instanceof PyRange) return builtinTypes.get("range");
         if (obj instanceof PyBytes) return builtinTypes.get("bytes");
@@ -1531,6 +1544,7 @@ public final class BuiltinFunctions {
                 case "builtin_function_or_method" -> (obj instanceof PyBuiltinFunction b && !b.isType());
                 case "method" -> (obj instanceof PyBoundMethod);
                 case "generator" -> (obj instanceof PyGenerator);
+                case "coroutine" -> (obj instanceof org.example.jython3.runtime.PyCoroutine);
                 case "iterator" -> (obj instanceof PyIterator);
                 case "range" -> (obj instanceof PyRange);
                 case "bytes" -> (obj instanceof PyBytes);

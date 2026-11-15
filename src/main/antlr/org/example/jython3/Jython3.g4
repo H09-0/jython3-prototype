@@ -192,9 +192,12 @@ compound_stmt
     | if_stmt
     | while_stmt
     | for_stmt
+    | async_for_stmt
     | try_stmt
     | with_stmt
+    | async_with_stmt
     | func_def
+    | async_func_def
     | class_def
     ;
 
@@ -204,7 +207,7 @@ decorator
     ;
 
 decorated_func_def
-    : decorator+ func_def
+    : decorator+ (func_def | async_func_def)
     ;
 
 decorated_class_def
@@ -248,6 +251,21 @@ with_item
 /** def name(params): suite */
 func_def
     : DEF ID LPAREN param_list? RPAREN COLON suite
+    ;
+
+/** async def name(params): suite */
+async_func_def
+    : ASYNC DEF ID LPAREN param_list? RPAREN COLON suite
+    ;
+
+/** async with item [, item]* : suite */
+async_with_stmt
+    : ASYNC WITH with_item (COMMA with_item)* COLON suite
+    ;
+
+/** async for target_list in expr : suite [else : suite] */
+async_for_stmt
+    : ASYNC FOR target_list IN expr COLON suite (ELSE COLON suite)?
     ;
 
 /** class Name[(Bases)]: suite */
@@ -297,6 +315,7 @@ expr
     : expr LBRACK slice_item RBRACK                        # Subscript
     | expr LPAREN arg_list? RPAREN                         # CallExpr
     | expr DOT ID                                          # AttrAccess
+    | AWAIT expr                                           # AwaitExpr
     | <assoc=right> expr POWER expr                        # Power
     | SUB expr                                             # UnaryMinus
     | ADD expr                                             # UnaryPlus
@@ -414,6 +433,8 @@ TRUE     : 'True';
 FALSE    : 'False';
 NONE     : 'None';
 WITH     : 'with';
+ASYNC    : 'async';
+AWAIT    : 'await';
 GLOBAL   : 'global';
 NONLOCAL : 'nonlocal';
 ASSERT   : 'assert';

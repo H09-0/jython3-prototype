@@ -620,6 +620,30 @@ public final class BuiltinMethodDispatcher {
         };
     }
 
+    public static PyObject coroutineMethod(org.example.jython3.runtime.PyCoroutine coro, String method) {
+        return switch (method) {
+            case "send" -> new PyBuiltinFunction("coroutine.send", args -> {
+                checkArgCount("coroutine.send", args, 1);
+                return coro.send(args[0]);
+            });
+            case "throw" -> new PyBuiltinFunction("coroutine.throw", args -> {
+                if (args.length < 1 || args.length > 3) {
+                    throw PyErrors.error("TypeError", "throw() takes 1 to 3 arguments (" + args.length + " given)");
+                }
+                return coro.throwException(args);
+            });
+            case "close" -> new PyBuiltinFunction("coroutine.close", args -> {
+                checkArgCount("coroutine.close", args, 0);
+                return coro.close();
+            });
+            case "__await__" -> new PyBuiltinFunction("coroutine.__await__", args -> {
+                checkArgCount("coroutine.__await__", args, 0);
+                return coro.runner();
+            });
+            default -> throw PyErrors.error("AttributeError", "'coroutine' object has no attribute '" + method + "'");
+        };
+    }
+
     public static PyObject listMethod(PyList list, String method) {
         return switch (method) {
             case "append" -> new PyBuiltinFunction("list.append", args -> { checkArgCount("list.append", args, 1); list.items().add(args[0]); return new PyNull(); });

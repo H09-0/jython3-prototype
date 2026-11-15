@@ -53,6 +53,7 @@ import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyClassMethod;
 import org.example.jython3.runtime.PyCodeInfo;
 import org.example.jython3.runtime.PyCompiledCodeWrapper;
+import org.example.jython3.runtime.PyCoroutine;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyException;
@@ -1303,11 +1304,14 @@ public class Jython3Interpreter implements AutoCloseable {
         }
         int[] gbc = gen.code().bytecode();
         int gpc = gen.pc();
-        if (gpc < gbc.length && OP_VALUES[gbc[gpc] >>> 16] == OpCode.YIELD_FROM) {
+        if (gpc < gbc.length && (OP_VALUES[gbc[gpc] >>> 16] == OpCode.YIELD_FROM
+                || OP_VALUES[gbc[gpc] >>> 16] == OpCode.AWAIT_FROM)) {
             PyObject sub = gen.operandStack().peek();
-            if (sub instanceof PyGenerator subGen) {
+            PyGenerator targetGen = (sub instanceof PyGenerator sg) ? sg
+                    : (sub instanceof PyCoroutine sc ? sc.runner() : null);
+            if (targetGen != null) {
                 try {
-                    PyObject y = throwGeneratorException(subGen, thrown);
+                    PyObject y = throwGeneratorException(targetGen, thrown);
                     gen.suspendAt(gpc, gen.operandStack(), gen.locals(), gen.exceptHandlers(),
                             gen.activeExceptions(), gen.globalCells(), gen.moduleGlobals(), gen.line());
                     return y;
@@ -1336,11 +1340,18 @@ public class Jython3Interpreter implements AutoCloseable {
         int[] gbc = gen.code().bytecode();
         int gpc = gen.pc();
         InterpreterException toInject = genExit;
-        if (gpc < gbc.length && OP_VALUES[gbc[gpc] >>> 16] == OpCode.YIELD_FROM) {
+        if (gpc < gbc.length && (OP_VALUES[gbc[gpc] >>> 16] == OpCode.YIELD_FROM
+                || OP_VALUES[gbc[gpc] >>> 16] == OpCode.AWAIT_FROM)) {
             PyObject sub = gen.operandStack().pop();
             if (sub instanceof PyGenerator subGen) {
                 try {
                     closeGenerator(subGen);
+                } catch (InterpreterException closeErr) {
+                    toInject = closeErr;
+                }
+            } else if (sub instanceof PyCoroutine subCoro) {
+                try {
+                    closeGenerator(subCoro.runner());
                 } catch (InterpreterException closeErr) {
                     toInject = closeErr;
                 }
@@ -2086,7 +2097,7 @@ public class Jython3Interpreter implements AutoCloseable {
                     var enriched = new PyFunction(
                             proto.name(), proto.params(), defaults,
                             proto.argsParam(), proto.kwargsParam(),
-                            proto.code(), proto.closure());
+                            proto.code(), proto.closure(), proto.isAsync());
                     stack.push(enriched);
                     // Note: the following MAKE_FUNCTION instruction will capture
                     // closure and store the function — we fall through to it.
@@ -2198,9 +2209,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         var callArgs = new PyObject[nPos + 1];
                         callArgs[0] = bm.instance();
                         System.arraycopy(posArgs, 0, callArgs, 1, nPos);
-                        if (containsYield(fn.code())) {
+                        if (fn.isAsync() || containsYield(fn.code())) {
                             var genLocals = bindArgs(fn, callArgs, kwNames, kwValues);
-                            stack.push(createGenerator(fn, genLocals));
+                            PyGenerator gen = createGenerator(fn, genLocals);
+                            stack.push(fn.isAsync() ? new PyCoroutine(gen) : gen);
                         } else {
                             if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -2221,9 +2233,10 @@ public class Jython3Interpreter implements AutoCloseable {
                             pc = 0;
                             continue outer;
                         }
-                    } else if (callable instanceof PyFunction fn && containsYield(fn.code())) {
+                    } else if (callable instanceof PyFunction fn && (fn.isAsync() || containsYield(fn.code()))) {
                         var genLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-                        stack.push(createGenerator(fn, genLocals));
+                        PyGenerator gen = createGenerator(fn, genLocals);
+                        stack.push(fn.isAsync() ? new PyCoroutine(gen) : gen);
                     } else if (callable instanceof PyClass cls) {
                         if (cls.isExceptionType()) {
                             stack.push(exceptionValue(cls, posArgs));
@@ -2333,6 +2346,7 @@ public class Jython3Interpreter implements AutoCloseable {
                     int argc = ai;
                     PyObject peekCallable = stack.peekFromTop(argc);
                     if (peekCallable instanceof PyFunction fn
+                            && !fn.isAsync()
                             && fn.defaults().length == 0
                             && fn.argsParam() == null && fn.kwargsParam() == null
                             && argc == fn.params().size() && !containsYield(fn.code())) {
@@ -2390,7 +2404,8 @@ public class Jython3Interpreter implements AutoCloseable {
                     }
                     if (peekCallable instanceof PyBoundMethod bm) {
                         PyFunction fn = bm.fn();
-                        if (fn.defaults().length == 0
+                        if (!fn.isAsync()
+                                && fn.defaults().length == 0
                                 && fn.argsParam() == null && fn.kwargsParam() == null
                                 && argc + 1 == fn.params().size() && !containsYield(fn.code())) {
                             if (callDepth() >= MAX_CALL_DEPTH) {
@@ -2511,9 +2526,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         var callArgs = new PyObject[argc + 1];
                         callArgs[0] = bm.instance();
                         System.arraycopy(args, 0, callArgs, 1, argc);
-                        if (containsYield(fn.code())) {
+                        if (fn.isAsync() || containsYield(fn.code())) {
                             var genLocals = bindArgs(fn, callArgs, null, null);
-                            stack.push(createGenerator(fn, genLocals));
+                            PyGenerator gen = createGenerator(fn, genLocals);
+                            stack.push(fn.isAsync() ? new PyCoroutine(gen) : gen);
                         } else {
                             if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -2534,9 +2550,10 @@ public class Jython3Interpreter implements AutoCloseable {
                             pc = 0;
                             continue outer;
                         }
-                    } else if (callable instanceof PyFunction fn2 && containsYield(fn2.code())) {
+                    } else if (callable instanceof PyFunction fn2 && (fn2.isAsync() || containsYield(fn2.code()))) {
                         var genLocals = bindArgs(fn2, args, null, null);
-                        stack.push(createGenerator(fn2, genLocals));
+                        PyGenerator gen = createGenerator(fn2, genLocals);
+                        stack.push(fn2.isAsync() ? new PyCoroutine(gen) : gen);
                     } else if (callable instanceof PyClass cls) {
                         if (cls.isExceptionType()) {
                             // Calling an exception class produces an exception
@@ -2560,9 +2577,10 @@ public class Jython3Interpreter implements AutoCloseable {
                             stack.push(inst);
                         }
                     } else if (callable instanceof PyFunction fn) {
-                        if (containsYield(fn.code())) {
+                        if (fn.isAsync() || containsYield(fn.code())) {
                             var genLocals = bindArgs(fn, args, null, null);
-                            stack.push(createGenerator(fn, genLocals));
+                            PyGenerator gen = createGenerator(fn, genLocals);
+                            stack.push(fn.isAsync() ? new PyCoroutine(gen) : gen);
                         } else {
                             if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -2656,6 +2674,95 @@ public class Jython3Interpreter implements AutoCloseable {
                         continue;
                     } else {
                         throw PyErrors.error("TypeError", "yield from requires an iterator");
+                    }
+                }
+                case GET_AWAITABLE -> {
+                    PyObject obj = stack.pop();
+                    if (obj instanceof PyCoroutine coro) {
+                        stack.push(coro);
+                    } else if (obj instanceof PyInstance inst) {
+                        PyObject awaitFn = inst.pyClass().lookupMember("__await__");
+                        if (awaitFn == null) {
+                            throw PyErrors.error("TypeError", "object " + typeName(obj) + " can't be used in 'await' expression");
+                        }
+                        PyObject itObj = callPyCallable(awaitFn, new PyObject[]{inst});
+                        if (itObj instanceof PyIterator || itObj instanceof PyGenerator || itObj instanceof PyCoroutine) {
+                            stack.push(itObj);
+                        } else if (itObj instanceof PyInstance iterInst && iterInst.pyClass().hasMember("__next__")) {
+                            stack.push(BuiltinFunctions.customInstanceIterator(iterInst, interpreterCaller));
+                        } else {
+                            throw PyErrors.error("TypeError", "__await__() returned a non-iterator of type '" + typeName(itObj) + "'");
+                        }
+                    } else {
+                        throw PyErrors.error("TypeError", "object " + typeName(obj) + " can't be used in 'await' expression");
+                    }
+                }
+                case AWAIT_FROM -> {
+                    if (activeGenerator == null || callStack.size() != baseDepth) {
+                        throw PyErrors.error("SyntaxError", "'await' outside async function");
+                    }
+                    PyObject sentVal = stack.pop();
+                    PyObject sub = stack.peek();
+                    PyGenerator subGen = (sub instanceof PyCoroutine sc) ? sc.runner()
+                            : (sub instanceof PyGenerator sg ? sg : null);
+                    if (subGen != null) {
+                        try {
+                            PyObject y = sendGenerator(subGen, sentVal);
+                            activeGenerator.suspendAt(pc, stack, currentLocals, exceptStack,
+                                    activeExceptions, globalCells, currentGlobals, currentLine);
+                            return y;
+                        } catch (InterpreterException ie) {
+                            stack.pop();
+                            if ("StopIteration".equals(ie.typeName())) {
+                                PyObject retVal = (ie.value() instanceof PyException pe && !pe.args().isEmpty())
+                                        ? pe.args().get(0) : PyNull.INSTANCE;
+                                stack.push(retVal);
+                                pc = ai;
+                                continue;
+                            }
+                            throw ie;
+                        }
+                    } else if (sub instanceof PyIterator subIter) {
+                        if (!(sentVal instanceof PyNull)) {
+                            throw PyErrors.error("TypeError", "can't send non-None value to a non-generator iterator");
+                        }
+                        try {
+                            if (subIter.hasNext()) {
+                                PyObject y = subIter.next();
+                                activeGenerator.suspendAt(pc, stack, currentLocals, exceptStack,
+                                        activeExceptions, globalCells, currentGlobals, currentLine);
+                                return y;
+                            }
+                        } catch (InterpreterException ie) {
+                            stack.pop();
+                            throw ie;
+                        }
+                        stack.pop();
+                        stack.push(PyNull.INSTANCE);
+                        pc = ai;
+                        continue;
+                    } else {
+                        throw PyErrors.error("TypeError", "object " + typeName(sub) + " can't be used in 'await' expression");
+                    }
+                }
+                case GET_AITER -> {
+                    PyObject obj = stack.pop();
+                    if (obj instanceof PyInstance inst) {
+                        PyObject aiterFn = inst.pyClass().lookupMember("__aiter__");
+                        if (aiterFn == null) {
+                            throw PyErrors.error("TypeError",
+                                    "'async for' requires an object with __aiter__ method, got " + typeName(obj));
+                        }
+                        PyObject aiterObj = callPyCallable(aiterFn, new PyObject[]{inst});
+                        if (aiterObj instanceof PyInstance aiInst && aiInst.pyClass().hasMember("__anext__")) {
+                            stack.push(aiInst);
+                        } else {
+                            throw PyErrors.error("TypeError",
+                                    "'async for' received an object from __aiter__ that does not implement __anext__: " + typeName(aiterObj));
+                        }
+                    } else {
+                        throw PyErrors.error("TypeError",
+                                "'async for' requires an object with __aiter__ method, got " + typeName(obj));
                     }
                 }
                 case RETURN_VALUE -> {
@@ -3101,6 +3208,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push("__class__".equals(attr)
                                 ? BuiltinFunctions.typeOf(gen, builtinTypes)
                                 : BuiltinMethodDispatcher.generatorMethod(gen, attr));
+                    } else if (obj instanceof PyCoroutine coro) {
+                        stack.push("__class__".equals(attr)
+                                ? BuiltinFunctions.typeOf(coro, builtinTypes)
+                                : BuiltinMethodDispatcher.coroutineMethod(coro, attr));
                     } else if (obj instanceof PySlice sl) {
                         stack.push("__class__".equals(attr)
                                 ? BuiltinFunctions.typeOf(sl, builtinTypes)
@@ -3591,10 +3702,11 @@ public class Jython3Interpreter implements AutoCloseable {
             }
         }
         if (callable instanceof PyFunction fn) {
-            if (containsYield(fn.code())) {
-                // Generators: bind args to locals eagerly, store in generator
+            if (fn.isAsync() || containsYield(fn.code())) {
+                // Generators and coroutines: bind args to locals eagerly, store in suspended object
                 var genLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-                return createGenerator(fn, genLocals);
+                PyGenerator gen = createGenerator(fn, genLocals);
+                return fn.isAsync() ? new PyCoroutine(gen) : gen;
             }
             var savedStack = stack;
             var savedLocals = currentLocals;
