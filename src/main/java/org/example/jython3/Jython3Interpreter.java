@@ -290,8 +290,12 @@ public class Jython3Interpreter {
     private Deque<PyObject> activeExceptions = new ArrayDeque<>();
     /** Outer active exception context preserved across re-entrant {@code runNested()} calls. */
     private final Deque<PyException> outerActiveContexts = new ArrayDeque<>();
-    /** Non-null while a generator function is being drained; collects yielded values. */
-    private List<PyObject> yieldCollector = null;
+    private static final java.util.concurrent.atomic.AtomicLong NEXT_INTERPRETER_ID =
+            new java.util.concurrent.atomic.AtomicLong(1);
+    private final long interpreterId = NEXT_INTERPRETER_ID.getAndIncrement();
+
+    /** Currently executing lazy generator frame (null outside {@link #stepGenerator}). */
+    private PyGenerator activeGenerator = null;
     /** Source location of the instruction being executed, for tracebacks. */
     private String currentFile = "<stdin>";
     private String currentFunc = "<module>";
@@ -364,13 +368,8 @@ public class Jython3Interpreter {
                 return callPyCallable(callable, args);
             }
 
-            @Override public List<PyObject> collectYields(PyFunction fn, PyObject[] args) {
-                return runGenerator(fn, args);
-            }
-
-            @Override public List<PyObject> collectYieldsWithLocals(PyFunction fn,
-                    java.util.Map<String, PyObject> locals) {
-                return runGeneratorWithLocals(fn, locals);
+            @Override public PyObject stepGenerator(PyGenerator gen) {
+                return Jython3Interpreter.this.stepGenerator(gen);
             }
 
             @Override public PyObject resolveZeroArgSuper() {
@@ -680,7 +679,7 @@ public class Jython3Interpreter {
             callStack.clear();
             nestedDepth = 0;
             outerActiveContexts.clear();
-            yieldCollector = null;
+            activeGenerator = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
             currentFile = filename;
@@ -734,7 +733,7 @@ public class Jython3Interpreter {
             callStack.clear();
             nestedDepth = 0;
             outerActiveContexts.clear();
-            yieldCollector = null;
+            activeGenerator = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
             currentFile = filename;
@@ -778,7 +777,7 @@ public class Jython3Interpreter {
         freeStacks.clear();
         freeExceptStacks.clear();
         freeActiveExceptions.clear();
-        yieldCollector = null;
+        activeGenerator = null;
         globalCells = null;
         currentFunc = "<module>";
         currentFunction = null;
@@ -798,7 +797,7 @@ public class Jython3Interpreter {
         var savedExcept = exceptStack;
         var savedActive = activeExceptions;
         var savedCallStack = new ArrayDeque<>(callStack);
-        var savedCollector = yieldCollector;
+        var savedActiveGen = activeGenerator;
         var savedFunc = currentFunc;
         var savedFunction = currentFunction;
         var savedFile = currentFile;
@@ -810,7 +809,7 @@ public class Jython3Interpreter {
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
-            yieldCollector = null;
+            activeGenerator = null;
             currentFunc = "<module>";
             currentFunction = null;
             currentFile = filename != null ? filename : "<module>";
@@ -824,7 +823,7 @@ public class Jython3Interpreter {
             activeExceptions = savedActive;
             callStack.clear();
             callStack.addAll(savedCallStack);
-            yieldCollector = savedCollector;
+            activeGenerator = savedActiveGen;
             currentFunc = savedFunc;
             currentFunction = savedFunction;
             currentFile = savedFile;
@@ -832,23 +831,37 @@ public class Jython3Interpreter {
         }
     }
 
-    /**
-     * Runs a generator function to completion and returns every yielded value.
-     * The function executes on an isolated call stack so the caller's frames are
-     * not disturbed by the generator's return instruction.
-     */
-    private List<PyObject> runGenerator(PyFunction fn, PyObject[] args) {
-        return runGeneratorWithLocals(fn, bindArgs(fn, args, null, null));
+    private PyGenerator createGenerator(PyFunction fn, Map<String, PyObject> boundLocals) {
+        return new PyGenerator(fn, boundLocals, interpreterId, currentGlobals,
+                currentFile, currentLine, currentContext);
     }
 
-    private List<PyObject> runGeneratorWithLocals(PyFunction fn, Map<String, PyObject> initialLocals) {
-        var collected = new ArrayList<PyObject>();
+    /**
+     * Resumes a lazy {@link PyGenerator} frame from its saved {@code pc} until its
+     * next {@code YIELD_VALUE}, completion ({@code StopIteration}), or exception.
+     */
+    private PyObject stepGenerator(PyGenerator gen) {
+        gen.beginStep(interpreterId);
+        if (callDepth() >= MAX_CALL_DEPTH) {
+            gen.fail();
+            throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+        }
+        ExecutionContext genCtx = gen.creationContext();
+        if (genCtx != null && genCtx != currentContext && genCtx.hasActiveLimits()) {
+            try {
+                genCtx.stepInstruction();
+            } catch (InterpreterException ie) {
+                gen.fail();
+                throw ie;
+            }
+        }
+
         var savedFrames = new ArrayDeque<>(callStack);
         var savedStack = stack;
         var savedLocals = currentLocals;
         var savedExcept = exceptStack;
         var savedActive = activeExceptions;
-        var savedCollector = yieldCollector;
+        var savedActiveGen = activeGenerator;
         var savedFunc = currentFunc;
         var savedFunction = currentFunction;
         var savedLine = currentLine;
@@ -857,20 +870,35 @@ public class Jython3Interpreter {
         var savedGlobalCells = globalCells;
         PyException outerCtx = currentContextException();
         if (outerCtx != null) outerActiveContexts.addLast(outerCtx);
+
+        int hidden = savedFrames.size();
+        nestedDepth += hidden + 1;
         try {
             callStack.clear();
-            stack = new FastStack();
-            currentLocals = new HashMap<>(initialLocals);
-            exceptStack = new ArrayDeque<>();
-            activeExceptions = new ArrayDeque<>();
-            globalCells = null;
-            currentFunc = fn.name();
-            currentFunction = fn;
-            yieldCollector = collected;
-            runNested(fn.code(), savedFrames.size());
+            stack = gen.operandStack();
+            currentLocals = gen.locals();
+            exceptStack = gen.exceptHandlers();
+            activeExceptions = gen.activeExceptions();
+            globalCells = gen.globalCells();
+            if (gen.moduleGlobals() != null) {
+                currentGlobals = gen.moduleGlobals();
+            }
+            currentFile = gen.file();
+            currentLine = gen.line();
+            currentFunc = gen.fn().name();
+            currentFunction = gen.fn();
+            activeGenerator = gen;
+            return runAt(gen.code(), gen.pc());
+        } catch (StackOverflowError overflow) {
+            if (gen.state() == PyGenerator.State.RUNNING) gen.fail();
+            throw PyErrors.error("RecursionError", "maximum recursion depth exceeded (host stack exhausted)");
+        } catch (InterpreterException ie) {
+            if (gen.state() == PyGenerator.State.RUNNING) gen.fail();
+            throw ie;
         } finally {
+            nestedDepth -= (hidden + 1);
             if (outerCtx != null) outerActiveContexts.removeLast();
-            yieldCollector = savedCollector;
+            activeGenerator = savedActiveGen;
             callStack.clear();
             callStack.addAll(savedFrames);
             stack = savedStack;
@@ -884,7 +912,6 @@ public class Jython3Interpreter {
             currentGlobals = savedGlobals;
             globalCells = savedGlobalCells;
         }
-        return collected;
     }
 
     public PyObject getGlobal(String name) {
@@ -943,10 +970,14 @@ public class Jython3Interpreter {
     // ─── Stack‑machine execution ──────────────────────────────────────────
 
     private void run(CompiledCode code) throws InterpreterException {
+        runAt(code, 0);
+    }
+
+    private PyObject runAt(CompiledCode code, int initialPc) throws InterpreterException {
         int[] bc = code.bytecode();
         Object[] pool = code.constPool();
         PyObject[] pyPool = code.pyConstPool();
-        int pc = 0;
+        int pc = initialPc;
         // Frames below this depth belong to an enclosing run() invocation (re-entrant
         // calls from callPyCallableKw: __init__, __enter__/__exit__, builtins calling back
         // into Python). This loop must never return into, or unwind through, them.
@@ -1496,7 +1527,7 @@ public class Jython3Interpreter {
                         System.arraycopy(posArgs, 0, callArgs, 1, nPos);
                         if (containsYield(fn.code())) {
                             var genLocals = bindArgs(fn, callArgs, kwNames, kwValues);
-                            stack.push(new PyGenerator(fn, genLocals));
+                            stack.push(createGenerator(fn, genLocals));
                         } else {
                             if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -1519,7 +1550,7 @@ public class Jython3Interpreter {
                         }
                     } else if (callable instanceof PyFunction fn && containsYield(fn.code())) {
                         var genLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-                        stack.push(new PyGenerator(fn, genLocals));
+                        stack.push(createGenerator(fn, genLocals));
                     } else if (callable instanceof PyClass cls) {
                         if (cls.isExceptionType()) {
                             stack.push(exceptionValue(cls, posArgs));
@@ -1628,7 +1659,7 @@ public class Jython3Interpreter {
                         System.arraycopy(args, 0, callArgs, 1, argc);
                         if (containsYield(fn.code())) {
                             var genLocals = bindArgs(fn, callArgs, null, null);
-                            stack.push(new PyGenerator(fn, genLocals));
+                            stack.push(createGenerator(fn, genLocals));
                         } else {
                             if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -1651,7 +1682,7 @@ public class Jython3Interpreter {
                         }
                     } else if (callable instanceof PyFunction fn2 && containsYield(fn2.code())) {
                         var genLocals = bindArgs(fn2, args, null, null);
-                        stack.push(new PyGenerator(fn2, genLocals));
+                        stack.push(createGenerator(fn2, genLocals));
                     } else if (callable instanceof PyClass cls) {
                         if (cls.isExceptionType()) {
                             // Calling an exception class produces an exception
@@ -1672,7 +1703,7 @@ public class Jython3Interpreter {
                     } else if (callable instanceof PyFunction fn) {
                         if (containsYield(fn.code())) {
                             var genLocals = bindArgs(fn, args, null, null);
-                            stack.push(new PyGenerator(fn, genLocals));
+                            stack.push(createGenerator(fn, genLocals));
                         } else {
                             if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -1705,38 +1736,28 @@ public class Jython3Interpreter {
                 }
                 case YIELD_VALUE -> {
                     PyObject rv = stack.pop();
-                    if (yieldCollector != null) {
-                        // Draining a generator: record the value and keep executing.
-                        yieldCollector.add(rv);
-                    } else if (callStack.size() <= baseDepth) {
-                        stack.push(rv);
-                        return;
-                    } else {
-                        // For generator-like behavior in simple cases, treat yield similar to return value
-                        Frame cf = callStack.pop();
-                        recycleStack(stack);
-                        recycleExceptStack(exceptStack);
-                        recycleActiveExceptions(activeExceptions);
-                        code = cf.code();
-                        bc = code.bytecode();
-                        pool = code.constPool();
-                        pyPool = code.pyConstPool();
-                        pc = cf.returnPc();
-                        currentLocals = cf.locals();
-                        stack = cf.stack();
-                        exceptStack = cf.exceptHandlers();
-                        activeExceptions = cf.activeExceptions();
-                        currentFunc = cf.funcName();
-                        currentFunction = cf.function();
-                        currentFile = cf.file();
-                        currentLine = cf.line();
-                        stack.push(rv);
-                        continue outer;
+                    if (activeGenerator != null && callStack.size() == baseDepth) {
+                        // Suspend the generator right after this YIELD_VALUE instruction.
+                        activeGenerator.suspendAt(pc + 1, stack, currentLocals, exceptStack,
+                                activeExceptions, globalCells, currentGlobals, currentLine);
+                        return rv;
                     }
+                    throw PyErrors.error("SyntaxError", "'yield' outside function");
                 }
                 case RETURN_VALUE -> {
                     PyObject rv = stack.pop();
-                    if (callStack.size() <= baseDepth) { stack.push(rv); return; }
+                    if (callStack.size() <= baseDepth) {
+                        if (activeGenerator != null) {
+                            activeGenerator.complete();
+                            if (rv instanceof PyNull) {
+                                throw PyErrors.error("StopIteration", "");
+                            }
+                            throw PyErrors.errorValue(
+                                    new PyException(exceptionTypes.type("StopIteration"), List.of(rv)));
+                        }
+                        stack.push(rv);
+                        return null;
+                    }
                     Frame cf = callStack.pop();
                     recycleStack(stack);
                     recycleExceptStack(exceptStack);
@@ -1932,7 +1953,7 @@ public class Jython3Interpreter {
                     } else if (o instanceof PySet s) {
                         stack.push(new PyIterator(new ArrayList<>(s.items()), 0));
                     } else if (o instanceof PyGenerator gen) {
-                        stack.push(PyIterator.fromGenerator(gen));
+                        stack.push(gen);
                     } else if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
                         stack.push(PyIterator.fromJavaIterable(iterable, jo.policy(), currentContext));
                     } else {
@@ -1944,6 +1965,17 @@ public class Jython3Interpreter {
                     if (top instanceof PyIterator iter) {
                         if (iter.hasNext()) stack.push(iter.next());
                         else { stack.pop(); pc = ai; continue; }
+                    } else if (top instanceof PyGenerator gen) {
+                        try {
+                            stack.push(stepGenerator(gen));
+                        } catch (InterpreterException ie) {
+                            if ("StopIteration".equals(ie.typeName())) {
+                                stack.pop();
+                                pc = ai;
+                                continue;
+                            }
+                            throw ie;
+                        }
                     } else {
                         throw PyErrors.error("TypeError", "expected iterator");
                     }
@@ -2127,7 +2159,13 @@ public class Jython3Interpreter {
                         throw PyErrors.error("IOError", "cannot open '" + filePath + "': " + ioe.getMessage());
                     }
                 }
-                case HALT -> { return; }
+                case HALT -> {
+                    if (activeGenerator != null && callStack.size() <= baseDepth) {
+                        activeGenerator.complete();
+                        throw PyErrors.error("StopIteration", "");
+                    }
+                    return null;
+                }
 
                 // ── Sequence unpacking: a, b = iterable ──────────────────
                 case UNPACK_SEQUENCE -> {
@@ -2318,6 +2356,7 @@ public class Jython3Interpreter {
             }
             pc++;
         }
+        return null;
     }
 
     // ─── Arithmetic & type method delegation ───────────────────────────────
@@ -2440,7 +2479,7 @@ public class Jython3Interpreter {
             if (containsYield(fn.code())) {
                 // Generators: bind args to locals eagerly, store in generator
                 var genLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-                return new PyGenerator(fn, genLocals);
+                return createGenerator(fn, genLocals);
             }
             var savedStack = stack;
             var savedLocals = currentLocals;

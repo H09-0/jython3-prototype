@@ -84,6 +84,9 @@ public final class PyException implements PyObject {
     public PyObject pythonAttribute(String name) {
         return switch (name) {
             case "args" -> new PyTuple(new ArrayList<>(args));
+            case "value" -> "StopIteration".equals(typeName())
+                    ? (args.isEmpty() ? new PyNull() : args.get(0))
+                    : null;
             case "__cause__" -> cause != null ? cause : new PyNull();
             case "__context__" -> context != null ? context : new PyNull();
             case "__suppress_context__" -> PyBool.of(suppressContext);

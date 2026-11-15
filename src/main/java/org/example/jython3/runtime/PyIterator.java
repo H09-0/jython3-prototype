@@ -60,26 +60,43 @@ public final class PyIterator implements PyObject {
     }
 
     /**
-     * Creates a lazy PyIterator wrapping a PyGenerator without intermediate list collection.
+     * Creates a lazy PyIterator wrapping a PyGenerator without eager list collection.
+     * Pulls at most one item ahead on {@link Iterator#hasNext()}.
      */
     public static PyIterator fromGenerator(PyGenerator gen) {
         Objects.requireNonNull(gen, "gen");
         return new PyIterator(new Iterator<PyObject>() {
+            private PyObject buffered = null;
+            private boolean hasBuffered = false;
+            private boolean exhausted = false;
+
             @Override
             public boolean hasNext() {
-                return !gen.isDone();
+                if (hasBuffered) return true;
+                if (exhausted) return false;
+                try {
+                    buffered = gen.next();
+                    hasBuffered = true;
+                    return true;
+                } catch (InterpreterException ie) {
+                    if ("StopIteration".equals(ie.typeName())) {
+                        exhausted = true;
+                        return false;
+                    }
+                    exhausted = true;
+                    throw ie;
+                }
             }
 
             @Override
             public PyObject next() {
-                try {
-                    return gen.next();
-                } catch (InterpreterException ie) {
-                    if ("StopIteration".equals(ie.typeName())) {
-                        throw new NoSuchElementException();
-                    }
-                    throw ie;
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
                 }
+                PyObject val = buffered;
+                buffered = null;
+                hasBuffered = false;
+                return val;
             }
         });
     }

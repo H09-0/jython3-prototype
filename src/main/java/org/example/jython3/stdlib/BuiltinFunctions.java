@@ -406,6 +406,7 @@ public final class BuiltinFunctions {
         // iter(obj) and next(iterator[, default])
         define.accept("iter", new PyBuiltinFunction("iter", args -> {
             checkArgCount("iter", args, 1);
+            if (args[0] instanceof PyGenerator gen) return gen;
             return toIterator(args[0], javaPolicy);
         }));
 

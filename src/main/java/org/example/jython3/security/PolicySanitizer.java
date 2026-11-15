@@ -4,6 +4,7 @@ import org.example.jython3.bridge.JavaBridge;
 import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyFunction;
+import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
 import org.example.jython3.runtime.PyJavaClass;
 import org.example.jython3.runtime.PyJavaObject;
@@ -76,6 +77,16 @@ public final class PolicySanitizer {
                 sanitizedAttrs.put(entry.getKey(), sanitize(entry.getValue(), policy, visited));
             }
             return res;
+        }
+        if (val instanceof PyGenerator gen) {
+            visited.put(val, gen);
+            sanitize(gen.fn(), policy, visited);
+            var sanitizedLocals = new HashMap<String, PyObject>();
+            for (var entry : gen.localsSnapshot().entrySet()) {
+                sanitizedLocals.put(entry.getKey(), sanitize(entry.getValue(), policy, visited));
+            }
+            gen.replaceLocals(sanitizedLocals);
+            return gen;
         }
         if (val instanceof PyFunction fn) {
             var res = new PyFunction(fn.name(), fn.params(), fn.defaults(),

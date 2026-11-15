@@ -1,73 +1,174 @@
 package org.example.jython3.runtime;
 
-import java.util.ArrayList;
+import org.example.jython3.compile.CompiledCode;
+import org.example.jython3.security.ExecutionContext;
+
+import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
- * Python generator object produced by calling a function that contains {@code yield}.
+ * Lazy Python generator object with explicit frame suspension and lifecycle states.
  *
- * <p>The generator may be created either with raw positional args (which the
- * interpreter will bind when collecting yields) or with a pre-bound locals map
- * (produced by {@code bindArgs()} when the function uses defaults/kwargs).
- *
- * <p>Implementation strategy: we eagerly evaluate the entire generator function
- * the first time {@code next()} is called, collecting all yielded values into an
- * {@code ArrayList}. This avoids the need to pause/resume the bytecode VM.
+ * <p>Each generator owns its own operand stack, locals, exception handler stack,
+ * active exceptions, and saved {@code pc}. Nothing is executed on creation; each
+ * {@link #next()} resumes from {@code pc} until the next {@code YIELD_VALUE},
+ * {@code RETURN_VALUE}, or exception. All frame references are released as soon
+ * as the generator reaches {@link State#COMPLETED} or {@link State#FAILED}.
  */
 public final class PyGenerator implements PyObject {
 
+    public enum State {
+        CREATED,
+        RUNNING,
+        SUSPENDED,
+        COMPLETED,
+        FAILED
+    }
+
     private final PyFunction fn;
-    // Exactly one of these two is non-null:
-    private final PyObject[] rawArgs;        // raw positional args (simple case)
-    private final Map<String, PyObject> boundLocals;  // pre-bound locals (default/kw args case)
+    private final CompiledCode code;
+    private final long ownerInterpreterId;
+    private final String file;
 
-    private java.util.List<PyObject> yielded;
-    private int index = 0;
-    private boolean initialized = false;
+    private State state = State.CREATED;
+    private int pc = 0;
+    private int line;
+    private FastStack operandStack;
+    private Map<String, PyObject> locals;
+    private Deque<ExceptHandler> exceptHandlers;
+    private Deque<PyObject> activeExceptions;
+    private Set<String> globalCells;
+    private Map<String, PyObject> moduleGlobals;
+    private ExecutionContext creationContext;
 
-    /** Simple constructor — positional args only. */
-    public PyGenerator(PyFunction fn, PyObject[] args) {
-        this.fn = fn;
-        this.rawArgs = args;
-        this.boundLocals = null;
+    public PyGenerator(PyFunction fn, Map<String, PyObject> boundLocals,
+                       long ownerInterpreterId, Map<String, PyObject> moduleGlobals,
+                       String file, int line, ExecutionContext creationContext) {
+        this.fn = Objects.requireNonNull(fn, "fn");
+        this.code = Objects.requireNonNull(fn.code(), "fn.code");
+        this.ownerInterpreterId = ownerInterpreterId;
+        this.locals = boundLocals != null ? new HashMap<>(boundLocals) : new HashMap<>();
+        this.moduleGlobals = moduleGlobals;
+        this.file = file != null ? file : "<module>";
+        this.line = line;
+        this.creationContext = creationContext;
     }
 
-    /** Constructor with pre-bound locals (used when defaults/kwargs are present). */
+    /** Legacy convenience constructor for callers/tests without explicit interpreter metadata. */
     public PyGenerator(PyFunction fn, Map<String, PyObject> boundLocals) {
-        this.fn = fn;
-        this.rawArgs = null;
-        this.boundLocals = boundLocals;
+        this(fn, boundLocals, -1L, null, "<module>", 0, null);
     }
 
-    private void ensureInitialized() {
-        if (initialized) return;
-        initialized = true;
-        // Initialize to empty upfront so if collecting yields throws, subsequent
-        // next() calls see an exhausted generator (StopIteration) instead of NPE.
-        yielded = java.util.Collections.emptyList();
+    public PyFunction fn() { return fn; }
+    public CompiledCode code() { return code; }
+    public long ownerInterpreterId() { return ownerInterpreterId; }
+    public synchronized State state() { return state; }
+    public synchronized int pc() { return pc; }
+    public synchronized int line() { return line; }
+    public String file() { return file; }
+    public synchronized FastStack operandStack() { return operandStack; }
+    public synchronized Map<String, PyObject> locals() { return locals; }
+    public synchronized Deque<ExceptHandler> exceptHandlers() { return exceptHandlers; }
+    public synchronized Deque<PyObject> activeExceptions() { return activeExceptions; }
+    public synchronized Set<String> globalCells() { return globalCells; }
+    public synchronized Map<String, PyObject> moduleGlobals() { return moduleGlobals; }
+    public synchronized ExecutionContext creationContext() { return creationContext; }
 
+    public synchronized Map<String, PyObject> localsSnapshot() {
+        return locals != null ? Collections.unmodifiableMap(locals) : Collections.emptyMap();
+    }
+
+    public synchronized void replaceLocals(Map<String, PyObject> sanitized) {
+        if (this.locals != null) {
+            this.locals = new HashMap<>(sanitized);
+        }
+    }
+
+    /**
+     * Validates interpreter ownership, lifecycle state, and context cancellation,
+     * allocates the initial frame stacks on first entry, and transitions to {@link State#RUNNING}.
+     */
+    public synchronized void beginStep(long interpreterId) {
+        if (ownerInterpreterId != -1L && ownerInterpreterId != interpreterId) {
+            throw PyErrors.error("RuntimeError", "generator cannot be resumed on a different interpreter");
+        }
+        switch (state) {
+            case RUNNING -> throw PyErrors.error("ValueError", "generator already executing");
+            case COMPLETED, FAILED -> throw PyErrors.error("StopIteration", "");
+            case CREATED -> {
+                if (creationContext != null && creationContext.isCancelled()) {
+                    fail();
+                    throw PyErrors.error("KeyboardInterrupt", "Execution cancelled by host");
+                }
+                operandStack = new FastStack();
+                exceptHandlers = new ArrayDeque<>(4);
+                activeExceptions = new ArrayDeque<>(2);
+                pc = 0;
+                state = State.RUNNING;
+            }
+            case SUSPENDED -> {
+                if (creationContext != null && creationContext.isCancelled()) {
+                    fail();
+                    throw PyErrors.error("KeyboardInterrupt", "Execution cancelled by host");
+                }
+                state = State.RUNNING;
+            }
+        }
+    }
+
+    /** Saves suspended frame state at {@code YIELD_VALUE} and transitions to {@link State#SUSPENDED}. */
+    public synchronized void suspendAt(int nextPc, FastStack stack, Map<String, PyObject> locals,
+                                         Deque<ExceptHandler> exceptHandlers, Deque<PyObject> activeExceptions,
+                                         Set<String> globalCells, Map<String, PyObject> moduleGlobals, int line) {
+        this.pc = nextPc;
+        this.operandStack = stack;
+        this.locals = locals;
+        this.exceptHandlers = exceptHandlers;
+        this.activeExceptions = activeExceptions;
+        this.globalCells = globalCells;
+        this.moduleGlobals = moduleGlobals;
+        this.line = line;
+        this.state = State.SUSPENDED;
+    }
+
+    /** Marks the generator completed and drops all frame references. */
+    public synchronized void complete() {
+        this.state = State.COMPLETED;
+        releaseFrame();
+    }
+
+    /** Marks the generator failed and drops all frame references. */
+    public synchronized void fail() {
+        this.state = State.FAILED;
+        releaseFrame();
+    }
+
+    private void releaseFrame() {
+        if (operandStack != null) operandStack.clear();
+        if (exceptHandlers != null) exceptHandlers.clear();
+        if (activeExceptions != null) activeExceptions.clear();
+        if (locals != null) locals.clear();
+        operandStack = null;
+        locals = null;
+        exceptHandlers = null;
+        activeExceptions = null;
+        globalCells = null;
+        moduleGlobals = null;
+        creationContext = null;
+    }
+
+    /** Advances this generator lazily to the next yielded value or raises {@code StopIteration}. */
+    public PyObject next() {
         PyCaller caller = PyCaller.CURRENT.get();
         if (caller == null) {
-            return;
+            throw PyErrors.error("RuntimeError", "cannot advance generator outside active interpreter");
         }
-        if (boundLocals != null) {
-            yielded = caller.collectYieldsWithLocals(fn, boundLocals);
-        } else {
-            yielded = caller.collectYields(fn, rawArgs);
-        }
-    }
-
-    public PyObject next() {
-        ensureInitialized();
-        if (index >= yielded.size()) {
-            throw PyErrors.error("StopIteration", "");
-        }
-        return yielded.get(index++);
-    }
-
-    public boolean isDone() {
-        ensureInitialized();
-        return index >= yielded.size();
+        return caller.stepGenerator(this);
     }
 
     @Override
