@@ -95,7 +95,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
 
     private PyObject writeText(Map<String, PyObject> args) {
         if (readOnly) {
-            throw PyErrors.error("SecurityError", "workspace adapter '" + id + "' is read-only");
+            throw denySecurity("write_text", "workspace:" + id, "workspace adapter is read-only");
         }
         String rel = requireRelativePathArg(args);
         PyObject contentObj = args != null ? args.get("content") : null;
@@ -113,11 +113,11 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
                 Files.createDirectories(parent);
                 // Re-verify canonical parent after directory creation (no symlink escape)
                 if (!parent.toRealPath().startsWith(canonicalRoot)) {
-                    throw PyErrors.error("SecurityError", "workspace path escaped root via symlink");
+                    throw denySecurity("write_text", rel, "workspace path escaped root via symlink");
                 }
             }
             if (Files.isSymbolicLink(target)) {
-                throw PyErrors.error("SecurityError", "refusing to write through symbolic link");
+                throw denySecurity("write_text", rel, "refusing to write through symbolic link");
             }
             Files.write(target, bytes);
             return PyInt.of(bytes.length);
@@ -145,7 +145,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         String rel = requireRelativePathArg(args);
         Path candidate = canonicalRoot.resolve(rel).normalize();
         if (!candidate.startsWith(canonicalRoot)) {
-            throw PyErrors.error("SecurityError", "path escapes workspace root");
+            throw denySecurity("exists", rel, "path escapes workspace root");
         }
         if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
             return false;
@@ -157,7 +157,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         }
     }
 
-    private static String requireRelativePathArg(Map<String, PyObject> args) {
+    private String requireRelativePathArg(Map<String, PyObject> args) {
         PyObject p = args != null ? args.get("path") : null;
         if (!(p instanceof PyStr s) || s.value().isEmpty()) {
             throw PyErrors.error("TypeError", "requires non-empty str 'path'");
@@ -167,7 +167,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         }
         Path parsed = Path.of(s.value());
         if (parsed.isAbsolute()) {
-            throw PyErrors.error("SecurityError", "absolute paths are forbidden in scoped workspace");
+            throw denySecurity("path_check", s.value(), "absolute paths are forbidden in scoped workspace");
         }
         return s.value();
     }
@@ -175,12 +175,12 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
     private Path resolveContainedExisting(String rel) {
         Path normalized = canonicalRoot.resolve(rel).normalize();
         if (!normalized.startsWith(canonicalRoot)) {
-            throw PyErrors.error("SecurityError", "path escapes workspace root");
+            throw denySecurity("resolve", rel, "path escapes workspace root");
         }
         try {
             Path real = normalized.toRealPath();
             if (!real.startsWith(canonicalRoot)) {
-                throw PyErrors.error("SecurityError", "symlink target escapes workspace root");
+                throw denySecurity("resolve", rel, "symlink target escapes workspace root");
             }
             return real;
         } catch (IOException e) {
@@ -191,7 +191,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
     private Path resolveContainedForWrite(String rel) {
         Path normalized = canonicalRoot.resolve(rel).normalize();
         if (!normalized.startsWith(canonicalRoot)) {
-            throw PyErrors.error("SecurityError", "path escapes workspace root");
+            throw denySecurity("resolve_write", rel, "path escapes workspace root");
         }
         // Walk existing ancestor to verify no symlink redirects out of canonicalRoot
         Path probe = normalized.getParent();
@@ -201,13 +201,18 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         if (probe != null) {
             try {
                 if (!probe.toRealPath().startsWith(canonicalRoot)) {
-                    throw PyErrors.error("SecurityError", "parent symlink escapes workspace root");
+                    throw denySecurity("resolve_write", rel, "parent symlink escapes workspace root");
                 }
             } catch (IOException e) {
                 throw PyErrors.error("OSError", "Cannot verify workspace parent: " + e.getMessage());
             }
         }
         return normalized;
+    }
+
+    private RuntimeException denySecurity(String action, String target, String reason) {
+        session.auditLog().recordDenied(HostCapability.FILESYSTEM, action, target, reason);
+        return PyErrors.error("SecurityError", reason);
     }
 
     @Override

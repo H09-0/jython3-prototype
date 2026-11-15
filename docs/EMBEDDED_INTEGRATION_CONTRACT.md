@@ -11,19 +11,20 @@ The following packages and entry points constitute the supported embedding contr
 
 | Layer | Stable Types (`org.example.jython3.*`) | Responsibility |
 | :--- | :--- | :--- |
+| **Public API** | `api.EmbeddedRuntime`, `api.RuntimeVersion` | Versioned embedding facade (`1.0.0-beta`) with compatibility negotiation (`requireCompatible`), feature probes (`supportsFeature`), builder configuration, and stable lifecycle entry points. |
 | **Facade** | `host.HostAppBridge` | Single-entry host wrapper (`bindModelData`, `bindHandle`, `registerDevice`, `runScript`, `cancelRunningScript`, `restart`, `close`). |
 | **Capabilities** | `host.HostCapability`, `host.CapabilitySet`, `host.HostAuditLog`, `host.HostSession` | Deny-by-default capability gating (`UI`, `EVENTS`, `INPUT`, `TIMER`, `FILESYSTEM`, `PROCESS`, `NETWORK`, `CONTROL`), per-device/command allowlists, centralized quotas, audit trail, and lifecycle teardown. |
 | **Opaque Handles** | `runtime.PyHostHandle` | Reflection-free Python handle exposing only whitelisted properties and methods; bound to `HostSession.epoch()` so stale handles raise `RuntimeError` after `resetExecutionState()` / `close()`. |
-| **UI & Dispatch** | `ui.UiDispatcher`, `ui.UiToolkit`, `ui.UiEvent`, `ui.HeadlessUiToolkit`, `ui.SwingUiToolkit`, `ui.JavaFxUiAdapter` | Display-independent widget/event abstractions with immutable thread ownership, Swing EDT dispatch, and JavaFX Application Thread dispatch (`FxDispatcher`). |
-| **Control** | `control.ControlDevice`, `control.ControlRegistry`, `control.SimulatedDevice` | Device command execution and live state views gated by `HostCapability.CONTROL` + allowlists. |
+| **UI & Dispatch** | `ui.UiDispatcher`, `ui.UiToolkit`, `ui.UiEvent`, `ui.HeadlessUiToolkit`, `ui.SwingUiToolkit`, `ui.JavaFxUiAdapter` | Display-independent layout (`FLOW`, `VBOX`, `HBOX`, `GRID`) and widget (`Window`, `Button`, `Label`, `TextField`, `Panel`, `CheckBox`, `ProgressBar`, `ListView`, `Timer`) abstractions with immutable thread ownership, Swing EDT dispatch, and JavaFX Application Thread dispatch (`FxDispatcher`). |
+| **Control** | `control.ControlDevice`, `control.ControlRegistry`, `control.SimulatedDevice`, `control.JvmTelemetryAdapter`, `control.HostCommandChannelAdapter`, `control.ScopedWorkspaceAdapter` | Device command execution and live state views gated by `HostCapability.CONTROL` + allowlists (and `FILESYSTEM` + canonical root containment for `ScopedWorkspaceAdapter`). |
 
 ---
 
 ## 2. Python Host Modules Contract
 
 ### `ui` module
-- **Requires `HostCapability.UI`**: `ui.Window(title, width=640, height=480)`, `ui.Button(text)`, `ui.Label(text)`, `ui.TextField(text)`, `ui.Panel()`.
-- **Requires `HostCapability.EVENTS` (+ `INPUT` for interactive widgets)**: `btn.on_click(fn)`, `textfield.on_change(fn)`, `window.on_close(fn)`. Callbacks receive an opaque `ui.Event` (`type`, `source_id`, `text`, `timestamp`).
+- **Requires `HostCapability.UI`**: `ui.Window(title, width=640, height=480)`, `ui.Button(text)`, `ui.Label(text)`, `ui.TextField(text)`, `ui.Panel(layout="flow", spacing=0, columns=2)`, `ui.VBox(spacing=0)`, `ui.HBox(spacing=0)`, `ui.Grid(columns=2, spacing=0)`, `ui.CheckBox(text="", checked=False)`, `ui.ProgressBar(value=0.0, indeterminate=False)`, `ui.ListView(items=[])`.
+- **Requires `HostCapability.EVENTS` (+ `INPUT` for interactive widgets)**: `btn.on_click(fn)`, `textfield.on_change(fn)`, `checkbox.on_change(fn)`, `listview.on_select(fn)`, `window.on_close(fn)`. Callbacks receive an opaque `ui.Event` (`type`, `source_id`, `text`, `timestamp`).
 - **Requires `HostCapability.TIMER`**: `ui.Timer(interval_ms, callback)` with `.start()` and `.stop()`.
 
 ### `control` module

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.12.0-beta] - 2026-11-15
+### Added
+- **Versioned Public Embedding API (`org.example.jython3.api`)**:
+  - Added `EmbeddedRuntime` and `RuntimeVersion` (`1.0.0-beta`) with version compatibility checking, feature flags (`supportsFeature`), and Oculix host compatibility suite (`VersionedEmbeddingApiTest`, `OculixCompatibilitySuiteTest`).
+- **Real Capability-Gated Control Adapters (`org.example.jython3.control`)**:
+  - Added `JvmTelemetryAdapter` (live JVM memory/thread/uptime telemetry), `HostCommandChannelAdapter` (typed host command routing), and `ScopedWorkspaceAdapter` (dual-gated `CONTROL` + `FILESYSTEM` with `toRealPath()` containment, symlink/traversal rejection, `readOnly` mode, `maxBytes` cap, and audit logging; `RealControlAdaptersTest`).
+- **UI Layouts & Basic Widget Abstractions (`org.example.jython3.ui`, `UiModule`)**:
+  - Added `UiLayout` (`FLOW`, `VBOX`, `HBOX`, `GRID` + `ui.VBox`, `ui.HBox`, `ui.Grid`) and `UiCheckBox`, `UiProgressBar`, `UiListView` across `HeadlessUiToolkit`, `SwingUiToolkit`, and `JavaFxUiAdapter` (`UiLayoutsAndWidgetsTest`).
+- **Security & Field Verification**:
+  - Gated `OsModule.getcwd()` and `OsModule.getpid()` behind `HostAccessPolicy` to close host path/PID leaks under `DENY_ALL`.
+  - Added `HostSecurityBoundaryReviewTest`, `docs/SECURITY_REVIEW_HOST_CAPABILITIES.md`, and Stress Test D (`200` `EmbeddedRuntime` + layouts + real control adapters cycles) in `FieldTestRunner` (500 tests passing green).
+
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
 - **Capability-Based Host API, Embedded UI & Control Layer (`org.example.jython3.host`, `.ui`, `.control`)**:

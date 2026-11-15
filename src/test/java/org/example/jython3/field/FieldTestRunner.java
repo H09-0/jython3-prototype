@@ -1,12 +1,25 @@
 package org.example.jython3.field;
 
 import org.example.jython3.Jython3Interpreter;
+import org.example.jython3.api.EmbeddedRuntime;
+import org.example.jython3.control.HostCommandChannelAdapter;
+import org.example.jython3.control.JvmTelemetryAdapter;
+import org.example.jython3.control.ScopedWorkspaceAdapter;
+import org.example.jython3.host.CapabilitySet;
+import org.example.jython3.host.HostCapability;
 import org.example.jython3.runtime.InterpreterException;
+import org.example.jython3.runtime.PyBool;
+import org.example.jython3.runtime.PyInt;
 import org.example.jython3.security.AllowlistPolicy;
 import org.example.jython3.security.ExecutionLimits;
 import org.example.jython3.security.HostAccessPolicy;
+import org.example.jython3.ui.HeadlessUiToolkit;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -40,6 +53,9 @@ public final class FieldTestRunner {
 
         System.out.println("\n--- Stress Test C: 300 Short-Lived Interpreters Lifecycle Leak Probe ---");
         testShortLivedInterpretersChurn();
+
+        System.out.println("\n--- Stress Test D: 200-Cycle EmbeddedRuntime + Layouts + Real Control Adapters ---");
+        testEmbeddedHostIntegrationField();
 
         System.out.println("\n=========================================================================");
         System.out.println("  FIELD TEST PROFILING COMPLETE");
@@ -194,5 +210,97 @@ public final class FieldTestRunner {
         System.out.printf("      Wall Time   : %.2f ms%n", (wallEnd - wallStart) / 1e6);
         System.out.printf("      Heap Start  : %.2f MB -> After GC: %.2f MB (Delta: %+.2f MB)%n",
                 heapStart, heapEnd, heapEnd - heapStart);
+    }
+
+    private static void testEmbeddedHostIntegrationField() {
+        Path tempRoot;
+        try {
+            tempRoot = Files.createTempDirectory("jython3-field-ws-");
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            var caps = CapabilitySet.builder()
+                    .allow(HostCapability.UI, HostCapability.EVENTS, HostCapability.INPUT,
+                            HostCapability.CONTROL, HostCapability.FILESYSTEM)
+                    .allowDevice("jvm.telemetry", "oculix.ch", "ws")
+                    .allowCommand("sample", "push", "write_text", "read_text")
+                    .build();
+            var toolkit = new HeadlessUiToolkit();
+
+            // Warmup lazy singleton daemon threads (e.g. CALLBACK_WATCHDOG) before baseline
+            try (var warm = EmbeddedRuntime.builder().capabilities(caps).uiToolkit(new HeadlessUiToolkit()).build()) {
+                warm.eval("import ui\nb = ui.Button('w'); b.on_click(lambda e: None); b.click()");
+            }
+            System.gc();
+            try { Thread.sleep(100); } catch (InterruptedException ignored) {}
+            double heapStart = ResourceProfiler.usedHeapMB();
+            int threadsStart = ResourceProfiler.threadCount();
+            long wallStart = System.nanoTime();
+
+            try (var rt = EmbeddedRuntime.builder()
+                    .capabilities(caps)
+                    .limits(ExecutionLimits.SANDBOXED)
+                    .uiToolkit(toolkit)
+                    .build()) {
+                rt.registerDevice(new JvmTelemetryAdapter("jvm.telemetry"));
+                rt.registerDevice(HostCommandChannelAdapter.builder("oculix.ch")
+                        .initialState("count", PyInt.ZERO)
+                        .onCommand("push", (st, a) -> {
+                            PyInt v = (PyInt) a.get("v");
+                            st.put("count", v);
+                            return v;
+                        })
+                        .build());
+                rt.registerDevice(new ScopedWorkspaceAdapter("ws", tempRoot, rt.hostSession(), false));
+
+                for (int i = 0; i < 200; i++) {
+                    rt.eval("""
+                        import ui, control
+                        win = ui.Window("HostField")
+                        box = ui.VBox(6)
+                        chk = ui.CheckBox("Run", False)
+                        prg = ui.ProgressBar(0.0)
+                        lst = ui.ListView(["a", "b"])
+                        tel = control.Controller("jvm.telemetry").send("sample")
+                        ch = control.Controller("oculix.ch")
+                        ws = control.Controller("ws")
+                        def on_sel(ev):
+                            ch.send("push", {"v": %d})
+                            prg.value = 1.0
+                            ws.send("write_text", {"path": "last.txt", "content": ev.text})
+                        lst.on_select(on_sel)
+                        box.add(chk); box.add(prg); box.add(lst)
+                        win.add(box); win.show()
+                        lst.selected_index = 1
+                        ok = (prg.value == 1.0 and ch.state().get("count") == %d and ws.send("read_text", {"path": "last.txt"}) == "b" and tel["heap_used_bytes"] > 0)
+                        """.formatted(i, i));
+                    FieldScenario.assertTrue("EmbeddedRuntime field cycle " + i + " ok",
+                            PyBool.TRUE.equals(rt.getGlobal("ok")));
+                    rt.restart();
+                }
+                FieldScenario.assertTrue("Zero open windows after restart", toolkit.openWindowCount() == 0);
+                FieldScenario.assertTrue("Zero managed resources after restart",
+                        rt.hostSession().managedResourceCount() == 0);
+            }
+
+            long wallEnd = System.nanoTime();
+            System.gc();
+            try { Thread.sleep(100); } catch (InterruptedException ignored) {}
+            double heapEnd = ResourceProfiler.usedHeapMB();
+            int threadsEnd = ResourceProfiler.threadCount();
+
+            System.out.printf("    PASS | 200 cycles (UI layouts+widgets + Telemetry + Channel + ScopedWS):%n");
+            System.out.printf("      Wall Time   : %.2f ms | Threads: %d -> %d%n",
+                    (wallEnd - wallStart) / 1e6, threadsStart, threadsEnd);
+            System.out.printf("      Heap Start  : %.2f MB -> After GC: %.2f MB (Delta: %+.2f MB)%n",
+                    heapStart, heapEnd, heapEnd - heapStart);
+        } finally {
+            try (var walk = Files.walk(tempRoot)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+                });
+            } catch (IOException ignored) {}
+        }
     }
 }
