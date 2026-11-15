@@ -342,6 +342,8 @@ tests before the next layer is built on top of them.
 | :--- | :--- | :--- |
 | **Python `None`** | `PyNull` | First-class `PyObject` representing `None` inside stacks, local/global scopes, and Python collections. |
 | **Java `null`** | `null` | Indicates an *absent/unbound* slot in Java maps (`currentLocals`, `PyDict`). `JavaBridge.toPyObject(null)` converts Java `null` to `PyNull`; `toJavaObject(PyNull, RefType)` converts `PyNull` to Java `null` (while primitive Java targets reject `PyNull` with `TypeError`). |
+| **32-bit Integer** | `PyInt` | Signed 32-bit integer (`int`) with small-int cache (`-128..256`); promotes to `BigInt` on arithmetic overflow. |
+| **Arbitrary-Precision Integer** | `BigInt` | Arbitrary-precision integer wrapping `BigInteger`; shares Python `int` type semantics, hashing, and exact numeric comparisons with `PyInt` and `PyFloat`. |
 | **`PyCaller`** | `ThreadLocal<PyCaller>` | Thread-scoped callback bridge installed during `eval()`/`evalCode()` and cleared in `finally` so built-ins and `__str__` can invoke Python callables without leaking across thread pools. |
 | **`PyCell`** | `PyCell` | Mutable box enabling `nonlocal` bindings to be shared and mutated across nested function scopes. |
 | **`PyCompiledCodeWrapper`** | `PyCompiledCodeWrapper` | `PyObject` carrier placing compiled class body `CompiledCode` onto the VM operand stack for `BUILD_CLASS`. |

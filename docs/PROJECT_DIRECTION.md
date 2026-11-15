@@ -128,17 +128,17 @@ Phase VI   Production Maturity
 
 ## 4. Milestone 1 Acceptance Criteria (Definition of Done)
 
-All 9 criteria are required before closing Milestone 1:
+All 9 criteria are completed and verified in CI (see [STATUS.md](STATUS.md)):
 
-1. [ ] **Baseline:** CPython 3.14 reference version and exact Jython3 commit recorded.
-2. [ ] **Reproducibility:** Field-test suite can be rerun cleanly via Gradle / CLI.
-3. [ ] **Nested control flow:** Nested `break`, `continue`, `return`, and exception unwinding pass.
-4. [ ] **Numeric correctness:** Boolean, integer, float, and BigInt semantics verified against CPython.
-5. [ ] **Built-in types:** `isinstance()` and `issubclass()` verified for all supported built-in types.
-6. [ ] **Formatting:** Multiple-argument `%` formatting matches CPython.
-7. [ ] **Regression protection:** Every confirmed defect has a permanent automated regression test.
-8. [ ] **Architecture:** No new VM/runtime layering violations introduced.
-9. [ ] **CI:** All existing and new regression tests pass cleanly.
+1. [x] **Baseline:** CPython 3.14 reference version and exact Jython3 commit recorded.
+2. [x] **Reproducibility:** Field-test suite can be rerun cleanly via Gradle / CLI (`./gradlew fieldTest`).
+3. [x] **Nested control flow:** Nested `break`, `continue`, `return`, and exception unwinding pass.
+4. [x] **Numeric correctness:** Boolean, integer, float, and BigInt semantics verified against CPython.
+5. [x] **Built-in types:** `isinstance()` and `issubclass()` verified for all supported built-in types.
+6. [x] **Formatting:** Multiple-argument `%` formatting matches CPython.
+7. [x] **Regression protection:** Every confirmed defect has a permanent automated regression test.
+8. [x] **Architecture:** No new VM/runtime layering violations introduced.
+9. [x] **CI:** All existing and new regression tests pass cleanly.
 
 ---
 
