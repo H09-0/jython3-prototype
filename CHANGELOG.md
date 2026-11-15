@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.13.0-beta] - 2026-11-15
+### Added & Improved
+- **Tier-1 VM Optimization (`CompiledCode`, `Jython3Interpreter`, `Frame`)**:
+  - Added compile-time slot rewriting (`LOAD_SLOT`, `STORE_SLOT`) for pure local functions, pooled `slotLocals` arrays, inline `PyClass.__init__` fast path, and inline `PyInt` arithmetic/comparison dispatch (`14d535b`).
+- **Core Language & OOP Completeness**:
+  - Completed PEP 3110 deletion on `raise` exits inside `except ... as e:` without `finally`, full string escapes (`\xHH`, `\uHHHH`, `\UHHHHHHHH`, octal, `\a\b\f\v`), and built-ins (`slice()`, `pow(a, b, mod)`, `divmod()`, `format()`, `iter(fn, sentinel)`, Unicode `ord()`/`chr()`, `hex`/`oct`/`bin`, `round` with `BigInt`, DSU `sorted()`; `f63f2b2`).
+  - Added C3 Linearization MRO (`__mro__`, diamond `super()`), dynamic 3-arg `type(name, bases, dict)`, dynamic `__bases__` mutation with cycle/MRO checks, `@property` (getter/setter/deleter), `@staticmethod`, `@classmethod`, full dunder operator overloading (`__add__`/`__radd__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__mod__`, `__pow__`, `__neg__`, `__eq__`, `__lt__`, `__hash__`, `__bool__`, `__len__`, `__setitem__`, `__delitem__`, `__contains__`, `__iter__`, `__next__`, `__call__`, `NotImplemented`), and function extra attributes (`__wrapped__`; `c6902c5`, `1940c8c`, `4e021c3`).
+  - Added numeric underscore literals (`1_000_000`), scientific floats, walrus `:=`, lazy O(1) `PyRange` (`cabe855`), and `bytes`/`bytearray` (`b"..."`, `.decode()`, `.encode()`, `.hex()`, `.fromhex()`; `d02162e`).
+- **Standard Library, Virtual Threads & Security Hardening**:
+  - Added ReDoS-hardened `re` (`Match`/`Pattern`/`sub`/`split`/`compile`/`escape`/flags), `json` `indent`/`sort_keys`/depth guard, f-string `!r`/`!s` & `:spec` formatting (`32169ec`), `itertools`, `queue`, `datetime`, expanded `math`/`str`/`dict`/`list` (`3dd4068`), `collections` (`OrderedDict`, `namedtuple`), and `functools` (`wraps`, `cmp_to_key`; `4e021c3`).
+  - Added capability-gated (`HostCapability.THREADS`) Java 21 Virtual Threads (`threading`, `concurrent.futures.ThreadPoolExecutor`; `8a2429b`, `b956a60`).
+  - Hardened `range` materialization, `%` format widths, `str.replace`/`join`/`center`/`zfill`, `int(str)` digit cap (`10_000`), and adversarial dunder/cycle/smuggling protections (`395eb08`, `b956a60`; 553 total tests passing green).
+
 ## [v0.12.2-beta] - 2026-11-15
 ### Security & Build
 - **Host-Attested Adapter Trust & Registration Policy (`ControlRegistry`, `HostAttestation`, `CapabilitySet`, `ControlModule`)**:

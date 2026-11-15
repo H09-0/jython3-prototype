@@ -24,13 +24,15 @@ For completed historical releases, see [CHANGELOG.md](../CHANGELOG.md).
 ## Upcoming Language & Platform Phases
 
 ### Language Conformance Expansion
-- [ ] PEP 3110 exception-target deletion on `raise` exit paths inside `except ... as e:` without `finally`.
-- [ ] Dynamic 3-argument `type(name, bases, dict)` and MRO / `__bases__` mutation support.
+- [x] PEP 3110 exception-target deletion on `raise` exit paths inside `except ... as e:` without `finally`.
+- [x] Dynamic 3-argument `type(name, bases, dict)`, C3 MRO, dynamic `__bases__` mutation, and `@property`/`@staticmethod`/`@classmethod`.
+- [x] Numeric underscore literals (`1_000_000`), walrus `:=`, `bytes`/`bytearray`, lazy O(1) `range`, and full dunder operator overloading.
+- [ ] `async def` / `await` coroutine syntax.
 
 ### Virtual Threads & Concurrency
-- [ ] Native support for Java 21+ Virtual Threads (Project Loom).
-- [ ] Standard library `threading` and `concurrent.futures` modules.
-- [ ] GIL-free execution architecture leveraging Java's memory model.
+- [x] Native support for Java 21+ Virtual Threads (`HostCapability.THREADS` + `threading` module).
+- [x] Standard library `queue` and `concurrent.futures` (`ThreadPoolExecutor` / `Future`) modules.
+- [x] GIL-free Virtual-Thread execution sharing `ConcurrentHashMap` globals and session teardown.
 
 ### Ecosystem & Packaging
 - [x] Capability-gated host UI (`HeadlessUiToolkit`, `SwingUiToolkit`, `JavaFxUiAdapter`), restricted `control` APIs, and `HostAppBridge` for Oculix/Cinnamon embedding.
