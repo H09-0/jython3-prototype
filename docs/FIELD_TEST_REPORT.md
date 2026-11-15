@@ -1,6 +1,7 @@
 # Jython 3 Prototype — Field Test & Resource Profiling Report
 
 > **Live Status Reference**: For the single source of truth on current capabilities, see **[STATUS.md](STATUS.md)** and **[COMPATIBILITY.md](COMPATIBILITY.md)**.
+> For the 30-minute uninterrupted large-scale soak test (901,230 cycles / 6.3M scripts), see **[LARGE_SCALE_TEST_RESULTS.md](LARGE_SCALE_TEST_RESULTS.md)**.
 > Automated field scenarios and leak probes are executed via `./gradlew fieldTest` (`org.example.jython3.field.FieldTestRunner`) and verified in CI via `FieldIntegrationTest`.
 
 ---
