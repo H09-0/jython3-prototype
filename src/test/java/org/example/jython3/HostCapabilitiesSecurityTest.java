@@ -52,10 +52,14 @@ class HostCapabilitiesSecurityTest {
                 assert ctrl.send(cmd) == 75
                 st = ctrl.state()
                 assert st.get("power") == True and st.get("level") == 75 and st.to_dict()["mode"] == "idle"
+                frozen_snap = st.snapshot()
+                ctrl.send("set_level", {"value": 90})
+                assert st.get("level") == 90 and st.to_dict()["level"] == 90
+                assert frozen_snap["level"] == 75
                 ok = True
                 """);
             assertEquals(PyBool.TRUE, interp.getGlobal("ok"));
-            assertEquals(List.of("ping", "power_on", "set_level"), dev1.commandHistory());
+            assertEquals(List.of("ping", "power_on", "set_level", "set_level"), dev1.commandHistory());
             assertTrue(dev2.commandHistory().isEmpty());
 
             // Unauthorized device and unauthorized command rejected & logged

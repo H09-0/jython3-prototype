@@ -149,22 +149,27 @@ public final class ControlModule {
                     return res;
                 }))
                 .method("state", new PyBuiltinFunction("Controller.state", a -> {
+                    if (closed[0]) {
+                        throw PyErrors.error("RuntimeError", "controller '" + device.id() + "' is closed");
+                    }
                     session.require(HostCapability.CONTROL, "read_state", device.id());
                     if (!session.capabilities().canControlDevice(device.id())) {
                         throw PyErrors.error("SecurityError", "control access to device '" + device.id() + "' is restricted");
                     }
-                    Map<String, PyObject> snap = device.snapshotState();
-                    PyDict dict = new PyDict();
-                    for (var e : snap.entrySet()) dict.put(new PyStr(e.getKey()), e.getValue());
                     return PyHostHandle.builder("control.State")
                             .prop("device_id", () -> new PyStr(device.id()))
                             .method("get", new PyBuiltinFunction("State.get", ga -> {
+                                if (closed[0]) {
+                                    throw PyErrors.error("RuntimeError", "controller '" + device.id() + "' is closed");
+                                }
                                 if (ga.length < 1 || ga.length > 2) throw PyErrors.error("TypeError", "State.get() takes 1 or 2 arguments");
-                                PyObject v = snap.get(ga[0].toString());
+                                Map<String, PyObject> live = device.snapshotState();
+                                PyObject v = live.get(ga[0].toString());
                                 if (v != null) return v;
                                 return ga.length == 2 ? ga[1] : PyNull.INSTANCE;
                             }))
-                            .method("to_dict", new PyBuiltinFunction("State.to_dict", ga -> dict))
+                            .method("to_dict", new PyBuiltinFunction("State.to_dict", ga -> toStateDict(device, closed[0])))
+                            .method("snapshot", new PyBuiltinFunction("State.snapshot", ga -> toStateDict(device, closed[0])))
                             .build();
                 }))
                 .method("on_event", new PyBuiltinFunction("Controller.on_event", a -> {
@@ -182,5 +187,16 @@ public final class ControlModule {
                     return PyNull.INSTANCE;
                 }))
                 .build();
+    }
+
+    private static PyDict toStateDict(ControlDevice device, boolean controllerClosed) {
+        if (controllerClosed) {
+            throw PyErrors.error("RuntimeError", "controller '" + device.id() + "' is closed");
+        }
+        var dict = new PyDict();
+        for (var e : device.snapshotState().entrySet()) {
+            dict.put(new PyStr(e.getKey()), e.getValue());
+        }
+        return dict;
     }
 }
