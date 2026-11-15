@@ -1559,11 +1559,12 @@ public class Jython3Interpreter {
                 }
                 case BUILD_DICT -> {
                     int n = ai;
-                    var map = new LinkedHashMap<PyObject, PyObject>();
                     var pairs = new PyObject[n * 2];
                     for (int i = n * 2 - 1; i >= 0; i--) pairs[i] = stack.pop();
-                    for (int i = 0; i < n * 2; i += 2) map.put(pairs[i], pairs[i + 1]);
-                    stack.push(new PyDict(map));
+                    // Insert straight into PyDict so keys use PyKey hash/eq (and unhashable keys raise TypeError)
+                    var dict = new PyDict();
+                    for (int i = 0; i < n * 2; i += 2) dict.put(pairs[i], pairs[i + 1]);
+                    stack.push(dict);
                 }
                 case BUILD_SLICE -> {
                     int count = ai;
@@ -1905,18 +1906,18 @@ public class Jython3Interpreter {
                     PyObject val = stack.pop();
                     if (stack.peek() instanceof PyList acc) acc.items().add(val);
                 }
-                case SET_COMP_INIT -> stack.push(new org.example.jython3.runtime.PySet(new java.util.LinkedHashSet<>()));
+                case SET_COMP_INIT -> stack.push(new PySet());
                 case SET_COMP_ADD -> {
                     PyObject val = stack.pop();
-                    if (stack.peek() instanceof org.example.jython3.runtime.PySet acc) acc.add(val);
+                    if (stack.peek() instanceof PySet acc) acc.add(val);
                 }
                 case BUILD_SET -> {
                     int n = ai;
-                    var set = new java.util.LinkedHashSet<PyObject>();
                     var items = new PyObject[n];
                     for (int i = n - 1; i >= 0; i--) items[i] = stack.pop();
-                    for (var item : items) set.add(item);
-                    stack.push(new org.example.jython3.runtime.PySet(set));
+                    var set = new PySet();
+                    for (var item : items) set.add(item);   // validates hashability (TypeError)
+                    stack.push(set);
                 }
 
                 // ── with statement ───────────────────────────────────────

@@ -141,8 +141,8 @@ public final class PyOps {
             case PyBoundMethod bm -> true;
             case PyList l -> !l.items().isEmpty();
             case PyTuple t -> !t.items().isEmpty();
-            case PySet s -> !s.items().isEmpty();
-            case PyDict d -> !d.map().isEmpty();
+            case PySet s -> !s.isEmpty();
+            case PyDict d -> d.size() > 0;
             case PyIterator it -> true;
             case PyFloat f -> f.value() != 0.0;
             case PyModule m -> true;
@@ -187,20 +187,11 @@ public final class PyOps {
             return true;
         }
         if (a instanceof PyDict ad && b instanceof PyDict bd) {
-            return ad.map().equals(bd.map());
+            // Python semantics: keys matched via PyKey hash/eq (1 == 1.0 == True), values via pyEquals
+            return ad.equals(bd);
         }
         if (a instanceof PySet sa && b instanceof PySet sb) {
-            if (sa.size() != sb.size()) return false;
-            for (PyObject x : sa.items()) {
-                if (sb.items().contains(x)) continue;
-                // Fall back to Python equality (e.g. 1 == 1.0) when Java hashing differs
-                boolean found = false;
-                for (PyObject y : sb.items()) {
-                    if (pyEquals(x, y)) { found = true; break; }
-                }
-                if (!found) return false;
-            }
-            return true;
+            return sa.equals(sb);
         }
         return false;
     }
@@ -268,11 +259,10 @@ public final class PyOps {
             return false;
         }
         if (container instanceof PySet set) {
-            for (var el : set.items()) if (pyEquals(el, item)) return true;
-            return false;
+            return set.contains(item);
         }
         if (container instanceof PyStr s && item instanceof PyStr sub) return s.value().contains(sub.value());
-        if (container instanceof PyDict dict) return dict.map().containsKey(item);
+        if (container instanceof PyDict dict) return dict.containsKey(item);
         throw PyErrors.error("TypeError", "argument of type '" + typeName(container) + "' is not iterable");
     }
 

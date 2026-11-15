@@ -39,7 +39,8 @@
 - Coroutine `.send()` / `.throw()` on suspended generator frames.
 - `raise ... from ...` explicit exception chaining (`__cause__`); `__context__` is recorded internally but not readable as a Python attribute.
 - `__name__` on classes/exception types (e.g. `type(e).__name__`).
-- Dict equality compares keys/values with Java equality (`{1: 0} == {1.0: 0}` may differ from CPython).
+- Expression statements that begin with `[` or `{` (e.g. a bare `[1] in d` or `{...}` line) do not parse; assign the result instead.
+- Built-ins `all()` and `any()` are not implemented.
 - Re-entrant calls (`__init__`, `__enter__`, `__exit__`) do not push a `Frame`, so they are invisible to `nonlocal` lookup and to traceback frame lists (they are counted toward `MAX_CALL_DEPTH`).
 - Dynamic `__bases__` mutation after class creation.
 

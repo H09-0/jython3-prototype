@@ -54,7 +54,8 @@ public final class BuiltinFunctions {
             if (o instanceof PyStr s) return new PyInt(s.codePointCount());
             if (o instanceof PyList l) return new PyInt(l.items().size());
             if (o instanceof PyTuple t) return new PyInt(t.items().size());
-            if (o instanceof PyDict d) return new PyInt(d.map().size());
+            if (o instanceof PyDict d) return new PyInt(d.size());
+            if (o instanceof org.example.jython3.runtime.PySet set) return new PyInt(set.size());
             if (o instanceof PyInstance inst) {
                 if (inst.hasField("__len__")) {
                     PyObject lenMethod = inst.getField("__len__");
@@ -259,6 +260,13 @@ public final class BuiltinFunctions {
             if (args.length == 0) return new PyList(new ArrayList<>());
             checkArgCount("list", args, 1);
             return new PyList(collectIterable(args[0], javaPolicy));
+        }));
+
+        // set() / set(iterable) — elements keyed by PyKey (unhashable elements raise TypeError)
+        define.accept("set", new PyBuiltinFunction("set", args -> {
+            if (args.length == 0) return new org.example.jython3.runtime.PySet();
+            checkArgCount("set", args, 1);
+            return new org.example.jython3.runtime.PySet(collectIterable(args[0], javaPolicy));
         }));
 
         // dict()
@@ -623,6 +631,7 @@ public final class BuiltinFunctions {
                 case "list"   -> (obj instanceof PyList);
                 case "dict"   -> (obj instanceof PyDict);
                 case "tuple"  -> (obj instanceof PyTuple);
+                case "set"    -> (obj instanceof org.example.jython3.runtime.PySet);
                 case "object" -> true;
                 default       -> false;
             };

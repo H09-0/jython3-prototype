@@ -27,9 +27,9 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 | **F-Strings (`f"..."`)** | **T1** | Interpolated string literals `f"..."` and `f'...'` with embedded expressions. |
 | **Boolean & Identity Operations** | **T2** | `True`, `False`, `None` (`PyNull`), short-circuit `and` / `or`, unary `not`, identity `is` / `is not`, membership `in` / `not in`. |
 | **Lists** | **T2** | Dynamic mutable `PyList`. Indexing, slicing, `.append()`, `.extend()`, `.insert()`, `.pop()`, `.remove()`, `.index()`, `.count()`, `.sort()`, `.reverse()`, `.copy()`, `.clear()`. |
-| **Dictionaries** | **T2** | Insertion-ordered `PyDict` implementing Python 3 key semantics (`1 == 1.0 == True`; unhashable lists/dicts raise `TypeError`). |
+| **Dictionaries** | **T2** | Insertion-ordered `PyDict` implementing Python 3 key semantics (`1 == 1.0 == True`, `(1, 2)` ≡ `(1.0, 2)`, `BigInt` ≡ integral `float`) for lookup, `in`, literals (later duplicate keys overwrite the value and keep the first key), and `==`/`!=`; unhashable lists/dicts/sets raise `TypeError`. Differential tested against CPython. |
 | **Tuples & Unpacking** | **T2** | Immutable `PyTuple` distinct from `PyList`, sequence unpacking `a, b = seq`, `for a, b in seq:`, `return a, b`, and `except (E1, E2)` tuple matching. |
-| **Sets** | **T1** | Mutable `PySet` with hashability enforcement (`PyKey.checkHashable`), set literals `{1, 2}`, and set comprehensions. |
+| **Sets** | **T2** | Mutable `PySet` keyed by `PyKey` (same hash/eq contract as dict keys: `{1, 1.0, True}` has one element), set literals, set comprehensions, `set()`/`set(iterable)`, `len`, `in`, `==`/`!=`, `isinstance(x, set)`; unhashable elements raise `TypeError`. Methods other than `add` are not yet implemented. Iteration order is insertion order (CPython uses hash order). |
 | **Comprehensions** | **T2** | List comprehensions (`[x for x in seq if cond]`), dict comprehensions (`{k: v for ...}`), and set comprehensions (`{x for ...}`), differential tested against CPython. |
 | **Slicing** | **T2** | List, tuple, and string slicing (`s[a:b:c]`, `s[::-1]`) implementing CPython `slice.indices()` semantics and Unicode codepoint safety. |
 | **Control Flow** | **T1** | `if` / `elif` / `else`, `while`, `for ... in ...`, `break`, `continue`, `assert`, chained assignment (`a = b = expr`). |

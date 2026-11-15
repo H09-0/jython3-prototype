@@ -371,4 +371,30 @@ public class CoreDifferentialTest {
         assertMatchesCPython("set_equality",
                 "print({0, 1} == {1, 0}, {0} != {1}, {1, 2} == {1}, {1} == {1.0}, ({'a'},) == ({'a'},))");
     }
+
+    @Test
+    void testNumericKeyHashEqualityDifferential() {
+        assertMatchesCPython("dict_equality_numeric_keys",
+                "print({1: 0} == {1.0: 0}, {True: 1} == {1: 1}, {0: 'a'} == {False: 'a'}, {'a': 1} == {'a': 1.0})\n"
+                + "print({1: 0} != {1.0: 0}, {(1, 2): 't'} == {(1.0, 2): 't'}, {10 ** 20: 1} == {float(10 ** 20): 1})\n"
+                + "print({1: [1, 2]} == {1: [1, 2]}, {1: {2: 3}} == {1: {2: 3}}, {1: 0} == {1: 0, 2: 0})");
+        assertMatchesCPython("dict_numeric_key_collapse",
+                "d = {1: 'int'}\nd[1.0] = 'float'\nd[True] = 'bool'\nprint(len(d), d[1], d)\n"
+                + "lit = {1: 'a', 1.0: 'b', True: 'c'}\nprint(lit, len(lit))\n"
+                + "print({1: 0}.get(1.0), 1.0 in {1: 0}, True in {1: 0}, 2 in {1: 0})");
+        assertMatchesCPython("set_numeric_collapse_and_membership",
+                "print(len({1, 1.0, True}), len({0, 0.0, False}), 1.0 in {1}, True in {1}, len({(1, 2), (1.0, 2)}))\n"
+                + "print({1, 2} == {2.0, 1.0}, len({10 ** 20, float(10 ** 20)}), 'a' in {'a'}, None in {None})\n"
+                + "s = set()\nprint(s, len(s), bool(s), bool({0}))\n"
+                + "print({'x'}, {1.5}, sorted({3, 1, 2}))\n"
+                + "c = {v % 3 for v in range(10)}\nprint(sorted(c), len(c))\n"
+                + "print(len(set([1, 1.0, 2, True])), sorted(set('abca')), isinstance({1}, set), isinstance([1], set))");
+        assertMatchesCPython("unhashable_keys_raise_type_error",
+                "for label, make in [('list-key', lambda: {[1]: 1}), ('set-elem', lambda: {[1]}),\n"
+                + "                    ('set-key', lambda: {{1}: 1}), ('dict-in-set', lambda: {{}})]:\n"
+                + "    try:\n        make()\n        print(label, 'no-error')\n"
+                + "    except TypeError as e:\n        print(label, 'TypeError', str(e))\n"
+                + "try:\n    r = [1] in {1: 0}\nexcept TypeError as e:\n    print('list-in-dict', str(e))\n"
+                + "try:\n    r = [1] in {1}\nexcept TypeError as e:\n    print('list-in-set', str(e))");
+    }
 }

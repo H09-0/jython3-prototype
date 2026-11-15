@@ -34,7 +34,7 @@ public final class PyKey {
     }
 
     static int computeHash(PyObject obj) {
-        if (obj instanceof PyList || obj instanceof PyDict) {
+        if (obj instanceof PyList || obj instanceof PyDict || obj instanceof PySet) {
             throw PyErrors.error("TypeError", "unhashable type: '" + PyOps.typeName(obj) + "'");
         }
         if (obj instanceof PyTuple t) {
