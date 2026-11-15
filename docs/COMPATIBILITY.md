@@ -20,7 +20,7 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 
 | Feature | Stage | Implementation & Verification Notes |
 | :--- | :---: | :--- |
-| **Integer Arithmetic** | **T2** | Signed 32-bit `int` (with `-128..256` cache) and automatic transparent promotion to `BigInt`. Overflow-free `+`, `-`, `*`, `//`, `%`, `**`. |
+| **Integer Arithmetic & Bitwise** | **T2** | Signed 32-bit `int` (with `-128..256` cache) and automatic transparent promotion to `BigInt`. Decimal, hex (`0x`), binary (`0b`), and octal (`0o`) literals. Overflow-free `+`, `-`, `*`, `//`, `%`, `**`, and bitwise `&`, `|`, `^`, `~`, `<<`, `>>` (plus compound `&=`, `|=`, `^=`, `<<=`, `>>=`), differential tested against CPython. |
 | **Floating Point Arithmetic** | **T2** | IEEE 754 64-bit double precision. `/` always produces `float`. Division by zero raises `ZeroDivisionError`. |
 | **Exact BigInt & Float Comparisons** | **T2** | Exact equality and relational comparisons via `BigDecimal` without 64-bit float precision loss. |
 | **String Manipulation** | **T2** | UTF-8 `PyStr` with non-surrogate ASCII/BMP fast-path. Triple-quoted strings, raw strings (`r"..."`), escapes, `%` formatting, f-strings (`f"..."`), and string methods. |

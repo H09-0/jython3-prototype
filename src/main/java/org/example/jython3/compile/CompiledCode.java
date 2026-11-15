@@ -12,8 +12,8 @@ import java.util.Set;
  * instruction at {@code bytecode[i]} and is used to build tracebacks.
  * {@code hasYield} is precomputed to avoid scanning bytecode on every function call.
  * {@code attrCache} provides per-instruction monomorphic inline caching for attribute lookups.
- * {@code referencedNames} tracks symbol names referenced in this code or nested code blocks
- * so closures only capture referenced outer bindings.
+ * {@code referencedNames} tracks variable names actually loaded/stored in bytecode (or nested functions)
+ * so closures only capture referenced outer bindings and never confuse string literals with variable names.
  */
 public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
                            boolean hasYield, Object[] attrCache, Set<String> referencedNames) {
@@ -22,11 +22,11 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
         this(bytecode, constPool, lines,
              scanYield(bytecode),
              new Object[bytecode != null ? bytecode.length : 0],
-             collectReferencedNames(constPool));
+             collectReferencedNames(bytecode, constPool));
     }
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines, boolean hasYield, Object[] attrCache) {
-        this(bytecode, constPool, lines, hasYield, attrCache, collectReferencedNames(constPool));
+        this(bytecode, constPool, lines, hasYield, attrCache, collectReferencedNames(bytecode, constPool));
     }
 
     private static boolean scanYield(int[] bytecode) {
@@ -38,17 +38,27 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
         return false;
     }
 
-    private static Set<String> collectReferencedNames(Object[] constPool) {
-        if (constPool == null || constPool.length == 0) return Set.of();
+    private static Set<String> collectReferencedNames(int[] bytecode, Object[] constPool) {
+        if (bytecode == null || constPool == null || constPool.length == 0) return Set.of();
         Set<String> names = new HashSet<>();
-        for (Object c : constPool) {
-            if (c instanceof String s) {
-                if (s.startsWith("@nonlocal:")) {
+        int loadFast = OpCode.LOAD_FAST.code();
+        int storeFast = OpCode.STORE_FAST.code();
+        int deleteFast = OpCode.DELETE_FAST.code();
+        int loadConst = OpCode.LOAD_CONST.code();
+
+        for (int instr : bytecode) {
+            int op = instr >>> 16;
+            int ai = instr & 0xFFFF;
+            if (ai < constPool.length) {
+                if ((op == loadFast || op == storeFast || op == deleteFast) && constPool[ai] instanceof String varName) {
+                    names.add(varName);
+                } else if (op == loadConst && constPool[ai] instanceof String s && s.startsWith("@nonlocal:")) {
                     names.add(s.substring(10));
-                } else if (!s.startsWith("@global:")) {
-                    names.add(s);
                 }
-            } else if (c instanceof CompiledCode cc) {
+            }
+        }
+        for (Object c : constPool) {
+            if (c instanceof CompiledCode cc) {
                 names.addAll(cc.referencedNames());
             } else if (c instanceof PyFunction fn && fn.code() != null) {
                 names.addAll(fn.code().referencedNames());

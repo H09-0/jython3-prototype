@@ -42,7 +42,7 @@ jython3-prototype/
     │       │   ├── CompileVisitor.java # ANTLR Visitor generating 32-bit encoded instructions
     │       │   ├── KwCallInfo.java     # Keyword call site metadata record
     │       │   ├── LValue.java         # Unified assignment target model (Name, Attribute, Subscript, Tuple)
-    │       │   ├── OpCode.java         # 81 stable bytecode operations
+    │       │   ├── OpCode.java         # 87 stable bytecode operations
     │       │   └── StringEscapes.java  # Python string escape sequence unescaper
     │       ├── parse/              # Lexical stream preprocessors
     │       │   └── PythonIndentStream.java # Converts indentation/dedentation into synthetic INDENT/DEDENT tokens

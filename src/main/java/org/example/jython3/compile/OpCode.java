@@ -59,7 +59,14 @@ public enum OpCode {
     DUP_TOP_TWO(77),        // duplicates the top two stack items: [..., a, b] -> [..., a, b, a, b]
     ROT_TWO(78),            // swaps the top two stack items: [..., a, b] -> [..., b, a]
     ROT_THREE(79),          // rotates third item to top: [..., c, b, a] -> [..., b, a, c]
-    DELETE_ATTR(80);        // arg: pool index of attribute name; pops object and deletes attribute
+    DELETE_ATTR(80),        // arg: pool index of attribute name; pops object and deletes attribute
+    // ── bitwise & shift operations
+    BITWISE_AND(81),
+    BITWISE_OR(82),
+    BITWISE_XOR(83),
+    BITWISE_INVERT(84),
+    LSHIFT(85),
+    RSHIFT(86);
 
     private final int code;
 

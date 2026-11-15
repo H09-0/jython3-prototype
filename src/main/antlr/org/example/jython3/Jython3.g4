@@ -92,6 +92,11 @@ aug_op
     | MOD_ASSIGN
     | FLOORDIV_ASSIGN
     | POWER_ASSIGN
+    | BIT_AND_ASSIGN
+    | BIT_OR_ASSIGN
+    | BIT_XOR_ASSIGN
+    | LSHIFT_ASSIGN
+    | RSHIFT_ASSIGN
     ;
 
 /** import module_name or from module import name */
@@ -281,9 +286,14 @@ expr
     | <assoc=right> expr POWER expr                        # Power
     | SUB expr                                             # UnaryMinus
     | ADD expr                                             # UnaryPlus
+    | BIT_NOT expr                                         # BitwiseInvert
     | NOT expr                                             # NotExpr
     | expr op=('*' | '/' | FLOORDIV | '%') expr            # MulDivMod
     | expr op=('+' | '-') expr                             # AddSub
+    | expr op=(LSHIFT | RSHIFT) expr                       # ShiftExpr
+    | expr BIT_AND expr                                    # BitAndExpr
+    | expr BIT_XOR expr                                    # BitXorExpr
+    | expr BIT_OR expr                                     # BitOrExpr
     | expr op=(EQ | NEQ | LTE | GTE | LT | GT) expr        # Comparison
     | expr NOT IN expr                                     # NotInExpr
     | expr IN expr                                         # InExpr
@@ -382,18 +392,29 @@ DIV_ASSIGN      : '/=';
 MOD_ASSIGN      : '%=';
 FLOORDIV_ASSIGN : '//=';
 POWER_ASSIGN    : '**=';
+LSHIFT_ASSIGN   : '<<=';
+RSHIFT_ASSIGN   : '>>=';
+BIT_AND_ASSIGN  : '&=';
+BIT_OR_ASSIGN   : '|=';
+BIT_XOR_ASSIGN  : '^=';
 POWER           : '**';
 FLOORDIV        : '//';
+LSHIFT          : '<<';
+RSHIFT          : '>>';
 EQ              : '==';
 NEQ             : '!=';
 LTE             : '<=';
 GTE             : '>=';
 
 // Single-character punctuation & operators
-ASSIGN : '=';
-LT     : '<';
-GT     : '>';
-DOT    : '.';
+ASSIGN  : '=';
+LT      : '<';
+GT      : '>';
+BIT_AND : '&';
+BIT_OR  : '|';
+BIT_XOR : '^';
+BIT_NOT : '~';
+DOT     : '.';
 
 LPAREN : '(';
 RPAREN : ')';
@@ -414,7 +435,11 @@ AT     : '@';
 // Literals — FSTRING must come before STRING so the lexer picks the right rule
 ID     : [a-zA-Z_][a-zA-Z0-9_]*;
 FLOAT  : [0-9]+ '.' [0-9]* | '.' [0-9]+;
-INT    : [0-9]+;
+INT    : '0' [xX] [0-9a-fA-F]+
+       | '0' [bB] [01]+
+       | '0' [oO] [0-7]+
+       | [0-9]+
+       ;
 
 /**
  * f-strings: f'...' / f"..." (single or double quote, single-line only).

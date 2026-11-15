@@ -445,6 +445,7 @@ public class FieldIntegrationTest {
                 used_var = 42
                 unused_heavy = [1, 2, 3, 4, 5]
                 def inner_fn(x):
+                    msg = "unused_heavy"
                     return x + used_var
                 lam = lambda y: y * used_var
                 return inner_fn, lam
@@ -460,9 +461,60 @@ public class FieldIntegrationTest {
         var lamObj = (org.example.jython3.runtime.PyFunction) interp.getGlobal("lam_obj");
         assertTrue(fnObj.closure().containsKey("used_var"));
         org.junit.jupiter.api.Assertions.assertFalse(fnObj.closure().containsKey("unused_heavy"),
-                "Unreferenced local variable must not be retained in function closure");
+                "Unreferenced local variable must not be retained even when its name appears as a string literal");
         assertTrue(lamObj.closure().containsKey("used_var"));
         org.junit.jupiter.api.Assertions.assertFalse(lamObj.closure().containsKey("unused_heavy"),
                 "Unreferenced local variable must not be retained in lambda closure");
+    }
+
+    @Test
+    @DisplayName("Bitwise operations (&, |, ^, ~, <<, >>) and compound assignments (&=, |=, ^=, <<=, >>=) with PyInt, BigInt, and float rejection")
+    void testBitwiseOperations() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            assert (5 & 3) == 1
+            assert (5 | 2) == 7
+            assert (5 ^ 1) == 4
+            assert (~5) == -6
+            assert (1 << 4) == 16
+            assert (16 >> 2) == 4
+
+            # BigInt bitwise & shift
+            big = 1 << 80
+            big |= 0xFF
+            big ^= 0x0F
+            big &= 0xF0
+            assert big == 240
+
+            # Compound bitwise on attributes and nested subscripts
+            class Flags:
+                def __init__(self, m):
+                    self.mask = m
+
+            f = Flags(1)
+            f.mask <<= 4
+            f.mask |= 3
+
+            arr = [[8, 16]]
+            arr[0][1] >>= 2
+            arr[0][0] ^= 3
+
+            float_err = False
+            try:
+                bad = 3.5 | 1
+            except TypeError:
+                float_err = True
+
+            inv_float_err = False
+            try:
+                bad2 = ~1.5
+            except TypeError:
+                inv_float_err = True
+            """);
+        var f = (org.example.jython3.runtime.PyInstance) interp.getGlobal("f");
+        assertEquals(new PyInt(19), f.getField("mask"));
+        assertEquals("[[11, 4]]", interp.getGlobal("arr").toString());
+        assertEquals(PyBool.TRUE, interp.getGlobal("float_err"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("inv_float_err"));
     }
 }

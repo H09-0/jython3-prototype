@@ -23,7 +23,7 @@
 ## 2. Verified Current Capabilities
 
 ### Core Language & Syntax
-- **Numeric & Boolean Semantics**: Signed 32-bit `int` (with `-128..256` cache and automatic `BigInt` promotion), IEEE-754 `float`, true division `/`, exact floor division `//` and `%`, `bool` subclassing `int` (`True + True == 2`).
+- **Numeric & Boolean Semantics**: Signed 32-bit `int` (with `-128..256` cache and automatic `BigInt` promotion), hex/binary/octal literals (`0x`, `0b`, `0o`), IEEE-754 `float`, true division `/`, exact floor division `//` and `%`, bitwise & shift operations (`&`, `|`, `^`, `~`, `<<`, `>>`, `&=`, `|=`, `^=`, `<<=`, `>>=`), and `bool` subclassing `int` (`True + True == 2`, `True & False == False`).
 - **Strings**: UTF-8 / codepoint-safe `PyStr` (with non-surrogate ASCII/BMP fast-path), triple-quoted strings, raw strings (`r"..."`, `r'...'`), f-strings (`f"..."`), `%` formatting, and full Unicode slicing (`s[a:b:c]`).
 - **Collections**: Mutable `PyList`, immutable `PyTuple`, insertion-ordered `PyDict` (with `1 == 1.0 == True` key semantics and zero-allocation lookup key), `PySet` (with hashability enforcement).
 - **Comprehensions**: List (`[x for x in seq if cond]`), dict (`{k: v for ...}`), and set (`{x for ...}`) comprehensions.

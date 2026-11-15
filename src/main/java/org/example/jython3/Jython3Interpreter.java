@@ -1089,6 +1089,12 @@ public class Jython3Interpreter {
                         throw PyErrors.error("TypeError", "bad operand type for unary -: '" + typeName(v) + "'");
                     }
                 }
+                case BITWISE_AND    -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.bitwiseAnd(l, r)); }
+                case BITWISE_OR     -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.bitwiseOr(l, r)); }
+                case BITWISE_XOR    -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.bitwiseXor(l, r)); }
+                case BITWISE_INVERT -> stack.push(ArithmeticOps.bitwiseInvert(stack.pop()));
+                case LSHIFT         -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.leftShift(l, r, executionLimits)); }
+                case RSHIFT         -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.rightShift(l, r)); }
 
                 // ── Comparison ──
                 case COMPARE_EQ     -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(pyEquals(l, r))); }

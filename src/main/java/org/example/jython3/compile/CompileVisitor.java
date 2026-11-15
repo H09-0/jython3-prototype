@@ -276,6 +276,11 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             case "//=" -> OpCode.FLOOR_DIVIDE;
             case "%="  -> OpCode.MODULO;
             case "**=" -> OpCode.POWER;
+            case "&="  -> OpCode.BITWISE_AND;
+            case "|="  -> OpCode.BITWISE_OR;
+            case "^="  -> OpCode.BITWISE_XOR;
+            case "<<=" -> OpCode.LSHIFT;
+            case ">>=" -> OpCode.RSHIFT;
             default    -> throw new CompileError("unknown augmented assignment operator: " + opText);
         };
         emitAugAssign(target, c.expr(), op);
@@ -760,6 +765,29 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         visit(c.expr()); b.emit(OpCode.UNARY_MINUS); return null;
     }
 
+    @Override public Void visitBitwiseInvert(Jython3Parser.BitwiseInvertContext c) {
+        visit(c.expr()); b.emit(OpCode.BITWISE_INVERT); return null;
+    }
+
+    @Override public Void visitShiftExpr(Jython3Parser.ShiftExprContext c) {
+        visit(c.expr(0));
+        visit(c.expr(1));
+        b.emit(c.op.getText().equals("<<") ? OpCode.LSHIFT : OpCode.RSHIFT);
+        return null;
+    }
+
+    @Override public Void visitBitAndExpr(Jython3Parser.BitAndExprContext c) {
+        visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.BITWISE_AND); return null;
+    }
+
+    @Override public Void visitBitXorExpr(Jython3Parser.BitXorExprContext c) {
+        visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.BITWISE_XOR); return null;
+    }
+
+    @Override public Void visitBitOrExpr(Jython3Parser.BitOrExprContext c) {
+        visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.BITWISE_OR); return null;
+    }
+
     @Override public Void visitNotExpr(Jython3Parser.NotExprContext c) {
         visit(c.expr()); b.emit(OpCode.LOGICAL_NOT); return null;
     }
@@ -836,10 +864,21 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     @Override public Void visitParen(Jython3Parser.ParenContext c) { visit(c.expr()); return null; }
     @Override public Void visitInt(Jython3Parser.IntContext c) {
         String text = c.INT().getText();
+        int radix = 10;
+        if (text.startsWith("0x") || text.startsWith("0X")) {
+            text = text.substring(2);
+            radix = 16;
+        } else if (text.startsWith("0b") || text.startsWith("0B")) {
+            text = text.substring(2);
+            radix = 2;
+        } else if (text.startsWith("0o") || text.startsWith("0O")) {
+            text = text.substring(2);
+            radix = 8;
+        }
         try {
-            b.emit(OpCode.LOAD_CONST, Integer.valueOf(text));
+            b.emit(OpCode.LOAD_CONST, Integer.valueOf(text, radix));
         } catch (NumberFormatException nfe) {
-            b.emit(OpCode.LOAD_CONST, new org.example.jython3.runtime.BigInt(new java.math.BigInteger(text)));
+            b.emit(OpCode.LOAD_CONST, new org.example.jython3.runtime.BigInt(new java.math.BigInteger(text, radix)));
         }
         return null;
     }

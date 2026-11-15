@@ -290,4 +290,23 @@ public class CoreDifferentialTest {
         assertMatchesCPython("assert_ok", "assert 1 == 1; print('assert_passed')");
         assertMatchesCPython("assert_caught", "try:\n    assert 1 == 2, 'fail'\nexcept AssertionError as e:\n    print(str(e))");
     }
+
+    @Test
+    void testBitwiseOperationsDifferential() {
+        assertMatchesCPython("bitwise_basic",
+                "print(5 & 3, 5 | 2, 5 ^ 1, ~5, ~0, ~(-6), 1 << 4, 16 >> 2)");
+        assertMatchesCPython("bitwise_precedence",
+                "print(1 | 2 ^ 3 & 4 << 1 + 1, ~1 + 5, 10 >> 1 & 3)");
+        assertMatchesCPython("bitwise_bigint",
+                "big = (1 << 100) | (1 << 50) | 7\n" +
+                "print(big & 7, (big >> 50) & 1, (big ^ (1 << 100)) >> 50, ~big)");
+        assertMatchesCPython("bitwise_aug_assign",
+                "x = 12\nx &= 10\nx |= 5\nx ^= 3\nx <<= 2\nx >>= 1\nprint(x)");
+        assertMatchesCPython("bitwise_bool",
+                "print(True & False, True | False, True ^ True, True & 1, ~True, True << 3)");
+        assertMatchesCPython("bitwise_float_error",
+                "try:\n    x = 5 & 1.5\nexcept TypeError:\n    print('float_rejected')");
+        assertMatchesCPython("bitwise_neg_shift_error",
+                "try:\n    x = 1 << -2\nexcept ValueError:\n    print('neg_shift_rejected')");
+    }
 }
