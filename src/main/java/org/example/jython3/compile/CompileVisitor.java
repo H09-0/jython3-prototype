@@ -1557,8 +1557,13 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      */
     @Override public Void visitFStr(Jython3Parser.FStrContext c) {
         String raw = c.FSTRING().getText();
-        // Strip the leading f/F prefix and quotes (f"...", f'...')
-        String inner = raw.substring(2, raw.length() - 1);
+        String body = raw.substring(1); // drop f/F
+        String inner;
+        if (body.startsWith("\"\"\"") || body.startsWith("'''")) {
+            inner = body.substring(3, body.length() - 3);
+        } else {
+            inner = body.substring(1, body.length() - 1);
+        }
         var parts = splitFString(inner);
         if (parts.isEmpty()) {
             b.emit(OpCode.LOAD_CONST, "");
@@ -1567,22 +1572,31 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         boolean first = true;
         for (var part : parts) {
             if (part.isExpr()) {
-                // Pattern: load str() FIRST, then compile expr, then CALL_FUNCTION(1)
-                // Stack: [str_fn, value] -> CALL_FUNCTION(1) -> [str_result]
-                b.emit(OpCode.LOAD_FAST, "str");
-                try {
-                    var lexer  = new org.example.jython3.Jython3Lexer(
-                            org.antlr.v4.runtime.CharStreams.fromString(part.text()));
-                    lexer.removeErrorListeners();
-                    var tokens = new org.antlr.v4.runtime.CommonTokenStream(lexer);
-                    var parser = new org.example.jython3.Jython3Parser(tokens);
-                    parser.removeErrorListeners();
-                    visit(parser.expr());
-                    b.emitRaw(OpCode.CALL_FUNCTION, 1);
-                } catch (Exception ex) {
-                    b.emit(OpCode.POP_TOP); // pop the str_fn we pushed
-                    b.emit(OpCode.LOAD_CONST, "{" + part.text() + "}");
+                var parsed = parseFStringExpr(part.text());
+                var lexer = new org.example.jython3.Jython3Lexer(
+                        org.antlr.v4.runtime.CharStreams.fromString(parsed.expr()));
+                lexer.removeErrorListeners();
+                var tokens = new org.antlr.v4.runtime.CommonTokenStream(lexer);
+                var parser = new org.example.jython3.Jython3Parser(tokens);
+                parser.removeErrorListeners();
+                var tree = parser.expr();
+                if (parser.getNumberOfSyntaxErrors() > 0 || tokens.LA(1) != org.antlr.v4.runtime.Token.EOF) {
+                    throw new CompileError("f-string: invalid expression '" + parsed.expr() + "'");
                 }
+                b.emit(OpCode.LOAD_FAST, "format");
+                if (parsed.conversion() == 'r') {
+                    b.emit(OpCode.LOAD_FAST, "repr");
+                    visit(tree);
+                    b.emitRaw(OpCode.CALL_FUNCTION, 1);
+                } else if (parsed.conversion() == 's') {
+                    b.emit(OpCode.LOAD_FAST, "str");
+                    visit(tree);
+                    b.emitRaw(OpCode.CALL_FUNCTION, 1);
+                } else {
+                    visit(tree);
+                }
+                b.emit(OpCode.LOAD_CONST, parsed.spec());
+                b.emitRaw(OpCode.CALL_FUNCTION, 2);
             } else {
                 b.emit(OpCode.LOAD_CONST, StringEscapes.unescape(part.text()));
             }
@@ -1590,6 +1604,46 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             first = false;
         }
         return null;
+    }
+
+    private record ParsedFExpr(String expr, char conversion, String spec) {}
+
+    private static ParsedFExpr parseFStringExpr(String raw) {
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        int braceDepth = 0;
+        char inQuote = 0;
+        int colonIdx = -1;
+        for (int i = 0; i < raw.length(); i++) {
+            char ch = raw.charAt(i);
+            if (inQuote != 0) {
+                if (ch == '\\') { i++; continue; }
+                if (ch == inQuote) inQuote = 0;
+                continue;
+            }
+            if (ch == '\'' || ch == '"') { inQuote = ch; continue; }
+            if (ch == '(') parenDepth++;
+            else if (ch == ')' && parenDepth > 0) parenDepth--;
+            else if (ch == '[') bracketDepth++;
+            else if (ch == ']' && bracketDepth > 0) bracketDepth--;
+            else if (ch == '{') braceDepth++;
+            else if (ch == '}' && braceDepth > 0) braceDepth--;
+            else if (ch == ':' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0) {
+                colonIdx = i;
+                break;
+            }
+        }
+        String exprPart = colonIdx >= 0 ? raw.substring(0, colonIdx).trim() : raw.trim();
+        String specPart = colonIdx >= 0 ? raw.substring(colonIdx + 1) : "";
+        char conv = 0;
+        if (exprPart.length() >= 3 && exprPart.charAt(exprPart.length() - 2) == '!') {
+            char c = exprPart.charAt(exprPart.length() - 1);
+            if (c == 'r' || c == 's' || c == 'a') {
+                conv = c;
+                exprPart = exprPart.substring(0, exprPart.length() - 2).trim();
+            }
+        }
+        return new ParsedFExpr(exprPart, conv, specPart);
     }
 
     /** One segment of an f-string: either a literal or an {expr}. */

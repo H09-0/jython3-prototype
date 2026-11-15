@@ -440,6 +440,10 @@ public class Jython3Interpreter implements AutoCloseable {
                 return executionLimits;
             }
 
+            @Override public ExecutionContext executionContext() {
+                return currentContext;
+            }
+
             @Override public PyObject resolveZeroArgSuper() {
                 if (currentFunction == null || currentLocals == null || currentFunction.params().isEmpty()) {
                     throw PyErrors.error("RuntimeError", "super(): no arguments");

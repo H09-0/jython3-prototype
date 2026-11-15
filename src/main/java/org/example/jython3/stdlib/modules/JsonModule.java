@@ -4,6 +4,7 @@ import org.example.jython3.runtime.BigInt;
 import org.example.jython3.runtime.ExceptionTypeRegistry;
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
+import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyFloat;
@@ -14,25 +15,37 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PyStr;
+import org.example.jython3.security.ExecutionContext;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.example.jython3.stdlib.modules.StdlibSupport.fn;
 
 /** Standard {@code json} module implementing strict RFC 8259 parsing and serialization. */
 public final class JsonModule {
+    private static final int MAX_DEPTH = 512;
     private JsonModule() {}
 
     public static PyModule create() {
         Map<String, PyObject> attrs = new HashMap<>();
         attrs.put("JSONDecodeError", ExceptionTypeRegistry.current().type("JSONDecodeError"));
-        attrs.put("dumps", fn("dumps", args -> {
+        attrs.put("dumps", new PyBuiltinFunction("dumps", (args, kwargs) -> {
             if (args.length == 0) throw PyErrors.error("TypeError", "dumps() missing 1 required positional argument: 'obj'");
-            return new PyStr(simpleJsonDumps(args[0]));
+            int indent = -1;
+            PyObject indentObj = kwargs.get("indent");
+            if (indentObj != null && !(indentObj instanceof PyNull)) {
+                indent = Math.max(0, Math.min(32, PyOps.toInt(indentObj)));
+            }
+            boolean sortKeys = kwargs.containsKey("sort_keys") && PyOps.isTruthy(kwargs.get("sort_keys"));
+            return new PyStr(simpleJsonDumps(args[0],
+                    java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()),
+                    0, indent, sortKeys));
         }));
         attrs.put("loads", fn("loads", args -> {
             if (args.length == 0) throw PyErrors.error("TypeError", "loads() missing 1 required positional argument: 's'");
@@ -44,27 +57,60 @@ public final class JsonModule {
         return new PyModule("json", attrs);
     }
 
-    private static String simpleJsonDumps(PyObject o) {
-        return simpleJsonDumps(o, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+    private static String escapeJsonString(String raw) {
+        var sb = new StringBuilder(raw.length() + 2);
+        sb.append('"');
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.append('"').toString();
     }
 
-    private static String simpleJsonDumps(PyObject o, java.util.Set<PyObject> active) {
+    private static String simpleJsonDumps(PyObject o, java.util.Set<PyObject> active,
+                                          int depth, int indent, boolean sortKeys) {
+        if (depth > MAX_DEPTH) {
+            throw PyErrors.error("RecursionError", "maximum JSON serialization depth exceeded");
+        }
         if (o instanceof PyNull) return "null";
         if (o instanceof PyBool b) return b.value() ? "true" : "false";
         if (o instanceof PyInt i) return String.valueOf(i.value());
         if (o instanceof BigInt bi) return bi.value().toString();
-        if (o instanceof PyFloat f) return String.valueOf(f.value());
-        if (o instanceof PyStr s) return "\"" + s.value().replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        if (o instanceof PyFloat f) {
+            if (Double.isNaN(f.value()) || Double.isInfinite(f.value())) {
+                throw PyErrors.error("ValueError", "Out of range float values are not JSON compliant");
+            }
+            return String.valueOf(f.value());
+        }
+        if (o instanceof PyStr s) return escapeJsonString(s.value());
         if (o instanceof PyList list) {
             if (!active.add(list)) {
                 throw PyErrors.error("ValueError", "Circular reference detected");
             }
             try {
+                if (list.items().isEmpty()) return "[]";
                 StringBuilder sb = new StringBuilder("[");
                 for (int i = 0; i < list.items().size(); i++) {
                     if (i > 0) sb.append(",");
-                    sb.append(simpleJsonDumps(list.items().get(i), active));
+                    if (indent >= 0) sb.append('\n').append(" ".repeat((depth + 1) * indent));
+                    sb.append(simpleJsonDumps(list.items().get(i), active, depth + 1, indent, sortKeys));
                 }
+                if (indent >= 0) sb.append('\n').append(" ".repeat(depth * indent));
                 sb.append("]");
                 return sb.toString();
             } finally {
@@ -76,11 +122,14 @@ public final class JsonModule {
                 throw PyErrors.error("ValueError", "Circular reference detected");
             }
             try {
+                if (tuple.items().isEmpty()) return "[]";
                 StringBuilder sb = new StringBuilder("[");
                 for (int i = 0; i < tuple.items().size(); i++) {
                     if (i > 0) sb.append(",");
-                    sb.append(simpleJsonDumps(tuple.items().get(i), active));
+                    if (indent >= 0) sb.append('\n').append(" ".repeat((depth + 1) * indent));
+                    sb.append(simpleJsonDumps(tuple.items().get(i), active, depth + 1, indent, sortKeys));
                 }
+                if (indent >= 0) sb.append('\n').append(" ".repeat(depth * indent));
                 sb.append("]");
                 return sb.toString();
             } finally {
@@ -92,25 +141,37 @@ public final class JsonModule {
                 throw PyErrors.error("ValueError", "Circular reference detected");
             }
             try {
+                if (dict.map().isEmpty()) return "{}";
+                List<Map.Entry<PyObject, PyObject>> entries = new ArrayList<>(dict.map().entrySet());
+                if (sortKeys) {
+                    entries.sort(Comparator.comparing(e -> e.getKey().toString()));
+                }
                 StringBuilder sb = new StringBuilder("{");
                 int i = 0;
-                for (var e : dict.map().entrySet()) {
+                for (var e : entries) {
                     if (i++ > 0) sb.append(",");
-                    sb.append(simpleJsonDumps(e.getKey(), active)).append(":").append(simpleJsonDumps(e.getValue(), active));
+                    if (indent >= 0) sb.append('\n').append(" ".repeat((depth + 1) * indent));
+                    String keyJson = (e.getKey() instanceof PyStr ks)
+                            ? escapeJsonString(ks.value())
+                            : escapeJsonString(e.getKey().toString());
+                    sb.append(keyJson).append(indent >= 0 ? ": " : ":")
+                            .append(simpleJsonDumps(e.getValue(), active, depth + 1, indent, sortKeys));
                 }
+                if (indent >= 0) sb.append('\n').append(" ".repeat(depth * indent));
                 sb.append("}");
                 return sb.toString();
             } finally {
                 active.remove(dict);
             }
         }
-        return "\"" + o.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        throw PyErrors.error("TypeError", "Object of type " + PyOps.typeName(o) + " is not JSON serializable");
     }
 
     private static final class JsonParser {
-        private static final int MAX_DEPTH = 512;
+        private static final int MAX_DEPTH = JsonModule.MAX_DEPTH;
         private final String src;
         private final int len;
+        private final ExecutionContext ctx = ExecutionContext.current();
         private int pos = 0;
 
         JsonParser(String src) {
@@ -128,6 +189,7 @@ public final class JsonModule {
         }
 
         private PyObject parseValue(int depth) {
+            if (ctx != null && (pos & 0xFF) == 0) ctx.stepInstruction();
             if (depth > MAX_DEPTH) throw decodeError("Maximum JSON nesting depth exceeded", pos);
             skipWhitespace();
             if (pos >= len) throw decodeError("Expecting value", pos);

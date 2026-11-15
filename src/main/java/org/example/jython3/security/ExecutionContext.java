@@ -1,5 +1,6 @@
 package org.example.jython3.security;
 
+import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyErrors;
 
 /**
@@ -7,6 +8,11 @@ import org.example.jython3.runtime.PyErrors;
  * Propagates across nested function calls, generator iterations, and imported modules.
  */
 public final class ExecutionContext {
+
+    public static ExecutionContext current() {
+        PyCaller c = PyCaller.current();
+        return c != null ? c.executionContext() : null;
+    }
 
     private final ExecutionLimits limits;
     private final ExecutionContext parent;

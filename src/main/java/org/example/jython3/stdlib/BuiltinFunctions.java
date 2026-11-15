@@ -743,6 +743,21 @@ public final class BuiltinFunctions {
             return new PyStr(pyRepr(args[0]));
         }));
 
+        // format(value, format_spec="")
+        define.accept("format", new PyBuiltinFunction("format", args -> {
+            if (args.length < 1 || args.length > 2) {
+                throw PyErrors.error("TypeError", "format() takes 1 or 2 arguments (" + args.length + " given)");
+            }
+            String spec = "";
+            if (args.length == 2) {
+                if (!(args[1] instanceof PyStr s)) {
+                    throw PyErrors.error("TypeError", "format() argument 2 must be str, not " + typeName(args[1]));
+                }
+                spec = s.value();
+            }
+            return new PyStr(formatValue(args[0], spec, caller.executionLimits().maxStringLength()));
+        }));
+
         // hash(obj)
         define.accept("hash", new PyBuiltinFunction("hash", args -> {
             checkArgCount("hash", args, 1);
@@ -1393,5 +1408,195 @@ public final class BuiltinFunctions {
             return "-" + prefix + val.negate().toString(radix);
         }
         return prefix + val.toString(radix);
+    }
+
+    private static String formatValue(PyObject val, String spec, int maxStrLen) {
+        if (spec == null || spec.isEmpty()) {
+            return val.toString();
+        }
+        int widthLimit = Math.min(10_000, Math.max(1, maxStrLen));
+        // Parse Python format mini-language: [[fill]align][sign][#][0][width][grouping][.precision][type]
+        int idx = 0;
+        int len = spec.length();
+        char fill = ' ';
+        char align = 0;
+        if (idx + 1 < len && "<>=^".indexOf(spec.charAt(idx + 1)) >= 0) {
+            fill = spec.charAt(idx);
+            align = spec.charAt(idx + 1);
+            idx += 2;
+        } else if (idx < len && "<>=^".indexOf(spec.charAt(idx)) >= 0) {
+            align = spec.charAt(idx++);
+        }
+        char sign = '-';
+        if (idx < len && "+- ".indexOf(spec.charAt(idx)) >= 0) {
+            sign = spec.charAt(idx++);
+        }
+        boolean altForm = false;
+        if (idx < len && spec.charAt(idx) == '#') {
+            altForm = true;
+            idx++;
+        }
+        boolean zeroPad = false;
+        if (idx < len && spec.charAt(idx) == '0') {
+            zeroPad = true;
+            if (align == 0) {
+                fill = '0';
+                align = '=';
+            }
+            idx++;
+        }
+        int widthStart = idx;
+        while (idx < len && Character.isDigit(spec.charAt(idx))) idx++;
+        int width = 0;
+        if (idx > widthStart) {
+            try {
+                width = Integer.parseInt(spec.substring(widthStart, idx));
+            } catch (NumberFormatException nfe) {
+                throw PyErrors.error("ValueError", "Format width exceeds limit");
+            }
+            if (width > widthLimit) {
+                throw PyErrors.error("MemoryError", "Formatted string width (" + width + ") exceeds limit (" + widthLimit + ")");
+            }
+        }
+        char grouping = 0;
+        if (idx < len && (spec.charAt(idx) == ',' || spec.charAt(idx) == '_')) {
+            grouping = spec.charAt(idx++);
+        }
+        int precision = -1;
+        if (idx < len && spec.charAt(idx) == '.') {
+            idx++;
+            int pStart = idx;
+            while (idx < len && Character.isDigit(spec.charAt(idx))) idx++;
+            if (idx == pStart) throw PyErrors.error("ValueError", "Format specifier missing precision");
+            try {
+                precision = Integer.parseInt(spec.substring(pStart, idx));
+            } catch (NumberFormatException nfe) {
+                throw PyErrors.error("ValueError", "Format precision exceeds limit");
+            }
+            if (precision > 1000) throw PyErrors.error("ValueError", "Format precision exceeds limit");
+        }
+        char type = 0;
+        if (idx < len) {
+            type = spec.charAt(idx++);
+        }
+        if (idx != len) {
+            throw PyErrors.error("ValueError", "Invalid format specifier '" + spec + "'");
+        }
+
+        boolean isStrVal = val instanceof PyStr;
+        if (type == 0) {
+            if (isStrVal) type = 's';
+            else if (val instanceof PyFloat) type = 'g';
+            else if (val instanceof PyInt || val instanceof BigInt || val instanceof PyBool) type = 'd';
+            else type = 's';
+        }
+
+        String prefix = "";
+        String body;
+        boolean numeric = (val instanceof PyInt || val instanceof BigInt || val instanceof PyBool || val instanceof PyFloat);
+
+        if (type == 's') {
+            if (!(val instanceof PyStr) && (sign != '-' || altForm || zeroPad || grouping != 0)) {
+                throw PyErrors.error("ValueError", "Unknown format code 's' for object");
+            }
+            String s = val.toString();
+            if (precision >= 0 && s.length() > precision) s = s.substring(0, precision);
+            body = s;
+            if (align == 0) align = '<';
+        } else if (type == 'd' || type == 'b' || type == 'o' || type == 'x' || type == 'X') {
+            if (val instanceof PyFloat) {
+                throw PyErrors.error("ValueError", "Unknown format code '" + type + "' for object of type 'float'");
+            }
+            java.math.BigInteger bi = toBigIntStrict(val, "format");
+            boolean neg = bi.signum() < 0;
+            java.math.BigInteger absBi = bi.abs();
+            if (neg) prefix = "-";
+            else if (sign == '+' || sign == ' ') prefix = String.valueOf(sign);
+
+            int radix = switch (type) {
+                case 'b' -> 2;
+                case 'o' -> 8;
+                case 'x', 'X' -> 16;
+                default -> 10;
+            };
+            if (altForm && type != 'd') {
+                prefix += switch (type) {
+                    case 'b' -> "0b";
+                    case 'o' -> "0o";
+                    case 'x' -> "0x";
+                    case 'X' -> "0X";
+                    default -> "";
+                };
+            }
+            body = absBi.toString(radix);
+            if (type == 'X') body = body.toUpperCase();
+            if (grouping != 0) body = groupDigits(body, grouping, type == 'd' ? 3 : 4);
+            if (align == 0) align = '>';
+        } else if (type == 'f' || type == 'F' || type == 'e' || type == 'E' || type == 'g' || type == 'G' || type == '%') {
+            if (!numeric) {
+                throw PyErrors.error("ValueError", "Unknown format code '" + type + "' for object of type '" + typeName(val) + "'");
+            }
+            double d = toDouble(val);
+            if (type == '%') d *= 100.0;
+            int prec = precision >= 0 ? precision : 6;
+            boolean neg = d < 0 || (d == 0.0 && Double.doubleToRawLongBits(d) < 0);
+            double absD = Math.abs(d);
+            if (neg) prefix = "-";
+            else if (sign == '+' || sign == ' ') prefix = String.valueOf(sign);
+
+            String fmtType = switch (type) {
+                case 'f', 'F', '%' -> "%." + prec + "f";
+                case 'e' -> "%." + prec + "e";
+                case 'E' -> "%." + prec + "E";
+                case 'g' -> precision >= 0 ? "%." + Math.max(1, prec) + "g" : "%.16g";
+                case 'G' -> precision >= 0 ? "%." + Math.max(1, prec) + "G" : "%.16G";
+                default -> "%s";
+            };
+            body = String.format(java.util.Locale.ROOT, fmtType, absD);
+            if (type == 'g' || type == 'G') {
+                if (precision < 0 && body.contains(".") && !body.contains("e") && !body.contains("E")) {
+                    body = body.replaceAll("0+$", "").replaceAll("\\.$", "");
+                }
+            }
+            if (grouping != 0) {
+                int dot = body.indexOf('.');
+                String intPart = dot >= 0 ? body.substring(0, dot) : body;
+                String rest = dot >= 0 ? body.substring(dot) : "";
+                body = groupDigits(intPart, grouping, 3) + rest;
+            }
+            if (type == '%') body += "%";
+            if (align == 0) align = '>';
+        } else {
+            throw PyErrors.error("ValueError", "Unknown format code '" + type + "'");
+        }
+
+        int totalLen = prefix.length() + body.length();
+        if (totalLen >= width) {
+            return prefix + body;
+        }
+        int pad = width - totalLen;
+        String padStr = String.valueOf(fill).repeat(pad);
+        return switch (align) {
+            case '<' -> prefix + body + padStr;
+            case '=' -> prefix + padStr + body;
+            case '^' -> {
+                int left = pad / 2;
+                int right = pad - left;
+                yield String.valueOf(fill).repeat(left) + prefix + body + String.valueOf(fill).repeat(right);
+            }
+            default -> padStr + prefix + body;
+        };
+    }
+
+    private static String groupDigits(String digits, char sep, int groupSize) {
+        if (digits.length() <= groupSize) return digits;
+        var sb = new StringBuilder(digits.length() + digits.length() / groupSize);
+        int rem = digits.length() % groupSize;
+        if (rem > 0) sb.append(digits, 0, rem);
+        for (int i = rem; i < digits.length(); i += groupSize) {
+            if (sb.length() > 0) sb.append(sep);
+            sb.append(digits, i, i + groupSize);
+        }
+        return sb.toString();
     }
 }

@@ -1,5 +1,6 @@
 package org.example.jython3.runtime;
 
+import org.example.jython3.security.ExecutionContext;
 import org.example.jython3.security.ExecutionLimits;
 
 import java.util.List;
@@ -53,6 +54,11 @@ public interface PyCaller {
     /** Returns the active interpreter's execution limits. */
     default ExecutionLimits executionLimits() {
         return ExecutionLimits.TRUSTED;
+    }
+
+    /** Returns the active execution context on the current interpreter, or null. */
+    default ExecutionContext executionContext() {
+        return null;
     }
 
     ThreadLocal<PyCaller> CURRENT = new ThreadLocal<>();
