@@ -3652,6 +3652,17 @@ public class Jython3Interpreter implements AutoCloseable {
             if (pkg.contains(".") || isJavaRootPackage(pkg)) {
                 String rootPkg = pkg.contains(".") ? pkg.substring(0, pkg.indexOf('.')) : pkg;
                 if (isJavaRootPackage(rootPkg)) {
+                    if (javaAccessPolicy.canAccessClass(pkg)) {
+                        try {
+                            PyObject pkgAsClass = JavaBridge.resolveClassOrPackage(pkg, javaAccessPolicy);
+                            if (pkgAsClass instanceof PyJavaClass jc) {
+                                bindImportedName(alias, jc.getMember(item));
+                                return;
+                            }
+                        } catch (InterpreterException ie) {
+                            if (!"ImportError".equals(ie.typeName())) throw ie;
+                        }
+                    }
                     PyObject resolved = JavaBridge.resolveClassOrPackage(fullName, javaAccessPolicy);
                     if (resolved != null) {
                         bindImportedName(alias, resolved);

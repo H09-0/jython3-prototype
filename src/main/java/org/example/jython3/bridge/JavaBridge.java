@@ -218,14 +218,15 @@ public class JavaBridge {
         if (!policy.canAccessClass(fullName)) throw denied(fullName);
 
         String candidate = fullName;
+        int firstDot = fullName.indexOf('.');
         while (true) {
-            if (!policy.canAccessClass(candidate)) throw denied(candidate);
             try {
                 Class<?> clazz = Class.forName(candidate);
+                if (!policy.canAccessClass(clazz.getName())) throw denied(clazz.getName());
                 return new PyJavaClass(clazz, policy);
             } catch (ClassNotFoundException e) {
                 int lastDot = candidate.lastIndexOf('.');
-                if (lastDot < 0) {
+                if (lastDot <= firstDot) {
                     break;
                 }
                 candidate = candidate.substring(0, lastDot) + '$' + candidate.substring(lastDot + 1);
