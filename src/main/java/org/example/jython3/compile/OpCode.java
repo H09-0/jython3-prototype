@@ -66,7 +66,9 @@ public enum OpCode {
     BITWISE_XOR(83),
     BITWISE_INVERT(84),
     LSHIFT(85),
-    RSHIFT(86);
+    RSHIFT(86),
+    // ── exception chaining
+    RAISE_FROM(87);         // stack: [..., exc, cause] → raise exc with __cause__ = cause (None suppresses context)
 
     private final int code;
 

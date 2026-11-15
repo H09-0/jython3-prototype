@@ -54,6 +54,9 @@ public final class PyInstance implements PyObject {
         if (fields.containsKey(name)) {
             return fields.get(name);
         }
+        if ("__class__".equals(name)) {
+            return pyClass;
+        }
         throw PyErrors.error("AttributeError", "'" + pyClass.name() + "' object has no attribute '" + name + "'");
     }
 
@@ -78,7 +81,7 @@ public final class PyInstance implements PyObject {
     }
 
     public boolean hasField(String name) {
-        return fields.containsKey(name) || pyClass.hasMember(name);
+        return fields.containsKey(name) || pyClass.hasMember(name) || "__class__".equals(name);
     }
 
     @Override

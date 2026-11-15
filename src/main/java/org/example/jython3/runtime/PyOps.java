@@ -193,6 +193,11 @@ public final class PyOps {
         if (a instanceof PySet sa && b instanceof PySet sb) {
             return sa.equals(sb);
         }
+        if (a instanceof PyClass || a instanceof PyException || a instanceof PyFunction
+                || a instanceof PyBuiltinFunction || a instanceof PyBoundMethod
+                || a instanceof PyInstance || a instanceof PyModule) {
+            return a == b;
+        }
         return false;
     }
 

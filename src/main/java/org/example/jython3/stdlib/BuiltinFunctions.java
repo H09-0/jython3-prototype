@@ -12,6 +12,7 @@ import org.example.jython3.bridge.JavaBridge;
 import org.example.jython3.runtime.BigInt;
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
+import org.example.jython3.runtime.PyBoundMethod;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyClass;
@@ -19,6 +20,7 @@ import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyException;
 import org.example.jython3.runtime.PyFloat;
+import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
 import org.example.jython3.runtime.PyInt;
@@ -207,6 +209,8 @@ public final class BuiltinFunctions {
         // type(obj)
         define.accept("type", new PyBuiltinFunction("type", args -> {
             checkArgCount("type", args, 1);
+            if (args[0] instanceof PyException pe) return pe.type();
+            if (args[0] instanceof PyInstance inst) return inst.pyClass();
             return new PyStr("<class '" + typeName(args[0]) + "'>");
         }));
 
@@ -481,10 +485,15 @@ public final class BuiltinFunctions {
         define.accept("hasattr", new PyBuiltinFunction("hasattr", args -> {
             checkArgCount("hasattr", args, 2);
             if (!(args[1] instanceof PyStr s)) throw PyErrors.error("TypeError", "attribute name must be string");
-            if (args[0] instanceof PyModule mod) return PyBool.of(mod.attrs().containsKey(s.value()));
-            if (args[0] instanceof PyDict d) return PyBool.of(d.map().containsKey(new PyStr(s.value())));
-            if (args[0] instanceof PyInstance inst) return PyBool.of(inst.hasField(s.value()));
-            if (args[0] instanceof PyClass cls) return PyBool.of(cls.hasMember(s.value()));
+            String name = s.value();
+            if (args[0] instanceof PyModule mod) return PyBool.of(mod.attrs().containsKey(name));
+            if (args[0] instanceof PyDict d) return PyBool.of(d.map().containsKey(new PyStr(name)));
+            if (args[0] instanceof PyInstance inst) return PyBool.of(inst.hasField(name) || "__class__".equals(name));
+            if (args[0] instanceof PyClass cls) return PyBool.of(cls.hasMember(name) || "__name__".equals(name));
+            if (args[0] instanceof PyException pe) return PyBool.of(pe.pythonAttribute(name) != null);
+            if (args[0] instanceof PyFunction || args[0] instanceof PyBuiltinFunction || args[0] instanceof PyBoundMethod) {
+                return PyBool.of("__name__".equals(name));
+            }
             return PyBool.FALSE;
         }));
 
@@ -492,16 +501,32 @@ public final class BuiltinFunctions {
         define.accept("getattr", new PyBuiltinFunction("getattr", args -> {
             if (args.length < 2 || args.length > 3) throw PyErrors.error("TypeError", "getattr expected 2 or 3 arguments");
             if (!(args[1] instanceof PyStr s)) throw PyErrors.error("TypeError", "attribute name must be string");
+            String name = s.value();
             if (args[0] instanceof PyModule mod) {
-                PyObject val = mod.attrs().get(s.value());
+                PyObject val = mod.attrs().get(name);
                 if (val != null) return val;
-            }
-            if (args[0] instanceof PyInstance inst) {
-                try { return inst.getField(s.value()); }
-                catch (InterpreterException ignored) {}
+            } else if (args[0] instanceof PyInstance inst) {
+                try {
+                    return inst.getField(name);
+                } catch (InterpreterException ignored) {
+                    // fall through to default / AttributeError
+                }
+            } else if (args[0] instanceof PyClass cls) {
+                PyObject val = cls.lookupMember(name);
+                if (val != null) return val;
+                if ("__name__".equals(name)) return new PyStr(cls.name());
+            } else if (args[0] instanceof PyException pe) {
+                PyObject val = pe.pythonAttribute(name);
+                if (val != null) return val;
+            } else if (args[0] instanceof PyFunction fn && "__name__".equals(name)) {
+                return new PyStr(fn.name());
+            } else if (args[0] instanceof PyBuiltinFunction bf && "__name__".equals(name)) {
+                return new PyStr(bf.name());
+            } else if (args[0] instanceof PyBoundMethod bm && "__name__".equals(name)) {
+                return new PyStr(bm.fn().name());
             }
             if (args.length == 3) return args[2];
-            throw PyErrors.error("AttributeError", "object has no attribute '" + s.value() + "'");
+            throw PyErrors.error("AttributeError", "object has no attribute '" + name + "'");
         }));
 
         // setattr(obj, name, val)

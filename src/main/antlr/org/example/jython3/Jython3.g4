@@ -119,7 +119,7 @@ dotted_name
 
 /** raise [expr] — bare raise re-raises the active exception */
 raise_stmt
-    : RAISE expr?
+    : RAISE (expr (FROM expr)?)?
     ;
 
 /** return [rhs_tuple] */

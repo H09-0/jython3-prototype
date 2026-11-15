@@ -23,8 +23,10 @@ import java.util.Objects;
 public final class PyException implements PyObject {
     private final PyClass type;
     private final List<PyObject> args;
-    private final PyException cause;
+    private PyException cause;
     private PyException context;
+    /** Python {@code __suppress_context__}: set by {@code raise ... from ...}. */
+    private boolean suppressContext;
     private final Throwable javaCause;
     /**
      * Frames captured when the error was caught. The carrier builds the
@@ -62,6 +64,32 @@ public final class PyException implements PyObject {
         if (candidate != null && candidate != this && this.context == null) {
             this.context = candidate;
         }
+    }
+
+    /**
+     * Applies {@code raise self from cause}: sets {@code __cause__} (which may be
+     * {@code null} for {@code from None}) and {@code __suppress_context__ = True}.
+     */
+    public void setExplicitCause(PyException cause) {
+        this.cause = cause;
+        this.suppressContext = true;
+    }
+
+    public boolean suppressContext() { return suppressContext; }
+
+    /**
+     * Python-visible attributes of an exception value, or {@code null} when
+     * {@code name} is not one of them.
+     */
+    public PyObject pythonAttribute(String name) {
+        return switch (name) {
+            case "args" -> new PyTuple(new ArrayList<>(args));
+            case "__cause__" -> cause != null ? cause : new PyNull();
+            case "__context__" -> context != null ? context : new PyNull();
+            case "__suppress_context__" -> PyBool.of(suppressContext);
+            case "__class__" -> type;
+            default -> null;
+        };
     }
 
     private static List<PyObject> defaultArgs(String message) {

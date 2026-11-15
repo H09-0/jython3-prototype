@@ -397,4 +397,22 @@ public class CoreDifferentialTest {
                 + "try:\n    r = [1] in {1: 0}\nexcept TypeError as e:\n    print('list-in-dict', str(e))\n"
                 + "try:\n    r = [1] in {1}\nexcept TypeError as e:\n    print('list-in-set', str(e))");
     }
+
+    @Test
+    void testExceptionMetadataAndDunderNameDifferential() {
+        assertMatchesCPython("exception_context_and_raise_from",
+                "saved = None\n"
+                + "try:\n    try:\n        raise KeyError('k')\n    except KeyError as orig:\n        saved = orig\n        raise ValueError('v')\nexcept ValueError as e:\n"
+                + "    print(e.__context__ is saved, type(e.__context__) == KeyError, e.__cause__ is None, e.__suppress_context__, e.args)\n"
+                + "saved2 = None\n"
+                + "try:\n    try:\n        raise KeyError('k2')\n    except KeyError as orig2:\n        saved2 = orig2\n        raise ValueError('v2') from orig2\nexcept ValueError as e2:\n"
+                + "    print(e2.__cause__ is saved2, e2.__context__ is saved2, e2.__suppress_context__)\n"
+                + "try:\n    try:\n        raise KeyError('k3')\n    except KeyError:\n        raise ValueError('v3') from None\nexcept ValueError as e3:\n"
+                + "    print(e3.__cause__ is None, e3.__suppress_context__, e3.__context__.__class__.__name__)");
+        assertMatchesCPython("dunder_name_and_class",
+                "class C:\n    def m(self):\n        pass\n"
+                + "def f():\n    pass\n"
+                + "x = C()\n"
+                + "print(C.__name__, ValueError.__name__, x.__class__ is C, type(x).__name__, f.__name__, len.__name__, x.m.__name__)");
+    }
 }

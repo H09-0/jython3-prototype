@@ -500,6 +500,44 @@ public class Jython3Interpreter {
     }
 
     /**
+     * {@code raise exc from cause}. The cause may be an exception instance, an
+     * exception class (instantiated with no arguments) or {@code None}; anything
+     * else is a {@code TypeError}. Sets {@code __cause__} and
+     * {@code __suppress_context__}; {@code __context__} is still recorded.
+     */
+    private InterpreterException toRaiseFrom(PyObject value, PyObject causeObj) {
+        PyException exception;
+        if (value instanceof PyException pe) {
+            exception = pe;
+        } else if (value instanceof PyClass cls && cls.isExceptionType()) {
+            exception = new PyException(cls, List.of());
+        } else {
+            throw newRaiseTypeError();
+        }
+        PyException cause;
+        if (causeObj instanceof PyNull) {
+            cause = null;
+        } else if (causeObj instanceof PyException ce) {
+            cause = ce;
+        } else if (causeObj instanceof PyClass cc && cc.isExceptionType()) {
+            cause = new PyException(cc, List.of());
+        } else {
+            PyException error = new PyException(
+                    ExceptionTypeRegistry.current().type("TypeError"),
+                    "exception causes must derive from BaseException");
+            if (activeExceptions.peekLast() instanceof PyException active) {
+                error.attachContextIfAbsent(active);
+            }
+            throw PyErrors.errorValue(error);
+        }
+        exception.setExplicitCause(cause);
+        if (activeExceptions.peekLast() instanceof PyException active) {
+            exception.attachContextIfAbsent(active);
+        }
+        return PyErrors.errorValue(exception);
+    }
+
+    /**
      * The error for raising a value that is not an exception. It goes through
      * the same context rule as any other error raised while a handler is
      * active.
@@ -1726,6 +1764,9 @@ public class Jython3Interpreter {
                                 if (member == null && inst.fields().containsKey(attr)) {
                                     member = inst.fields().get(attr);
                                 }
+                                if (member == null && "__class__".equals(attr)) {
+                                    member = cls;
+                                }
                                 if (member == null) {
                                     throw PyErrors.error("AttributeError", "'" + cls.name() + "' object has no attribute '" + attr + "'");
                                 }
@@ -1741,8 +1782,22 @@ public class Jython3Interpreter {
                         }
                     } else if (obj instanceof PyClass cls) {
                         PyObject val = cls.lookupMember(attr);
+                        if (val == null && "__name__".equals(attr)) val = new PyStr(cls.name());
                         if (val == null) throw PyErrors.error("AttributeError", "type object '" + cls.name() + "' has no attribute '" + attr + "'");
                         stack.push(val);
+                    } else if (obj instanceof PyException pe) {
+                        PyObject val = pe.pythonAttribute(attr);
+                        if (val == null) throw PyErrors.error("AttributeError", "'" + pe.typeName() + "' object has no attribute '" + attr + "'");
+                        stack.push(val);
+                    } else if (obj instanceof PyFunction fn) {
+                        if ("__name__".equals(attr)) stack.push(new PyStr(fn.name()));
+                        else throw PyErrors.error("AttributeError", "'function' object has no attribute '" + attr + "'");
+                    } else if (obj instanceof PyBuiltinFunction bf) {
+                        if ("__name__".equals(attr)) stack.push(new PyStr(bf.name()));
+                        else throw PyErrors.error("AttributeError", "'builtin_function_or_method' object has no attribute '" + attr + "'");
+                    } else if (obj instanceof PyBoundMethod bm) {
+                        if ("__name__".equals(attr)) stack.push(new PyStr(bm.fn().name()));
+                        else throw PyErrors.error("AttributeError", "'method' object has no attribute '" + attr + "'");
                     } else if (obj instanceof PyModule mod) {
                         PyObject val = mod.attrs().get(attr);
                         if (val == null) throw PyErrors.error("AttributeError", "module '" + mod.name() + "' has no attribute '" + attr + "'");
@@ -1774,6 +1829,11 @@ public class Jython3Interpreter {
                 case BEGIN_EXCEPT_HANDLER -> activeExceptions.addLast(stack.peek());
                 case END_EXCEPT_HANDLER -> { if (!activeExceptions.isEmpty()) activeExceptions.removeLast(); }
                 case RAISE -> throw toRaise(stack.pop());
+                case RAISE_FROM -> {
+                    PyObject causeObj = stack.pop();
+                    PyObject excObj = stack.pop();
+                    throw toRaiseFrom(excObj, causeObj);
+                }
                 case RAISE_ACTIVE -> {
                     PyObject active = activeExceptions.peekLast();
                     if (active == null) {
@@ -2054,10 +2114,18 @@ public class Jython3Interpreter {
             if (v != null) return v;
             PyClass cls = inst.pyClass();
             PyObject cv = cls.lookupMember(attr);
+            if (cv == null && "__class__".equals(attr)) return cls;
             if (cv instanceof PyFunction fn) return new PyBoundMethod(inst, fn);
             return cv;
         }
-        if (obj instanceof PyClass cls) return cls.lookupMember(attr);
+        if (obj instanceof PyClass cls) {
+            PyObject cv = cls.lookupMember(attr);
+            return (cv == null && "__name__".equals(attr)) ? new PyStr(cls.name()) : cv;
+        }
+        if (obj instanceof PyException pe) return pe.pythonAttribute(attr);
+        if (obj instanceof PyFunction fn && "__name__".equals(attr)) return new PyStr(fn.name());
+        if (obj instanceof PyBuiltinFunction bf && "__name__".equals(attr)) return new PyStr(bf.name());
+        if (obj instanceof PyBoundMethod bm && "__name__".equals(attr)) return new PyStr(bm.fn().name());
         if (obj instanceof PyModule mod) return mod.attrs().get(attr);
         if (obj instanceof PyDict dict) return BuiltinMethodDispatcher.dictMethod(dict, attr);
         if (obj instanceof PyList list) return BuiltinMethodDispatcher.listMethod(list, attr);

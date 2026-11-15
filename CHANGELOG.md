@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **Python-visible exception metadata & `raise ... from ...` (`PyException`, `RAISE_FROM`)**:
+  - Exposed `__context__`, `__cause__`, `__suppress_context__`, `args`, and `__class__` on `PyException` via `LOAD_ATTR`, `getattr`, and `hasattr`.
+  - Added grammar and `RAISE_FROM` opcode for `raise exc from cause` and `raise exc from None` (instantiating exception classes, validating `BaseException` inheritance with `TypeError`, setting `__cause__` and `__suppress_context__ = True`, and preserving implicit `__context__`).
+- **`__name__`, `__class__`, and `type()` class identity**:
+  - Exposed `__name__` on classes, functions, builtins, and bound methods; `__class__` on instances and exceptions; updated `type(inst)`/`type(exc)` to return the `PyClass`; added identity equality in `PyOps.pyEquals` for classes, exceptions, functions, instances, and modules; fixed `getattr(inst, missing, default)` so missing fields fall back to `default` instead of throwing (417 total tests passing green).
 - **Integer Bitwise Operations & Base Literals**: Added `&`, `|`, `^`, `~`, `<<`, `>>` and compound assignments `&=`, `|=`, `^=`, `<<=`, `>>=` (plus `0x`/`0b`/`0o` integer literals) with exact Python operator precedence, `PyInt` and `BigInt` two's-complement support, `PyBool` bitwise semantics, `float` `TypeError` rejection, and CPython differential conformance tests.
 - **Bytecode-Level Closure Variable Analysis**: Refined `CompiledCode.referencedNames` to inspect `LOAD_FAST`/`STORE_FAST`/`DELETE_FAST` and `@nonlocal:` bytecode instructions rather than raw `constPool` strings, preventing string literals from retaining identically named outer local variables (395 total tests passing green).
 - **Unified `LValue` Assignment & Compound Assignment (`LValue.java`)**: Unified `NameTarget`, `AttributeTarget`, `SubscriptTarget`, and `TupleTarget` across regular assignment, chained assignment, sequence unpacking, `for` loop unpacking, `del` (`DELETE_ATTR`), and single-evaluation augmented assignment (`x += 1`, `obj.value += 1`, `items[0] += 1`, `matrix[0][1] *= 2`) using `DUP_TOP_TWO`, `ROT_TWO`, and `ROT_THREE`.

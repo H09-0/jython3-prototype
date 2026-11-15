@@ -1179,14 +1179,20 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitRaise_stmt(Jython3Parser.Raise_stmtContext c) {
-        if (c.expr() == null) {
+        if (c.expr().isEmpty()) {
             // Bare raise: re-raise whatever handler is active.
             b.emit(OpCode.RAISE_ACTIVE);
             return null;
         }
         // The expression may be a class (raise E), a call (raise E("msg")), or
         // an existing exception value (raise e). The VM decides which.
-        visit(c.expr());
+        visit(c.expr(0));
+        if (c.FROM() != null) {
+            // raise E from C: explicit __cause__ (C may be None to suppress context)
+            visit(c.expr(1));
+            b.emit(OpCode.RAISE_FROM);
+            return null;
+        }
         b.emit(OpCode.RAISE);
         return null;
     }
