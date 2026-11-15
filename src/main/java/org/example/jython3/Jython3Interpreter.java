@@ -82,6 +82,7 @@ import org.example.jython3.security.ExecutionContext;
 import org.example.jython3.security.ExecutionLimits;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.security.JavaAccessPolicy;
+import org.example.jython3.control.ControlRegistry;
 import org.example.jython3.host.CapabilitySet;
 import org.example.jython3.host.HostSession;
 import org.example.jython3.runtime.PyHostHandle;
@@ -134,6 +135,7 @@ public class Jython3Interpreter implements AutoCloseable {
     private volatile boolean enforceLimits = false;
     private volatile boolean closed = false;
     private final HostSession hostSession;
+    private final ControlRegistry controlRegistry = new ControlRegistry();
     private UiToolkit uiToolkit = new HeadlessUiToolkit();
 
     /** Requests cooperative cancellation of the currently running evaluation/generator. */
@@ -486,6 +488,10 @@ public class Jython3Interpreter implements AutoCloseable {
     /** The capability-gated host session owned by this interpreter. */
     public HostSession hostSession() {
         return hostSession;
+    }
+
+    public ControlRegistry controlRegistry() {
+        return controlRegistry;
     }
 
     public UiToolkit uiToolkit() {
@@ -3155,6 +3161,7 @@ public class Jython3Interpreter implements AutoCloseable {
             case "time" -> BuiltinModules.time();
             case "random" -> BuiltinModules.random();
             case "ui" -> BuiltinModules.ui(hostSession, uiToolkit);
+            case "control" -> BuiltinModules.control(hostSession, controlRegistry, uiToolkit);
             default     -> null;
         };
         if (mod != null) {

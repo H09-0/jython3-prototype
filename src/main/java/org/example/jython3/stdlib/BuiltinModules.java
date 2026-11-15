@@ -1,10 +1,12 @@
 package org.example.jython3.stdlib;
 
+import org.example.jython3.control.ControlRegistry;
 import org.example.jython3.host.HostSession;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
 import org.example.jython3.security.HostAccessPolicy;
+import org.example.jython3.stdlib.modules.ControlModule;
 import org.example.jython3.stdlib.modules.IoModule;
 import org.example.jython3.stdlib.modules.JsonModule;
 import org.example.jython3.stdlib.modules.MathModule;
@@ -35,4 +37,7 @@ public final class BuiltinModules {
     public static PyModule time()   { return TimeModule.create(); }
     public static PyModule random() { return RandomModule.create(); }
     public static PyModule ui(HostSession session, UiToolkit toolkit) { return UiModule.create(session, toolkit); }
+    public static PyModule control(HostSession session, ControlRegistry registry, UiToolkit toolkit) {
+        return ControlModule.create(session, registry, toolkit);
+    }
 }
