@@ -36,7 +36,7 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 | **Functions & Scope** | **T2** | `def`, `lambda`, default arguments, `*args`, `**kwargs`, keyword calls, lexical closures, `global`, `nonlocal` via `PyCell`, decorators. |
 | **Context Managers (`with`)** | **T1** | `with expr [as id]:` executing `__enter__` and `__exit__` on normal and exceptional exits. |
 | **Object-Oriented Programming** | **T1** | `class Name(Bases):`, `__init__`, dynamic instance fields, bound methods, single/multiple inheritance, `super()` (0-arg and 2-arg), version-guarded inline attribute caches. |
-| **Exception Handling** | **T2** | `try / except / else / finally`, class hierarchy matching, exception tuples `except (A, B) as e`, PEP 3110 deletion, nested unwinding, bare `raise`. |
+| **Exception Handling & `finally` Unwinding** | **T2** | `try / except / else / finally`. Supports class hierarchy matching, exception tuples `except (A, B) as e`, PEP 3110 deletion, `return`/`break`/`continue`/`raise` unwinding through nested `finally` and `with` blocks, `finally` control-flow override semantics, operand stack restoration (`stackDepth`), and active exception context (`__context__`), differential tested against CPython. |
 | **Generators** | **T1** | Functions with `yield` produce `PyGenerator` supporting `for` loops and `list()`/`sum()`/`sorted()`/`reversed()`. Coroutine `.send()` / `.throw()` are not yet implemented. |
 | **execfile()** | **T1** | Direct execution of external Python source files within current scope (gated by `HostAccessPolicy`). |
 | **Async / Await** | **T0** | Reserved for future concurrency phase (Java Virtual Threads). |

@@ -517,4 +517,211 @@ public class FieldIntegrationTest {
         assertEquals(PyBool.TRUE, interp.getGlobal("float_err"));
         assertEquals(PyBool.TRUE, interp.getGlobal("inv_float_err"));
     }
+
+    @Test
+    @DisplayName("Comprehensive try/finally control-flow exits (normal, return, break, continue, raise, except, nested, closures, Java Bridge)")
+    void testTryFinallyControlFlowComprehensive() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            # 1. Normal completion
+            ev1 = []
+            try:
+                ev1.append("try")
+            finally:
+                ev1.append("finally")
+            assert ev1 == ["try", "finally"]
+
+            # 2. return inside try
+            ev2 = []
+            def f2():
+                try:
+                    return 10
+                finally:
+                    ev2.append("finally")
+            r2 = f2()
+            assert r2 == 10 and ev2 == ["finally"]
+
+            # 3. return inside finally overrides try return
+            def f3():
+                try:
+                    return 10
+                finally:
+                    return 20
+            assert f3() == 20
+
+            # 4 & 6. raise inside try with finally (unhandled exception propagates after finally)
+            ev4 = []
+            caught4 = False
+            try:
+                try:
+                    raise ValueError("x")
+                finally:
+                    ev4.append("finally")
+            except ValueError:
+                caught4 = True
+            assert caught4 and ev4 == ["finally"]
+
+            # 5. handled exception with finally
+            ev5 = []
+            try:
+                raise ValueError("x")
+            except ValueError:
+                ev5.append("except")
+            finally:
+                ev5.append("finally")
+            assert ev5 == ["except", "finally"]
+
+            # 7. break inside try
+            ev7 = []
+            for i in range(3):
+                try:
+                    ev7.append(i)
+                    break
+                finally:
+                    ev7.append("finally")
+            assert ev7 == [0, "finally"]
+
+            # 8. continue inside try
+            ev8 = []
+            for i in range(3):
+                try:
+                    if i == 1:
+                        continue
+                    ev8.append(i)
+                finally:
+                    ev8.append("finally")
+            assert ev8 == [0, "finally", "finally", 2, "finally"]
+
+            # 9. nested finally with raise
+            ev9 = []
+            caught9 = False
+            try:
+                try:
+                    try:
+                        ev9.append("inner")
+                        raise ValueError("x")
+                    finally:
+                        ev9.append("inner-finally")
+                finally:
+                    ev9.append("outer-finally")
+            except ValueError:
+                caught9 = True
+            assert caught9 and ev9 == ["inner", "inner-finally", "outer-finally"]
+
+            # 10. return with nested finally
+            ev10 = []
+            def f10():
+                try:
+                    try:
+                        return 1
+                    finally:
+                        ev10.append("inner")
+                finally:
+                    ev10.append("outer")
+            r10 = f10()
+            assert r10 == 1 and ev10 == ["inner", "outer"]
+
+            # 11. loop inside try (and exception inside for-loop inside try)
+            ev11 = []
+            try:
+                for i in range(3):
+                    ev11.append(i)
+            finally:
+                ev11.append("done")
+            assert ev11 == [0, 1, 2, "done"]
+
+            # 12 & 13. exception inside finally replaces original exception
+            caught13 = ""
+            try:
+                try:
+                    raise RuntimeError("outer")
+                finally:
+                    raise ValueError("inner-override")
+            except ValueError as e:
+                caught13 = str(e)
+            assert "inner-override" in caught13
+
+            # 14 & 15. break and continue inside finally
+            ev14 = []
+            for i in range(3):
+                try:
+                    raise ValueError("suppressed-by-break")
+                finally:
+                    ev14.append(i)
+                    break
+            assert ev14 == [0]
+
+            ev15 = []
+            for i in range(3):
+                try:
+                    raise ValueError("suppressed-by-continue")
+                finally:
+                    ev15.append(i)
+                    continue
+            assert ev15 == [0, 1, 2]
+
+            # 16. return, break, and continue inside except with finally
+            ev16 = []
+            def f16():
+                try:
+                    raise KeyError("k")
+                except KeyError:
+                    ev16.append("in-except")
+                    return 77
+                finally:
+                    ev16.append("in-finally")
+            assert f16() == 77 and ev16 == ["in-except", "in-finally"]
+
+            for i in range(3):
+                try:
+                    raise KeyError("k")
+                except KeyError:
+                    ev16.append("loop-except")
+                    break
+                finally:
+                    ev16.append("loop-finally")
+            assert ev16 == ["in-except", "in-finally", "loop-except", "loop-finally"]
+
+            # 17 & 18. nested functions & closures inside try/finally
+            def f18():
+                state = 10
+                readers = []
+                try:
+                    def read_state():
+                        return state
+                    readers.append(read_state)
+                    state = 20
+                    return state, readers[0]
+                finally:
+                    state = 30
+            ret_state, reader_fn = f18()
+            # return expression evaluated before finally (20), while closure sees updated binding if nonlocal/cell or frame state
+            assert ret_state == 20
+
+            # Java Bridge exception inside try/finally
+            from java.util import ArrayList
+            j_ev = []
+            j_caught = False
+            try:
+                try:
+                    j_list = ArrayList()
+                    x = j_list.get(99)
+                finally:
+                    j_ev.append("java-finally")
+            except Exception:
+                j_caught = True
+            assert j_caught and j_ev == ["java-finally"]
+
+            all_passed = True
+            """);
+        assertEquals(PyBool.TRUE, interp.getGlobal("all_passed"));
+
+        // Verify break and continue outside loop raise SyntaxError
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.example.jython3.runtime.InterpreterException.class,
+                () -> interp.eval("break"));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.example.jython3.runtime.InterpreterException.class,
+                () -> interp.eval("continue"));
+    }
 }

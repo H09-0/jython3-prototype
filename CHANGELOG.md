@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **Guaranteed `try/finally` Control-Flow Unwinding (`CompileVisitor` & `Jython3Interpreter`)**:
+  - Restored `ExceptHandler.stackDepth` (`truncateStack`) on exception catch across intra-frame and cross-frame unwinds so intermediate expression operands and inner `for`-loop iterators never leak onto the operand stack.
+  - Moved pending unhandled exceptions onto `activeExceptions` (`BEGIN_EXCEPT_HANDLER` + `POP_TOP` / `RERAISE(1)`) during `<exceptional-finally>` execution and saved pending return values in frame-local slots during `emitScopeExits`, so `return`, `break`, and `continue` inside `finally` (or inside `except`/`else`/`with`) execute with a clean operand stack and CPython-identical override semantics.
+  - Fixed `scope.handlerActive` tracking inside `except` and `else` suites when `finally` is present, and enforced `SyntaxError` on `break`/`continue` outside loops.
+  - Fixed `PyTuple.toString()` to quote `PyStr` elements matching Python `repr` and `PyList.toString()` (397 total tests passing green).
 - **Circular Reference Detection in `json.dumps()`**: Added active-ancestor cycle tracking (`IdentityHashMap` set) in `JsonModule.simpleJsonDumps` raising `ValueError: Circular reference detected` on self-referential lists, tuples, or dicts while allowing shared non-circular DAG siblings (`[x, x]`).
 - **Exact `math.floor()` / `math.ceil()` on `BigInt` & Overflow Checks**: Updated `MathModule` so `floor` and `ceil` preserve arbitrary-precision `BigInt` values without clamping to 32-bit `int`, and verified `OverflowError` across `sqrt`, `sin`, `cos`, `tan`, `log`, `pow` for `10 ** 400` (389 total tests passing green).
 - **`json.dumps(BigInt)` & `StdlibSupport.toDouble(bool/BigInt)`**: Fixed `JsonModule` to serialize `BigInt` as unquoted JSON numbers and `PyTuple` as JSON arrays; extended `StdlibSupport.toDouble` and `MathModule.abs` to accept `PyBool` and `BigInt` (raising `OverflowError` when `BigInt` overflows 64-bit `double`).

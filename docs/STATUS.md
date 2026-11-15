@@ -29,7 +29,7 @@
 - **Comprehensions**: List (`[x for x in seq if cond]`), dict (`{k: v for ...}`), and set (`{x for ...}`) comprehensions.
 - **Functions & Scope**: `def`, `lambda`, default parameters, `*args`, `**kwargs`, keyword calls, lexical closures, `global`, `nonlocal` via `PyCell`, decorators, and generators (`yield` with `PyGenerator`).
 - **Assignments & Unpacking**: Unified `LValue` model (`NameTarget`, `AttributeTarget`, `SubscriptTarget`, `TupleTarget`) supporting chained assignment (`a = b = obj.x = expr`), tuple/sequence unpacking (`a, b = pair`, `for a, b in pairs:`), `del` (`del x`, `del obj.attr`, `del items[0]`), and single-evaluation augmented assignment (`x += 1`, `obj.value += 1`, `items[0] += 1`, `matrix[0][1] *= 2`).
-- **Control Flow & Exceptions**: `if`/`elif`/`else`, `while`, `for` (with tuple target unpacking), `break`/`continue`, `assert`, `with` context managers (`__enter__`/`__exit__`), `try`/`except (A, B) as e`/`else`/`finally`, `raise`.
+- **Control Flow & Exceptions**: `if`/`elif`/`else`, `while`, `for` (with tuple target unpacking), `break`/`continue` (with compile-time `SyntaxError` if outside loop), `assert`, `with` context managers (`__enter__`/`__exit__`), and full `try`/`except (A, B) as e`/`else`/`finally` unwinding across `return`, `break`, `continue`, and `raise` (preserving operand stack depth `ExceptHandler.stackDepth` and active exception context across arbitrary nesting).
 - **OOP**: Classes, single & multiple inheritance, `super()` (0-arg and 2-arg), bound methods, version-guarded monomorphic inline caching (`LOAD_ATTR`) and hierarchy invalidation.
 
 ### Known Language Gaps

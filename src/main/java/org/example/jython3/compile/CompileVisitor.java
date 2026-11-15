@@ -30,32 +30,59 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     private static class TryScope {
         final Jython3Parser.SuiteContext finallySuite;
         final int loopDepth;
+        final boolean isWithScope;
         boolean handlerActive = true;
         boolean insideFinally = false;
-        /** True while compiling an {@code except} suite of this statement. */
+        /** True while compiling an {@code except} suite or exceptional {@code finally} of this statement. */
         boolean inHandler = false;
         String boundVar = null;
 
         TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth) {
+            this(finallySuite, loopDepth, false);
+        }
+
+        TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth, boolean isWithScope) {
             this.finallySuite = finallySuite;
             this.loopDepth = loopDepth;
+            this.isWithScope = isWithScope;
         }
     }
     private final java.util.Deque<TryScope> tryStack = new java.util.ArrayDeque<>();
+    private int returnCounter = 0;
+
+    private boolean hasPendingScopeExit() {
+        if (!tryStack.isEmpty()) return true;
+        for (LoopContext lc : loopStack) {
+            if (lc.isForLoop) return true;
+        }
+        return false;
+    }
+
+    private void popForLoopsAbove(int fromLoopDepth, int downToLoopDepth) {
+        for (LoopContext lc : loopStack) {
+            if (lc.depth <= fromLoopDepth && lc.depth > downToLoopDepth) {
+                if (lc.isForLoop) {
+                    b.emit(OpCode.POP_TOP);
+                }
+            }
+        }
+    }
 
     /**
      * Emits the exit path for scopes crossed by a jump. Scopes are visited
-     * innermost first: end the active-exception lifetime, deregister the
-     * handler, then run the {@code finally} body. {@code all} is used by
-     * {@code return}, which crosses every scope.
-     *
-     * <p>The {@code END_EXCEPT_HANDLER} instruction also has to be emitted
-     * here, not only at the natural end of a suite: {@code return},
-     * {@code break}, and {@code continue} jump over it.
+     * innermost first: pop any exited inner for-loop iterators, end the
+     * active-exception lifetime, deregister the handler, and run the
+     * {@code finally} body (or {@code __exit__}). {@code all} is used by
+     * {@code return}, which crosses every scope in the function frame.
      */
     private void emitScopeExits(int targetLoopDepth, boolean all) {
+        int currentLoopDepth = loopStack.size();
         for (TryScope scope : tryStack) {
             if (!all && scope.loopDepth < targetLoopDepth) break;
+            if (currentLoopDepth > scope.loopDepth) {
+                popForLoopsAbove(currentLoopDepth, scope.loopDepth);
+                currentLoopDepth = scope.loopDepth;
+            }
             if (scope.inHandler) {
                 if (scope.boundVar != null) {
                     b.emit(OpCode.DELETE_NAME_SILENT, scope.boundVar);
@@ -65,21 +92,31 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             if (scope.handlerActive) {
                 b.emit(OpCode.POP_EXCEPT_HANDLER);
             }
+            if (scope.isWithScope && !scope.insideFinally) {
+                b.emit(OpCode.END_WITH);
+            }
             if (scope.finallySuite != null && !scope.insideFinally) {
                 boolean prevInside = scope.insideFinally;
                 boolean prevActive = scope.handlerActive;
                 boolean prevInHandler = scope.inHandler;
+                String prevBound = scope.boundVar;
                 scope.insideFinally = true;
                 scope.handlerActive = false;
                 scope.inHandler = false;
+                scope.boundVar = null;
                 try {
                     visit(scope.finallySuite);
                 } finally {
                     scope.insideFinally = prevInside;
                     scope.handlerActive = prevActive;
                     scope.inHandler = prevInHandler;
+                    scope.boundVar = prevBound;
                 }
             }
+        }
+        int finalDepth = all ? 0 : targetLoopDepth;
+        if (currentLoopDepth > finalDepth) {
+            popForLoopsAbove(currentLoopDepth, finalDepth);
         }
     }
 
@@ -93,6 +130,38 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         } finally {
             scope.insideFinally = prevInside;
         }
+    }
+
+    /**
+     * Compiles the exceptional finally path where an unhandled exception is on top of stack.
+     * Moves the exception from the operand stack onto activeExceptions so the operand stack
+     * is clean during finally execution (allowing break/continue/return inside finally to
+     * leave a clean operand stack and pop activeExceptions), then re-raises from activeExceptions.
+     */
+    private void emitExceptionalFinallyAndReraise(TryScope scope) {
+        if (scope.finallySuite == null) {
+            b.emit(OpCode.RERAISE);
+            return;
+        }
+        b.emit(OpCode.BEGIN_EXCEPT_HANDLER);
+        b.emit(OpCode.POP_TOP);
+        boolean prevInside = scope.insideFinally;
+        boolean prevActive = scope.handlerActive;
+        boolean prevInHandler = scope.inHandler;
+        String prevBound = scope.boundVar;
+        scope.insideFinally = true;
+        scope.handlerActive = false;
+        scope.inHandler = true;
+        scope.boundVar = null;
+        try {
+            visit(scope.finallySuite);
+        } finally {
+            scope.insideFinally = prevInside;
+            scope.handlerActive = prevActive;
+            scope.inHandler = prevInHandler;
+            scope.boundVar = prevBound;
+        }
+        b.emitRaw(OpCode.RERAISE, 1);
     }
 
     @Override public Void visitStat(Jython3Parser.StatContext c) {
@@ -317,8 +386,13 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         } else {
             b.emit(OpCode.LOAD_CONST, null);
         }
-        // A return leaves every enclosing try block, so run their finally bodies.
-        emitScopeExits(0, true);
+        if (hasPendingScopeExit()) {
+            String retVar = "__ret_val_" + (returnCounter++);
+            b.emit(OpCode.STORE_FAST, retVar);
+            emitScopeExits(0, true);
+            b.emit(OpCode.LOAD_FAST, retVar);
+            b.emit(OpCode.DELETE_NAME_SILENT, retVar);
+        }
         b.emit(OpCode.RETURN_VALUE);
         return null;
     }
@@ -353,18 +427,19 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      * Collects the patch site into the innermost LoopContext.
      */
     @Override public Void visitBreak_stmt(Jython3Parser.Break_stmtContext c) {
-        if (!loopStack.isEmpty()) {
-            LoopContext target = loopStack.peek();
-            emitScopeExits(target.depth, false);
-            // In a 'for' loop, the PyIterator sits on the stack throughout the body.
-            // When breaking, we must pop it so enclosing scopes / outer loops find a clean stack.
-            if (target.isForLoop) {
-                b.emit(OpCode.POP_TOP);
-            }
-            int idx = b.size();
-            b.emitRaw(OpCode.JUMP, 0); // target patched after loop ends
-            target.breakPatches.add(idx);
+        if (loopStack.isEmpty()) {
+            throw new CompileError("'break' outside loop");
         }
+        LoopContext target = loopStack.peek();
+        emitScopeExits(target.depth, false);
+        // In a 'for' loop, the PyIterator sits on the stack throughout the body.
+        // When breaking, we must pop it so enclosing scopes / outer loops find a clean stack.
+        if (target.isForLoop) {
+            b.emit(OpCode.POP_TOP);
+        }
+        int idx = b.size();
+        b.emitRaw(OpCode.JUMP, 0); // target patched after loop ends
+        target.breakPatches.add(idx);
         return null;
     }
 
@@ -373,12 +448,13 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      * The target is set when the enclosing while/for visitor pushes its LoopContext.
      */
     @Override public Void visitContinue_stmt(Jython3Parser.Continue_stmtContext c) {
-        if (!loopStack.isEmpty()) {
-            LoopContext target = loopStack.peek();
-            emitScopeExits(target.depth, false);
-            int t = target.continueTarget;
-            if (t >= 0) b.emitRaw(OpCode.JUMP, t);
+        if (loopStack.isEmpty()) {
+            throw new CompileError("'continue' not properly in loop");
         }
+        LoopContext target = loopStack.peek();
+        emitScopeExits(target.depth, false);
+        int t = target.continueTarget;
+        if (t >= 0) b.emitRaw(OpCode.JUMP, t);
         return null;
     }
 
@@ -641,10 +717,23 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         scope.handlerActive = false;
 
         // --- else body (runs only when the try body completed normally) ---
+        int elsePushIdx = -1;
         if (c.ELSE() != null) {
             int elseOffset = finallySuite != null ? suites.size() - 2 : suites.size() - 1;
             if (elseOffset > 0 && elseOffset < suites.size()) {
-                visit(suites.get(elseOffset));
+                if (finallySuite != null) {
+                    elsePushIdx = b.size();
+                    b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
+                    scope.handlerActive = true;
+                }
+                try {
+                    visit(suites.get(elseOffset));
+                } finally {
+                    scope.handlerActive = false;
+                }
+                if (finallySuite != null) {
+                    b.emit(OpCode.POP_EXCEPT_HANDLER);
+                }
             }
         }
 
@@ -654,15 +743,25 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         // --- handler chain ---
         b.patch(pushIdx, b.size());
         var clauseEndPatches = new java.util.ArrayList<Integer>();
+        var clauseMatchErrorPatches = new java.util.ArrayList<Integer>();
         for (var clause : exceptClauses) {
             boolean hasType = clause.expr() != null;
             int nextClauseIdx = -1;
 
             if (hasType) {
+                int matchGuardIdx = -1;
+                if (finallySuite != null) {
+                    matchGuardIdx = b.size();
+                    b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
+                    clauseMatchErrorPatches.add(matchGuardIdx);
+                }
                 // Resolve the clause expression to a real class object. A name
                 // that is not an exception type is rejected by the VM.
                 visit(clause.expr());
                 b.emit(OpCode.COMPARE_EXC_TYPE);
+                if (finallySuite != null) {
+                    b.emit(OpCode.POP_EXCEPT_HANDLER);
+                }
                 nextClauseIdx = b.size();
                 b.emitRaw(OpCode.JUMP_IF_FALSE, 0); // try the next clause
             }
@@ -679,13 +778,6 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
                 b.emit(OpCode.POP_TOP);
             }
 
-            boolean prevActiveScope = scope.handlerActive;
-            boolean prevInHandler = scope.inHandler;
-            String prevBoundVar = scope.boundVar;
-            scope.handlerActive = false;
-            scope.inHandler = true;
-            scope.boundVar = boundVarName;
-
             int handlerPushIdx = -1;
             if (finallySuite != null) {
                 // If this try statement has a finally suite, register a handler around the
@@ -693,6 +785,13 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
                 handlerPushIdx = b.size();
                 b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
             }
+
+            boolean prevActiveScope = scope.handlerActive;
+            boolean prevInHandler = scope.inHandler;
+            String prevBoundVar = scope.boundVar;
+            scope.handlerActive = (finallySuite != null);
+            scope.inHandler = true;
+            scope.boundVar = boundVarName;
 
             try {
                 visit(clause.suite());
@@ -726,8 +825,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
                     b.emit(OpCode.DELETE_NAME_SILENT, boundVarName);
                 }
                 b.emit(OpCode.END_EXCEPT_HANDLER);
-                visitFinally(scope);
-                b.emit(OpCode.RERAISE);
+                emitExceptionalFinallyAndReraise(scope);
             }
 
             if (hasType) {
@@ -735,9 +833,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             }
         }
 
-        // No clause matched: run the finally body, then propagate the exception.
-        visitFinally(scope);
-        b.emit(OpCode.RERAISE);
+        // No clause matched (or exception in else / clause match): run finally, then propagate.
+        int unmatchedFinallyPc = b.size();
+        if (elsePushIdx >= 0) {
+            b.patch(elsePushIdx, unmatchedFinallyPc);
+        }
+        for (int mp : clauseMatchErrorPatches) {
+            b.patch(mp, unmatchedFinallyPc);
+        }
+        emitExceptionalFinallyAndReraise(scope);
 
         // Normal completion and handled exceptions skip the re-raise path.
         b.patch(jumpOverIdx, b.size());
@@ -1119,12 +1223,16 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         }
 
         // Register exception handler so we can call __exit__ on error
+        var withScope = new TryScope(null, loopStack.size(), true);
+        tryStack.push(withScope);
         int pushIdx = b.size();
         b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
 
         visit(c.suite());
 
         b.emit(OpCode.POP_EXCEPT_HANDLER);
+        withScope.handlerActive = false;
+        tryStack.pop();
         b.emit(OpCode.END_WITH);           // normal exit: calls __exit__(None,None,None)
         int jumpAfter = b.size();
         b.emitRaw(OpCode.JUMP, 0);

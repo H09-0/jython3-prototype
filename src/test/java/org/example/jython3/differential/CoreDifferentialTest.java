@@ -309,4 +309,28 @@ public class CoreDifferentialTest {
         assertMatchesCPython("bitwise_neg_shift_error",
                 "try:\n    x = 1 << -2\nexcept ValueError:\n    print('neg_shift_rejected')");
     }
+
+    @Test
+    void testTryFinallyControlFlowDifferential() {
+        assertMatchesCPython("finally_override_return",
+                "def f():\n    try:\n        return 'try'\n    finally:\n        return 'finally'\nprint(f())");
+        assertMatchesCPython("finally_override_exception",
+                "def f():\n    try:\n        raise RuntimeError('outer')\n    finally:\n        raise ValueError('inner')\ntry:\n    f()\nexcept ValueError as e:\n    print('caught_inner', str(e))");
+        assertMatchesCPython("finally_continue_overrides_break",
+                "events = []\nfor x in [1, 2]:\n    try:\n        events.append(('try', x))\n        break\n    finally:\n        events.append(('fin', x))\n        continue\n    events.append(('after', x))\nprint(events)");
+        assertMatchesCPython("finally_continue_overrides_raise",
+                "events = []\nfor x in [1, 2]:\n    try:\n        events.append(('try', x))\n        raise ValueError('boom')\n    finally:\n        events.append(('fin', x))\n        continue\nprint(events)");
+        assertMatchesCPython("finally_break_overrides_return",
+                "def f():\n    events = []\n    for x in [1, 2]:\n        try:\n            return 10\n        finally:\n            events.append(x)\n            break\n    return events\nprint(f())");
+        assertMatchesCPython("finally_return_preserves_evaluated_val",
+                "def f():\n    x = 1\n    try:\n        return x\n    finally:\n        x = 2\nprint(f())");
+        assertMatchesCPython("finally_except_return_and_break",
+                "def f():\n    log = []\n    try:\n        raise KeyError('k')\n    except KeyError:\n        log.append('except')\n        return ('ret', log)\n    finally:\n        log.append('finally')\nprint(f())");
+        assertMatchesCPython("finally_nested_depth_3",
+                "def f():\n    log = []\n    try:\n        try:\n            try:\n                log.append('body')\n                return ('ok', log)\n            finally:\n                log.append('f3')\n        finally:\n            log.append('f2')\n    finally:\n        log.append('f1')\nprint(f())");
+        assertMatchesCPython("finally_nested_depth_5_raise",
+                "log = []\ntry:\n    try:\n        try:\n            try:\n                try:\n                    raise ValueError('deep')\n                finally:\n                    log.append(5)\n            finally:\n                log.append(4)\n        finally:\n            log.append(3)\n    finally:\n        log.append(2)\nexcept ValueError:\n    log.append('caught')\nfinally:\n    log.append(1)\nprint(log)");
+        assertMatchesCPython("finally_with_bitwise",
+                "log = []\ndef f(x):\n    try:\n        x &= 3\n        return (1 << 100) | x\n    finally:\n        log.append(1 | 2)\nres = f(7)\nprint(res, log)");
+    }
 }

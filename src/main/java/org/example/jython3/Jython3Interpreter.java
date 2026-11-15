@@ -428,6 +428,13 @@ public class Jython3Interpreter {
         }
     }
 
+    /** Discards intermediate operands or inner loop iterators pushed inside a try block before an exception occurred. */
+    private void truncateStack(int depth) {
+        while (stack.size() > depth) {
+            stack.pop();
+        }
+    }
+
     /** Builds an exception value for {@code type} with the given arguments. */
     private static PyException exceptionValue(PyClass type, PyObject[] args) {
         return new PyException(type, List.of(args));
@@ -711,7 +718,11 @@ public class Jython3Interpreter {
         parser.addErrorListener(ThrowingErrorListener.INSTANCE);
 
         var b = new CodeBuilder();
-        new CompileVisitor(b).visit(parser.stat());
+        try {
+            new CompileVisitor(b).visit(parser.stat());
+        } catch (org.example.jython3.compile.CompileError ce) {
+            throw PyErrors.error("SyntaxError", ce.getMessage());
+        }
         b.emit(OpCode.HALT);
         CompiledCode result = b.build();
 
@@ -1756,7 +1767,7 @@ public class Jython3Interpreter {
                     }
                 }
                 case RERAISE -> {
-                    PyObject excObj = stack.pop();
+                    PyObject excObj = (ai == 1) ? activeExceptions.removeLast() : stack.pop();
                     throw PyErrors.errorValue(excObj);
                 }
                 case EXECFILE -> {
@@ -1904,6 +1915,7 @@ public class Jython3Interpreter {
                 if (!exceptStack.isEmpty()) {
                     ExceptHandler h = exceptStack.pop();
                     truncateActiveExceptions(h.activeDepth());
+                    truncateStack(h.stackDepth());
                     ie.setLocation(currentFile, currentLine, currentFunc);
                     ie.addFrame(currentFile, currentLine, currentFunc);
                     captureTraceback(ie);
@@ -1932,6 +1944,7 @@ public class Jython3Interpreter {
                     if (!exceptStack.isEmpty()) {
                         ExceptHandler h = exceptStack.pop();
                         truncateActiveExceptions(h.activeDepth());
+                        truncateStack(h.stackDepth());
                         ie.addFrame(currentFile, currentLine, currentFunc);
                         captureTraceback(ie);
                         stack.push(ie.value());

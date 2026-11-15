@@ -56,13 +56,18 @@ public final class PyTuple implements PyObject {
     public String toString() {
         if (items.isEmpty()) return "()";
         if (items.size() == 1) {
-            return "(" + items.get(0).toString() + ",)";
+            return "(" + formatItem(items.get(0)) + ",)";
         }
         var sb = new StringBuilder("(");
         for (int i = 0; i < items.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(items.get(i).toString());
+            sb.append(formatItem(items.get(i)));
         }
         return sb.append(")").toString();
+    }
+
+    private static String formatItem(PyObject it) {
+        if (it instanceof PyStr s) return "'" + s.value() + "'";
+        return String.valueOf(it);
     }
 }
