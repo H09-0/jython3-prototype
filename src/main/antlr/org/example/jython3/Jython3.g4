@@ -38,8 +38,7 @@ suite
     ;
 
 simple_stmt
-    : print_stmt
-    | assign_stmt
+    : assign_stmt
     | tuple_assign_stmt
     | subscript_assign_stmt
     | aug_assign_stmt
@@ -56,11 +55,6 @@ simple_stmt
     | global_stmt
     | nonlocal_stmt
     | assert_stmt
-    ;
-
-/** print() or print(a) or print(a, b, c) */
-print_stmt
-    : PRINT LPAREN arg_list? RPAREN
     ;
 
 /** identifier = expr  or  identifier = identifier = expr  (chained assignment) */
@@ -348,7 +342,6 @@ dict_entry
 // ─── Lexer rules ──────────────────────────────────────────────────────────────
 
 // Keywords
-PRINT    : 'print';
 IF       : 'if';
 ELIF     : 'elif';
 ELSE     : 'else';

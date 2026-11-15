@@ -810,7 +810,16 @@ public class Jython3Interpreter {
                     else if (v instanceof Double d) stack.push(new PyFloat(d));
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
                     else if (v instanceof org.example.jython3.runtime.BigInt bi) stack.push(bi);
-                    else if (v instanceof PyFunction f) stack.push(f);
+                    else if (v instanceof PyFunction f) {
+                        if (currentLocals != null && currentLocals != globals) {
+                            var captured = new HashMap<String, PyObject>(f.closure());
+                            captured.putAll(currentLocals);
+                            stack.push(new PyFunction(f.name(), f.params(), f.defaults(),
+                                    f.argsParam(), f.kwargsParam(), f.code(), captured));
+                        } else {
+                            stack.push(f);
+                        }
+                    }
                     else if (v instanceof CompiledCode cc) stack.push(new PyCompiledCodeWrapper(cc));
                     else throw PyErrors.error("RuntimeError", "unknown constant: " + v);
                 }

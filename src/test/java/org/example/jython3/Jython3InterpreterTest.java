@@ -191,7 +191,8 @@ class Jython3InterpreterTest {
 
     @Test void testBytecodeLength_PrintInt() throws InterpreterException {
         int[] bc = py.compileToBytecode("print(5)");
-        assertEquals(3, bc.length);
+        // print(5) as a regular builtin call: LOAD_FAST("print"), LOAD_CONST(5), CALL_FUNCTION(1), POP_TOP, HALT = 5
+        assertEquals(5, bc.length);
     }
 
     @Test void testBytecodeLength_Assign() throws InterpreterException {
@@ -365,8 +366,10 @@ class Jython3InterpreterTest {
     @Test void testBytecodeEncoding() {
         var code = py.compileToCode("print(1)");
         int first = code.bytecode()[0];
-        // first instruction should be LOAD_CONST (ordinal 0) → high 16 bits = 0
-        assertEquals(0, first >>> 16);
+        int second = code.bytecode()[1];
+        // first instruction is LOAD_FAST("print") (code 1), second is LOAD_CONST(1) (code 0)
+        assertEquals(1, first >>> 16);
+        assertEquals(0, second >>> 16);
     }
 
     // ═══════════════════════════════════════════════════════════════════

@@ -92,16 +92,14 @@ public final class BuiltinFunctions {
             String sep = " ";
             String end = "\n";
             PyObject sepObj = kwargs.get("sep");
-            if (sepObj != null) {
+            if (sepObj != null && !(sepObj instanceof PyNull)) {
                 if (sepObj instanceof PyStr s) sep = s.value();
-                else if (sepObj instanceof PyNull) sep = "None";
-                else sep = sepObj.toString();
+                else throw PyErrors.error("TypeError", "sep must be None or a string, not " + typeName(sepObj));
             }
             PyObject endObj = kwargs.get("end");
-            if (endObj != null) {
+            if (endObj != null && !(endObj instanceof PyNull)) {
                 if (endObj instanceof PyStr s) end = s.value();
-                else if (endObj instanceof PyNull) end = "None";
-                else end = endObj.toString();
+                else throw PyErrors.error("TypeError", "end must be None or a string, not " + typeName(endObj));
             }
             PyObject fileObj = kwargs.get("file");
             PyObject flushObj = kwargs.get("flush");

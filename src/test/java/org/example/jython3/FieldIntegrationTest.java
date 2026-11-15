@@ -305,4 +305,58 @@ public class FieldIntegrationTest {
         assertTrue(interp.getGlobal("not_callable_err").toString().contains("'int' object is not callable"),
                 interp.getGlobal("not_callable_err").toString());
     }
+
+    @Test
+    @DisplayName("print is a first-class built-in function supporting assignment, lists, closures, sep/end, and type validation")
+    void testPrintAsFirstClassBuiltin() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            class Sink:
+                def __init__(self):
+                    self.buf = ""
+                def write(self, s):
+                    self.buf = self.buf + s
+
+            sink = Sink()
+            print("a", "b", sep=",", file=sink)
+            print("loading", end="", file=sink)
+
+            fn = print
+            fn("...", file=sink)
+
+            printers = [print]
+            printers[0]("done", end="!", file=sink)
+
+            def make_logger(p):
+                return lambda msg: p(msg, end="", file=sink)
+
+            logger = make_logger(print)
+            ret_val = logger("ok")
+
+            bad_sep = False
+            try:
+                print("x", sep=123)
+            except TypeError:
+                bad_sep = True
+
+            bad_end = False
+            try:
+                print("x", end=456)
+            except TypeError:
+                bad_end = True
+
+            bad_kw = False
+            try:
+                print("x", unknown=1)
+            except TypeError:
+                bad_kw = True
+
+            out_text = sink.buf
+            """);
+        assertEquals(new PyStr("a,b\nloading...\ndone!ok"), interp.getGlobal("out_text"));
+        assertTrue(interp.getGlobal("ret_val") instanceof org.example.jython3.runtime.PyNull);
+        assertEquals(PyBool.TRUE, interp.getGlobal("bad_sep"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("bad_end"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("bad_kw"));
+    }
 }

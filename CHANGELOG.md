@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **First-Class Built-in `print` Function**: Removed the special `print_stmt` / `PRINT` grammar keyword so `print` is a regular built-in function supporting variable assignment (`fn = print`), list/closure invocation, `sep`/`end`/`file`/`flush` keywords, and strict `TypeError` validation on non-string `sep`/`end` (391 total tests passing green).
 - **Unified Callable Expression Trailers (`CallExpr`)**: Refactored `Jython3.g4` and `CompileVisitor` so any expression yielding a callable can be invoked directly (`factory()(10)`, `items[0](10)`, `obj.method()(10)`, `get_callback()("value")`) with CPython-compatible `'...' object is not callable` error reporting.
 - **`PolicySanitizer` & `BigInt` Conformance Suite (`PolicySanitizerTest`)**: Added tests for circular `PyList`/`PyDict` sanitization, nested Java object retargeting, `PyFunction` closure sanitization, `PyClass` inheritance sanitization, `json.dumps(10 ** 30)` / tuple serialization, and `math.sqrt(True)` / `math.sqrt(10 ** 30)` (390 total tests passing green).
 - **Documentation Consolidation (`docs/STATUS.md`)**: Established `docs/STATUS.md` as the single source of truth for current live capabilities and runtime concept glossary (`PyNull` vs Java `null` vs Python `None`, `PyCaller`, `PyCell`, `PyCompiledCodeWrapper`, `ExecutionContext`); aligned `README.md`, `COMPATIBILITY.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and `PROJECT_STRUCTURE.md`.

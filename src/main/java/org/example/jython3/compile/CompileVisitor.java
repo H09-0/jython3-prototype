@@ -130,44 +130,6 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return visitChildren(c);
     }
 
-    // ── print(args) ──
-    // print() is handled as a keyword — routes through the PRINT opcode for now.
-    // After Sprint B we'll unify with the builtin `print` function.
-    @Override public Void visitPrint_stmt(Jython3Parser.Print_stmtContext c) {
-        boolean hasKeywords = c.arg_list() != null && c.arg_list().arg_item().stream()
-                .anyMatch(it -> it instanceof Jython3Parser.KeywordArgContext);
-        if (hasKeywords) {
-            b.emit(OpCode.LOAD_FAST, "print");
-            emitCall(c.arg_list());
-            b.emit(OpCode.POP_TOP);
-            return null;
-        }
-
-        if (c.arg_list() == null || c.arg_list().arg_item().isEmpty()) {
-            b.emit(OpCode.LOAD_CONST, "");
-            b.emit(OpCode.PRINT);
-        } else {
-            // Collect positional expressions only; keyword args in print() handled via CALL route
-            var posItems = c.arg_list().arg_item().stream()
-                    .filter(it -> it instanceof Jython3Parser.PositionalArgContext)
-                    .toList();
-            if (posItems.size() == 1) {
-                visit(((Jython3Parser.PositionalArgContext) posItems.get(0)).expr());
-                b.emit(OpCode.PRINT);
-            } else if (posItems.isEmpty()) {
-                b.emit(OpCode.LOAD_CONST, "");
-                b.emit(OpCode.PRINT);
-            } else {
-                for (var item : posItems) {
-                    visit(((Jython3Parser.PositionalArgContext) item).expr());
-                }
-                b.emitRaw(OpCode.BUILD_LIST, posItems.size());
-                b.emit(OpCode.PRINT_MULTI);
-            }
-        }
-        return null;
-    }
-
     @Override public Void visitAssign_stmt(Jython3Parser.Assign_stmtContext c) {
         visit(c.expr());
         // Handle chained assignment: a = b = expr  (emits DUP_TOP for all but last)
