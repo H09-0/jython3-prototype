@@ -3180,7 +3180,8 @@ public class Jython3Interpreter implements AutoCloseable {
 
     private static boolean isJavaRootPackage(String name) {
         return name.equals("java") || name.equals("javax") || name.equals("org") ||
-               name.equals("com") || name.equals("net") || name.equals("io");
+               name.equals("com") || name.equals("net") || name.equals("io") ||
+               name.equals("sun") || name.equals("jdk");
     }
 
     // ─── Bytecode public API ──────────────────────────────────────────────

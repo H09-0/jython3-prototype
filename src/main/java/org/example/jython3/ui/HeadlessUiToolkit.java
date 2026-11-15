@@ -31,6 +31,7 @@ public final class HeadlessUiToolkit implements UiToolkit {
     private final AtomicLong idSeq = new AtomicLong(1);
     private final AtomicInteger openWindows = new AtomicInteger(0);
     private final AtomicInteger activeTimers = new AtomicInteger(0);
+    private final AtomicInteger liveTimers = new AtomicInteger(0);
     private final List<UiEvent> eventHistory = Collections.synchronizedList(new ArrayList<>());
     private final HeadlessDispatcher dispatcher = new HeadlessDispatcher();
 
@@ -124,9 +125,10 @@ public final class HeadlessUiToolkit implements UiToolkit {
             throw PyErrors.error("ValueError", "timer interval must be >= 1 ms");
         }
         int maxT = session.capabilities().maxTimers();
-        if (activeTimers.get() >= maxT) {
-            throw PyErrors.error("RuntimeError", "maximum active timers exceeded: " + maxT);
+        if (liveTimers.get() >= maxT) {
+            throw PyErrors.error("RuntimeError", "maximum timers exceeded: " + maxT);
         }
+        liveTimers.incrementAndGet();
         var timer = new HeadlessTimer("tmr-" + idSeq.getAndIncrement(), session, intervalMs, callback);
         session.registerResource(timer);
         return timer;
@@ -331,6 +333,7 @@ public final class HeadlessUiToolkit implements UiToolkit {
         private ScheduledExecutorService exec;
         private ScheduledFuture<?> future;
         private volatile boolean running = false;
+        private volatile boolean disposed = false;
 
         HeadlessTimer(String id, HostSession session, int intervalMs, PyObject callback) {
             this.id = id;
@@ -383,6 +386,15 @@ public final class HeadlessUiToolkit implements UiToolkit {
             if (exec != null) {
                 exec.shutdownNow();
                 exec = null;
+            }
+        }
+
+        @Override
+        public synchronized void close() {
+            stop();
+            if (!disposed) {
+                disposed = true;
+                liveTimers.decrementAndGet();
             }
         }
     }
