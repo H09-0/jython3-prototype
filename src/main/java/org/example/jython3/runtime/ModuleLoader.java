@@ -36,6 +36,7 @@ public final class ModuleLoader {
         void execute(PyModule module, Path filePath, String source, Map<String, PyObject> scope);
     }
 
+    private static final long MAX_MODULE_BYTES = 10_000_000L;
     private final List<Path> searchPaths = new ArrayList<>();
     private final Map<String, ModuleEntry> cache = new ConcurrentHashMap<>();
     private final PyDict sysModules = new PyDict();
@@ -174,6 +175,11 @@ public final class ModuleLoader {
 
         String content;
         try {
+            long size = Files.size(resolved.realFile());
+            if (size > MAX_MODULE_BYTES) {
+                throw PyErrors.error("MemoryError",
+                        "module '" + fullName + "' exceeds maximum source size (" + MAX_MODULE_BYTES + " bytes)");
+            }
             content = Files.readString(resolved.realFile());
         } catch (IOException e) {
             throw PyErrors.error("ImportError", "cannot read module '" + fullName + "': " + e.getMessage());
@@ -265,12 +271,25 @@ public final class ModuleLoader {
 
             // 3. OculiX/Sikuli bundle directory: leaf.sikuli/leaf.py
             Path sikuliDir = curDir.resolve(leaf + ".sikuli");
-            if (Files.exists(sikuliDir, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(sikuliDir)
-                    && Files.isDirectory(sikuliDir)) {
-                Path sikuliScript = sikuliDir.resolve(leaf + ".py");
-                if (Files.exists(sikuliScript, LinkOption.NOFOLLOW_LINKS)) {
-                    Path realFile = verifyContainedRegularFile(sikuliScript, realRoot, fullName, hostPolicy);
-                    return new ResolvedModule(realFile, false);
+            if (Files.exists(sikuliDir, LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.isSymbolicLink(sikuliDir)) {
+                    throw PyErrors.error("SecurityError",
+                            "symlink escape blocked while importing '" + fullName + "'");
+                }
+                if (Files.isDirectory(sikuliDir)) {
+                    try {
+                        if (!sikuliDir.toRealPath().startsWith(realRoot)) {
+                            throw PyErrors.error("SecurityError",
+                                    "sikuli bundle path escape blocked while importing '" + fullName + "'");
+                        }
+                    } catch (IOException e) {
+                        throw PyErrors.error("ImportError", "cannot resolve sikuli bundle for '" + fullName + "'");
+                    }
+                    Path sikuliScript = sikuliDir.resolve(leaf + ".py");
+                    if (Files.exists(sikuliScript, LinkOption.NOFOLLOW_LINKS)) {
+                        Path realFile = verifyContainedRegularFile(sikuliScript, realRoot, fullName, hostPolicy);
+                        return new ResolvedModule(realFile, false);
+                    }
                 }
             }
         }

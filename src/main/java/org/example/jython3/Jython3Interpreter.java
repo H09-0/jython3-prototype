@@ -3949,7 +3949,9 @@ public class Jython3Interpreter implements AutoCloseable {
 
     private static boolean isBuiltinModuleName(String name) {
         return switch (name) {
-            case "math", "sys", "os", "io", "json", "re", "time", "random", "importlib", "ui", "control" -> true;
+            case "math", "sys", "os", "io", "json", "re", "time", "random", "importlib",
+                 "ui", "control", "threading", "itertools", "queue", "datetime",
+                 "concurrent", "concurrent.futures" -> true;
             default -> false;
         };
     }
