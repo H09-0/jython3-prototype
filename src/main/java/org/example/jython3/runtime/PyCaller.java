@@ -25,6 +25,14 @@ public interface PyCaller {
         throw new UnsupportedOperationException("yield collection is not supported by this caller");
     }
 
+    /**
+     * Resolves Python 3 zero-argument {@code super()} using the active frame's
+     * function and first parameter instance.
+     */
+    default PyObject resolveZeroArgSuper() {
+        throw PyErrors.error("RuntimeError", "super(): no arguments");
+    }
+
     ThreadLocal<PyCaller> CURRENT = new ThreadLocal<>();
 
     static PyCaller current() {

@@ -71,12 +71,11 @@ public final class BuiltinFunctions {
 
         define.accept("super", new PyBuiltinFunction("super", args -> {
             if (args.length == 0) {
-                // minimal super() support
-                return new PyNull();
+                return caller.resolveZeroArgSuper();
             } else if (args.length == 2 && args[0] instanceof PyClass cls && args[1] instanceof PyInstance inst) {
                 return new PySuper(cls, inst);
             }
-            return new PyNull();
+            throw PyErrors.error("TypeError", "super() expects 0 or 2 arguments (type, obj)");
         }));
 
         // str(obj)
@@ -246,29 +245,22 @@ public final class BuiltinFunctions {
         // sum(iterable)
         define.accept("sum", new PyBuiltinFunction("sum", args -> {
             checkArgCount("sum", args, 1);
-            if (!(args[0] instanceof PyList list)) throw PyErrors.error("TypeError", "sum() argument must be iterable");
+            List<PyObject> items = collectIterable(args[0], javaPolicy);
             double total = 0;
             boolean hasFloat = false;
-            for (PyObject item : list.items()) {
+            for (PyObject item : items) {
                 if (item instanceof PyInt i) total += i.value();
                 else if (item instanceof PyFloat f) { total += f.value(); hasFloat = true; }
                 else throw PyErrors.error("TypeError", "unsupported operand type for sum()");
             }
-            return hasFloat ? new PyFloat(total) : new PyInt((int) total);
+            return hasFloat ? new PyFloat(total) : PyInt.of((int) total);
         }));
 
         // list(iterable?)
         define.accept("list", new PyBuiltinFunction("list", args -> {
             if (args.length == 0) return new PyList(new ArrayList<>());
             checkArgCount("list", args, 1);
-            PyObject o = args[0];
-            if (o instanceof PyList l) return new PyList(new ArrayList<>(l.items()));
-            if (o instanceof PyTuple t) return new PyList(new ArrayList<>(t.items()));
-            if (o instanceof PyStr s) {
-                return new PyList(s.toCodePointList());
-            }
-            if (o instanceof PyDict d) return new PyList(new ArrayList<>(d.map().keySet()));
-            throw PyErrors.error("TypeError", "'" + typeName(o) + "' object is not iterable");
+            return new PyList(collectIterable(args[0], javaPolicy));
         }));
 
         // dict()
@@ -320,13 +312,7 @@ public final class BuiltinFunctions {
                     throw PyErrors.error("TypeError", "sorted() got an unexpected keyword argument '" + k + "'");
                 }
             }
-            List<PyObject> items;
-            if (args[0] instanceof PyList list) items = new ArrayList<>(list.items());
-            else if (args[0] instanceof PyTuple t) items = new ArrayList<>(t.items());
-            else if (args[0] instanceof org.example.jython3.runtime.PySet s) items = new ArrayList<>(s.items());
-            else if (args[0] instanceof PyStr s) items = s.toCodePointList();
-            else if (args[0] instanceof PyDict d) items = new ArrayList<>(d.map().keySet());
-            else throw PyErrors.error("TypeError", "sorted() argument must be iterable");
+            List<PyObject> items = collectIterable(args[0], javaPolicy);
 
             if (keyFn != null && !(keyFn instanceof PyNull)) {
                 items.sort((a, b) -> {
@@ -346,11 +332,7 @@ public final class BuiltinFunctions {
         // reversed(iterable)
         define.accept("reversed", new PyBuiltinFunction("reversed", args -> {
             checkArgCount("reversed", args, 1);
-            List<PyObject> items;
-            if (args[0] instanceof PyList list) items = new ArrayList<>(list.items());
-            else if (args[0] instanceof PyStr s) items = s.toCodePointList();
-            else if (args[0] instanceof PyDict d) items = new ArrayList<>(d.map().keySet());
-            else throw PyErrors.error("TypeError", "reversed() argument must be iterable");
+            List<PyObject> items = collectIterable(args[0], javaPolicy);
             Collections.reverse(items);
             return new PyList(items);
         }));
@@ -548,15 +530,31 @@ public final class BuiltinFunctions {
         }));
     }
 
+    /** Collects any supported iterable (including generators, iterators, sets, Java iterables) into a mutable List. */
+    private static List<PyObject> collectIterable(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
+        if (o instanceof PyList list) return new ArrayList<>(list.items());
+        if (o instanceof PyTuple tuple) return new ArrayList<>(tuple.items());
+        if (o instanceof org.example.jython3.runtime.PySet s) return new ArrayList<>(s.items());
+        if (o instanceof PyStr s) return s.toCodePointList();
+        if (o instanceof PyDict d) return d.keys();
+        PyIterator it = toIterator(o, policy);
+        var items = new ArrayList<PyObject>();
+        while (it.hasNext()) {
+            items.add(it.next());
+        }
+        return items;
+    }
+
     /** Converts a supported iterable into a fresh iterator. */
     private static PyIterator toIterator(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
         if (o instanceof PyIterator it) return it;
         if (o instanceof PyList list) return new PyIterator(list.items(), 0);
         if (o instanceof PyTuple tuple) return new PyIterator(tuple.items(), 0);
+        if (o instanceof org.example.jython3.runtime.PySet s) return new PyIterator(new ArrayList<>(s.items()), 0);
         if (o instanceof PyStr s) {
             return s.codePointIterator();
         }
-        if (o instanceof PyDict d) return new PyIterator(new ArrayList<>(d.map().keySet()), 0);
+        if (o instanceof PyDict d) return new PyIterator(d.keys(), 0);
         if (o instanceof PyGenerator gen) {
             return PyIterator.fromGenerator(gen);
         }

@@ -240,7 +240,15 @@ public class JavaBridge {
         if (obj instanceof Character c)
             return new PyStr(String.valueOf(c));
 
-        // For non-String CharSequence (e.g. custom user class implementing CharSequence, or StringBuilder),
+        // Mutable StringBuilder/StringBuffer should remain PyJavaObject so fluent chaining (.append().append()) works.
+        if (obj instanceof StringBuilder || obj instanceof StringBuffer) {
+            if (!policy.canAccessClass(obj.getClass().getName())) {
+                throw denied(obj.getClass().getName());
+            }
+            return new PyJavaObject(obj, policy);
+        }
+
+        // For non-String CharSequence (e.g. custom user class implementing CharSequence),
         // we must check the policy BEFORE invoking toString(), to prevent arbitrary host code execution.
         if (obj instanceof CharSequence) {
             if (!policy.canAccessClass(obj.getClass().getName())) {

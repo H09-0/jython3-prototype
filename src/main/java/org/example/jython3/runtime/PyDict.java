@@ -20,6 +20,10 @@ public final class PyDict implements PyObject {
             return this;
         }
 
+        void clear() {
+            this.object = null;
+        }
+
         public PyObject object() {
             return object;
         }
@@ -57,7 +61,12 @@ public final class PyDict implements PyObject {
     }
 
     public PyObject get(PyObject key) {
-        return entries.get(QUERY_KEY.get().set(key));
+        QueryKey qk = QUERY_KEY.get();
+        try {
+            return entries.get(qk.set(key));
+        } finally {
+            qk.clear();
+        }
     }
 
     public void put(PyObject key, PyObject value) {
@@ -65,11 +74,21 @@ public final class PyDict implements PyObject {
     }
 
     public PyObject remove(PyObject key) {
-        return entries.remove(QUERY_KEY.get().set(key));
+        QueryKey qk = QUERY_KEY.get();
+        try {
+            return entries.remove(qk.set(key));
+        } finally {
+            qk.clear();
+        }
     }
 
     public boolean containsKey(PyObject key) {
-        return entries.containsKey(QUERY_KEY.get().set(key));
+        QueryKey qk = QUERY_KEY.get();
+        try {
+            return entries.containsKey(qk.set(key));
+        } finally {
+            qk.clear();
+        }
     }
 
     public int size() {

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **Field Test & Resource/Leak Profiler (`./gradlew fieldTest`)**: Added `FieldTestRunner` and `FieldIntegrationTest` running 4 real-world Python projects (JSON analytics, OOP/context managers/generators, regex/Unicode/Monte Carlo, Java Bridge automation), 200 deep exception-unwind stress tests, and 600-cycle / 300-interpreter memory, CPU, GC, and thread leak probes (377 total tests passing green).
+- **Raw String Literals (`r"..."`, `r'...'`, `r"""..."""`)**: Added `RSTRING` lexer/parser rule and `visitRStr` compiler support preserving backslashes verbatim.
+- **Zero-Argument `super()`**: Implemented Python 3 `super()` resolution via `PyCaller.resolveZeroArgSuper()` and `findDefiningClass()`, resolving parent methods across multi-level inheritance chains.
 - **Java Bridge Type Converter Plans (`TypeConverter`)**: Pre-compiled argument converter plans on `MethodMatch` and `ConstructorMatch` replacing cascading runtime `if (targetType == ...)` checks with direct functional dispatch.
 - **Fast Array & Collection Conversions**: Added specialized loops for all primitive and reference arrays (`int[]`, `long[]`, `double[]`, `float[]`, `boolean[]`, `byte[]`, `short[]`, `char[]`, `String[]`, `Object[]`) replacing slow reflection `Array.set()`, with pre-sized lists and maps during interop.
 - **Primitive vs Boxed Nullability & Edge-Case Verification**: Separated boxed (`Integer`, `Double`, `Boolean`, etc. accepting `None -> null`) from primitive (`int`, `double`, `boolean`, `byte`, `short`, `char` rejecting `None` with `TypeError`) in `JavaBridge`, verified `String[]` / `Integer[]` with `null` elements, `byte[]` / `short[]` / `char[]` coercion, and nested `List` / `Map` access policy enforcement (372 total tests passing).
@@ -37,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **Recursive `json.loads()` Parsing**: Fixed `jsonParseValue()` in `BuiltinModules` to recursively parse nested JSON objects `{...}`, nested arrays `[...]`, escape sequences, colons inside quoted keys/values, and `BigInt` numbers.
+- **Builtins Iterable Consumption (`list`, `sum`, `sorted`, `reversed`)**: Unified iterable collection via `collectIterable()` so generators, iterators, sets, and Java `Iterable`s work across all core built-in functions.
+- **Fluent Chaining on `StringBuilder` / `StringBuffer`**: Preserved `PyJavaObject` wrapping for mutable `StringBuilder`/`StringBuffer` return values in `JavaBridge.toPyObject()` so chained calls like `sb.append(a).append(b)` succeed while maintaining `CharSequence` policy gating.
+- **ThreadLocal Memory Leak Prevention**: Cleared `PyDict.QUERY_KEY` object references after lookups (`qk.clear()`) and installed/restored/removed `PyCaller.CURRENT` in `eval()`/`evalCode()` `finally` blocks, preventing retention of discarded interpreters and queried keys across thread pools.
 - **Array Conversion Semantic Fidelity**: Fixed specialized primitive array conversions (`int[]`, `long[]`, `double[]`, `boolean[]`) to support Python coercion semantics (e.g. `[3.14, True] -> int[] {3, 1}`) via `toJavaInt/Long/Double/Boolean` and added array/BigInt resolution support in `scoreParam`.
 - **Bounded Converter Cache**: Capped `CONVERTER_CACHE` with `MAX_CONVERTER_ENTRIES = 512` and auto-eviction.
 - **CI GitHub Actions Workflow**: Fixed multi-line `python-version` YAML parsing error in `.github/workflows/test.yml`.

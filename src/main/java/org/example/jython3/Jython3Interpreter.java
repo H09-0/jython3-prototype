@@ -116,6 +116,7 @@ public class Jython3Interpreter {
 
     /** Built-in functions and standard types template for module initialization. */
     private final Map<String, PyObject> builtinSymbols = new HashMap<>();
+    private final PyCaller interpreterCaller;
 
     public void clearCache() {
         bytecodeCache.clear();
@@ -268,7 +269,7 @@ public class Jython3Interpreter {
         this.hostAccessPolicy = Objects.requireNonNull(hostAccessPolicy, "hostAccessPolicy");
         this.executionLimits = Objects.requireNonNull(executionLimits, "executionLimits");
         this.exceptionTypes = Objects.requireNonNull(exceptionTypes, "exceptionTypes");
-        PyCaller.CURRENT.set(new PyCaller() {
+        this.interpreterCaller = new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
                 return callPyCallable(callable, args);
             }
@@ -281,8 +282,40 @@ public class Jython3Interpreter {
                     java.util.Map<String, PyObject> locals) {
                 return runGeneratorWithLocals(fn, locals);
             }
-        });
+
+            @Override public PyObject resolveZeroArgSuper() {
+                if (currentFunction == null || currentLocals == null || currentFunction.params().isEmpty()) {
+                    throw PyErrors.error("RuntimeError", "super(): no arguments");
+                }
+                String selfName = currentFunction.params().get(0);
+                PyObject selfVal = currentLocals.get(selfName);
+                if (selfVal instanceof PyCell cell) selfVal = cell.get();
+                if (!(selfVal instanceof PyInstance inst)) {
+                    throw PyErrors.error("RuntimeError", "super(): arg[0] must be an instance");
+                }
+                PyClass owner = findDefiningClass(inst.pyClass(), currentFunction);
+                return new PySuper(owner != null ? owner : inst.pyClass(), inst);
+            }
+        };
         registerBuiltins();
+    }
+
+    private static PyClass findDefiningClass(PyClass start, PyFunction targetFn) {
+        if (start == null || targetFn == null) return null;
+        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<PyClass, Boolean>());
+        var queue = new java.util.ArrayDeque<PyClass>();
+        queue.add(start);
+        while (!queue.isEmpty()) {
+            PyClass c = queue.removeFirst();
+            if (!seen.add(c)) continue;
+            for (PyObject member : c.members().values()) {
+                if (member == targetFn) return c;
+            }
+            for (PyClass b : c.getBases()) {
+                queue.add(b);
+            }
+        }
+        return null;
     }
 
     public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
@@ -321,7 +354,7 @@ public class Jython3Interpreter {
 
     /** Install built-in functions into the global namespace. */
     private void registerBuiltins() {
-        BuiltinFunctions.register(builtinSymbols::put, this::callPyCallable, javaAccessPolicy);
+        BuiltinFunctions.register(builtinSymbols::put, interpreterCaller, javaAccessPolicy);
         for (var entry : exceptionTypes.types().entrySet()) {
             builtinSymbols.put(entry.getKey(), entry.getValue());
         }
@@ -448,6 +481,8 @@ public class Jython3Interpreter {
      */
     public void eval(String source, String filename) {
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
+        PyCaller previousCaller = PyCaller.CURRENT.get();
+        PyCaller.CURRENT.set(interpreterCaller);
         try {
             stack = new FastStack();
             currentGlobals = globals;
@@ -477,6 +512,11 @@ public class Jython3Interpreter {
                 executionTime += System.nanoTime() - execStart;
             }
         } finally {
+            if (previousCaller != null) {
+                PyCaller.CURRENT.set(previousCaller);
+            } else {
+                PyCaller.CURRENT.remove();
+            }
             ExceptionTypeRegistry.restore(previousTypes);
         }
     }
@@ -493,6 +533,8 @@ public class Jython3Interpreter {
      */
     public void evalCode(CompiledCode code, String filename) {
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
+        PyCaller previousCaller = PyCaller.CURRENT.get();
+        PyCaller.CURRENT.set(interpreterCaller);
         try {
             stack = new FastStack();
             currentGlobals = globals;
@@ -516,6 +558,11 @@ public class Jython3Interpreter {
                 executionTime += System.nanoTime() - execStart;
             }
         } finally {
+            if (previousCaller != null) {
+                PyCaller.CURRENT.set(previousCaller);
+            } else {
+                PyCaller.CURRENT.remove();
+            }
             ExceptionTypeRegistry.restore(previousTypes);
         }
     }

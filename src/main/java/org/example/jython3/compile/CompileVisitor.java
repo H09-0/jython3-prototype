@@ -843,6 +843,18 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return null;
     }
     @Override public Void visitFloat(Jython3Parser.FloatContext c) { b.emit(OpCode.LOAD_CONST, Double.valueOf(c.FLOAT().getText())); return null; }
+    @Override public Void visitRStr(Jython3Parser.RStrContext c) {
+        String raw = c.RSTRING().getText().substring(1);
+        String unquoted;
+        if (raw.startsWith("'''") || raw.startsWith("\"\"\"")) {
+            unquoted = raw.substring(3, raw.length() - 3);
+        } else {
+            unquoted = raw.substring(1, raw.length() - 1);
+        }
+        b.emit(OpCode.LOAD_CONST, unquoted);
+        return null;
+    }
+
     @Override public Void visitStr(Jython3Parser.StrContext c) {
         String raw = c.STRING().getText();
         String unquoted;

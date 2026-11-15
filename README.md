@@ -70,6 +70,9 @@ cd jython3-prototype
 # Run automated unit tests
 ./gradlew test
 
+# Run real-world field tests & RAM/CPU/leak profiler
+./gradlew fieldTest
+
 # Run performance benchmark suite
 ./gradlew benchmark
 

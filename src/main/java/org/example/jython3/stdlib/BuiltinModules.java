@@ -193,46 +193,7 @@ public class BuiltinModules {
         }));
         attrs.put("loads", fn("loads", args -> {
             if (args.length == 0) return new PyNull();
-            String s = args[0].toString().trim();
-            if (s.equals("null")) return new PyNull();
-            if (s.equals("true")) return PyBool.TRUE;
-            if (s.equals("false")) return PyBool.FALSE;
-            if (s.startsWith("\"") && s.endsWith("\"") && s.length() >= 2) {
-                return new PyStr(s.substring(1, s.length() - 1));
-            }
-            if (s.startsWith("[") && s.endsWith("]")) {
-                var list = new java.util.ArrayList<PyObject>();
-                if (s.equals("[]")) return new PyList(list);
-                String inner = s.substring(1, s.length() - 1);
-                if (!inner.trim().isEmpty()) {
-                    for (String part : splitJsonArray(inner)) {
-                        list.add(jsonParseValue(part.trim()));
-                    }
-                }
-                return new PyList(list);
-            }
-            if (s.startsWith("{") && s.endsWith("}")) {
-                var map = new java.util.LinkedHashMap<PyObject, PyObject>();
-                if (s.equals("{}")) return new PyDict(map);
-                String inner = s.substring(1, s.length() - 1);
-                for (String pair : splitJsonObject(inner)) {
-                    int colon = pair.indexOf(':');
-                    if (colon >= 0) {
-                        String k = pair.substring(0, colon).trim();
-                        String v = pair.substring(colon + 1).trim();
-                        PyObject key = jsonParseValue(k);
-                        PyObject val = jsonParseValue(v);
-                        map.put(key, val);
-                    }
-                }
-                return new PyDict(map);
-            }
-            try {
-                if (s.contains(".")) return new PyFloat(Double.parseDouble(s));
-                return new PyInt(Integer.parseInt(s));
-            } catch (Exception e) {
-                return new PyStr(s);
-            }
+            return jsonParseValue(args[0].toString());
         }));
         return new PyModule("json", attrs);
     }
@@ -425,6 +386,14 @@ public class BuiltinModules {
         return "\"" + o.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
+    private static boolean isQuoteUnescaped(String s, int quoteIdx) {
+        int backslashes = 0;
+        for (int j = quoteIdx - 1; j >= 0 && s.charAt(j) == '\\'; j--) {
+            backslashes++;
+        }
+        return (backslashes & 1) == 0;
+    }
+
     private static java.util.List<String> splitJsonArray(String inner) {
         var list = new java.util.ArrayList<String>();
         StringBuilder cur = new StringBuilder();
@@ -433,7 +402,7 @@ public class BuiltinModules {
         char strChar = 0;
         for (int i = 0; i < inner.length(); i++) {
             char c = inner.charAt(i);
-            if ((c == '"' || c == '\'') && (i == 0 || inner.charAt(i - 1) != '\\')) {
+            if ((c == '"' || c == '\'') && isQuoteUnescaped(inner, i)) {
                 if (!inStr) { inStr = true; strChar = c; }
                 else if (strChar == c) { inStr = false; }
                 cur.append(c);
@@ -453,17 +422,93 @@ public class BuiltinModules {
         return splitJsonArray(inner);
     }
 
+    private static int findColonOutsideQuotes(String pair) {
+        boolean inStr = false;
+        char strChar = 0;
+        for (int i = 0; i < pair.length(); i++) {
+            char c = pair.charAt(i);
+            if ((c == '"' || c == '\'') && isQuoteUnescaped(pair, i)) {
+                if (!inStr) { inStr = true; strChar = c; }
+                else if (strChar == c) { inStr = false; }
+            } else if (!inStr && c == ':') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static String unescapeJsonString(String raw) {
+        StringBuilder sb = new StringBuilder(raw.length());
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '\\' && i + 1 < raw.length()) {
+                char next = raw.charAt(++i);
+                switch (next) {
+                    case '"' -> sb.append('"');
+                    case '\\' -> sb.append('\\');
+                    case '/' -> sb.append('/');
+                    case 'b' -> sb.append('\b');
+                    case 'f' -> sb.append('\f');
+                    case 'n' -> sb.append('\n');
+                    case 'r' -> sb.append('\r');
+                    case 't' -> sb.append('\t');
+                    case 'u' -> {
+                        if (i + 4 < raw.length()) {
+                            sb.append((char) Integer.parseInt(raw.substring(i + 1, i + 5), 16));
+                            i += 4;
+                        }
+                    }
+                    default -> sb.append(next);
+                }
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
     private static PyObject jsonParseValue(String s) {
         String t = s.trim();
         if (t.equals("null")) return new PyNull();
         if (t.equals("true")) return PyBool.TRUE;
         if (t.equals("false")) return PyBool.FALSE;
         if (t.startsWith("\"") && t.endsWith("\"") && t.length() >= 2) {
-            return new PyStr(t.substring(1, t.length() - 1));
+            return new PyStr(unescapeJsonString(t.substring(1, t.length() - 1)));
+        }
+        if (t.startsWith("[") && t.endsWith("]")) {
+            var list = new java.util.ArrayList<PyObject>();
+            String inner = t.substring(1, t.length() - 1).trim();
+            if (!inner.isEmpty()) {
+                for (String part : splitJsonArray(inner)) {
+                    list.add(jsonParseValue(part));
+                }
+            }
+            return new PyList(list);
+        }
+        if (t.startsWith("{") && t.endsWith("}")) {
+            var map = new java.util.LinkedHashMap<PyObject, PyObject>();
+            String inner = t.substring(1, t.length() - 1).trim();
+            if (!inner.isEmpty()) {
+                for (String pair : splitJsonObject(inner)) {
+                    int colon = findColonOutsideQuotes(pair);
+                    if (colon >= 0) {
+                        PyObject key = jsonParseValue(pair.substring(0, colon));
+                        PyObject val = jsonParseValue(pair.substring(colon + 1));
+                        map.put(key, val);
+                    }
+                }
+            }
+            return new PyDict(map);
         }
         try {
-            if (t.contains(".")) return new PyFloat(Double.parseDouble(t));
-            return new PyInt(Integer.parseInt(t));
+            if (t.contains(".") || t.contains("e") || t.contains("E")) {
+                return new PyFloat(Double.parseDouble(t));
+            }
+            try {
+                return PyInt.of(Integer.parseInt(t));
+            } catch (NumberFormatException nfe) {
+                return new org.example.jython3.runtime.BigInt(new java.math.BigInteger(t));
+            }
         } catch (Exception e) {
             return new PyStr(t);
         }
