@@ -34,6 +34,7 @@ import org.example.jython3.compile.CompileVisitor;
 import org.example.jython3.compile.CompiledCode;
 import org.example.jython3.compile.OpCode;
 import org.example.jython3.parse.PythonIndentStream;
+import org.example.jython3.runtime.ArithmeticOps;
 import org.example.jython3.runtime.BigInt;
 import org.example.jython3.runtime.ExceptHandler;
 import org.example.jython3.runtime.FastStack;
@@ -76,7 +77,9 @@ import org.example.jython3.security.ExecutionContext;
 import org.example.jython3.security.ExecutionLimits;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.security.JavaAccessPolicy;
+import org.example.jython3.security.PolicySanitizer;
 import org.example.jython3.stdlib.BuiltinFunctions;
+import org.example.jython3.stdlib.BuiltinMethodDispatcher;
 import org.example.jython3.stdlib.BuiltinModules;
 
 import static org.example.jython3.runtime.PyOps.checkArgCount;
@@ -684,103 +687,7 @@ public class Jython3Interpreter {
     }
 
     public void setGlobal(String name, PyObject value) {
-        globals.put(name, sanitizeForPolicy(value, javaAccessPolicy));
-    }
-
-    /**
-     * Ensures any injected host object or wrapper adheres to this interpreter's policy.
-     * Recursively verifies collections (PyList, PyDict), functions, modules, classes,
-     * and instances, retargets wrappers, and handles circular references safely via IdentityHashMap.
-     */
-    private static PyObject sanitizeForPolicy(PyObject val, JavaAccessPolicy policy) {
-        return sanitizeForPolicy(val, policy, new java.util.IdentityHashMap<>());
-    }
-
-    private static PyObject sanitizeForPolicy(PyObject val, JavaAccessPolicy policy,
-                                              java.util.Map<PyObject, PyObject> visited) {
-        if (val == null || val instanceof PyNull) return val;
-        PyObject seen = visited.get(val);
-        if (seen != null) return seen;
-
-        if (val instanceof PyJavaClass jc) {
-            if (!policy.canAccessClass(jc.clazz().getName())) {
-                throw JavaBridge.denied(jc.clazz().getName());
-            }
-            PyJavaClass res = new PyJavaClass(jc.clazz(), policy);
-            visited.put(val, res);
-            return res;
-        }
-        if (val instanceof PyJavaObject jo) {
-            if (!policy.canAccessClass(jo.object().getClass().getName())) {
-                throw JavaBridge.denied(jo.object().getClass().getName());
-            }
-            PyJavaObject res = new PyJavaObject(jo.object(), policy);
-            visited.put(val, res);
-            return res;
-        }
-        if (val instanceof PyList list) {
-            var sanitizedItems = new ArrayList<PyObject>();
-            var res = new PyList(sanitizedItems);
-            visited.put(val, res);
-            for (PyObject item : list.items()) {
-                sanitizedItems.add(sanitizeForPolicy(item, policy, visited));
-            }
-            return res;
-        }
-        if (val instanceof PyDict dict) {
-            var sanitizedMap = new LinkedHashMap<PyObject, PyObject>();
-            var res = new PyDict(sanitizedMap);
-            visited.put(val, res);
-            for (var entry : dict.map().entrySet()) {
-                sanitizedMap.put(sanitizeForPolicy(entry.getKey(), policy, visited),
-                                 sanitizeForPolicy(entry.getValue(), policy, visited));
-            }
-            return res;
-        }
-        if (val instanceof PyModule mod) {
-            var sanitizedAttrs = new HashMap<String, PyObject>();
-            var res = new PyModule(mod.name(), sanitizedAttrs);
-            visited.put(val, res);
-            for (var entry : mod.attrs().entrySet()) {
-                sanitizedAttrs.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
-            }
-            return res;
-        }
-        if (val instanceof PyFunction fn) {
-            var sanitizedClosure = new HashMap<String, PyObject>();
-            var res = new PyFunction(fn.name(), fn.params(), fn.code(), sanitizedClosure);
-            visited.put(val, res);
-            for (var entry : fn.closure().entrySet()) {
-                sanitizedClosure.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
-            }
-            return res;
-        }
-        if (val instanceof PyClass cls) {
-            var sanitizedMembers = new HashMap<String, PyObject>();
-            var sanitizedBases = new ArrayList<PyClass>();
-            PyClass sanitizedBase = cls.baseClass() != null
-                    ? (PyClass) sanitizeForPolicy(cls.baseClass(), policy, visited)
-                    : null;
-            var res = new PyClass(cls.name(), sanitizedBase, sanitizedMembers, sanitizedBases);
-            visited.put(val, res);
-            for (PyClass b : cls.getBases()) {
-                sanitizedBases.add((PyClass) sanitizeForPolicy(b, policy, visited));
-            }
-            for (var entry : cls.members().entrySet()) {
-                sanitizedMembers.put(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
-            }
-            return res;
-        }
-        if (val instanceof PyInstance inst) {
-            PyClass sanitizedCls = (PyClass) sanitizeForPolicy(inst.pyClass(), policy, visited);
-            var res = new PyInstance(sanitizedCls);
-            visited.put(val, res);
-            for (var entry : inst.fields().entrySet()) {
-                res.setField(entry.getKey(), sanitizeForPolicy(entry.getValue(), policy, visited));
-            }
-            return res;
-        }
-        return val;
+        globals.put(name, PolicySanitizer.sanitize(value, javaAccessPolicy));
     }
 
     // ─── ANTLR compilation with Python Indentation Stream ─────────────────
@@ -1720,13 +1627,13 @@ public class Jython3Interpreter {
                         if (val == null) throw PyErrors.error("AttributeError", "module '" + mod.name() + "' has no attribute '" + attr + "'");
                         stack.push(val);
                     } else if (obj instanceof PyDict dict) {
-                        stack.push(dictMethod(dict, attr));
+                        stack.push(BuiltinMethodDispatcher.dictMethod(dict, attr));
                     } else if (obj instanceof PyList list) {
-                        stack.push(listMethod(list, attr));
+                        stack.push(BuiltinMethodDispatcher.listMethod(list, attr));
                     } else if (obj instanceof PySet set) {
-                        stack.push(setMethod(set, attr));
+                        stack.push(BuiltinMethodDispatcher.setMethod(set, attr));
                     } else if (obj instanceof PyStr s) {
-                        stack.push(strMethod(s, attr));
+                        stack.push(BuiltinMethodDispatcher.strMethod(s, attr));
                     } else if (obj instanceof PyJavaObject jo) {
                         stack.push(jo.getMember(attr));
                     } else if (obj instanceof PyJavaClass jc) {
@@ -1982,329 +1889,31 @@ public class Jython3Interpreter {
         }
     }
 
-    // ─── Arithmetic helpers ───────────────────────────────────────────────
+    // ─── Arithmetic & type method delegation ───────────────────────────────
 
     private static PyObject unwrapBool(PyObject o) {
-        return (o instanceof PyBool b) ? (b.value() ? PyInt.ONE : PyInt.ZERO) : o;
+        return ArithmeticOps.unwrapBool(o);
     }
 
     private void binaryAdd() {
-        var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
-        if (l instanceof PyStr ls && r instanceof PyStr rs) {
-            stack.push(new PyStr(ls.value() + rs.value()));
-        } else if (l instanceof PyList ll && r instanceof PyList rl) {
-            var items = new ArrayList<>(ll.items());
-            items.addAll(rl.items());
-            stack.push(new PyList(items));
-        } else if (l instanceof PyTuple lt && r instanceof PyTuple rt) {
-            var items = new ArrayList<>(lt.items());
-            items.addAll(rt.items());
-            stack.push(new PyTuple(items));
-        } else if (l instanceof PyTuple && !(r instanceof PyTuple)) {
-            throw PyErrors.error("TypeError", "can only concatenate tuple (not \"" + typeName(r) + "\") to tuple");
-        } else if (!(l instanceof PyTuple) && r instanceof PyTuple) {
-            throw PyErrors.error("TypeError", "can only concatenate " + typeName(l) + " (not \"tuple\") to " + typeName(l));
-        } else if (l instanceof PyInt li && r instanceof PyInt ri) {
-            long lv = li.value();
-            long rv = ri.value();
-            try {
-                long res = Math.addExact(lv, rv);
-                if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
-                    stack.push(new BigInt(java.math.BigInteger.valueOf(res)));
-                } else {
-                    stack.push(PyInt.of((int)res));
-                }
-            } catch (ArithmeticException ae) {
-                stack.push(new BigInt(java.math.BigInteger.valueOf(lv).add(java.math.BigInteger.valueOf(rv))));
-            }
-        } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
-            stack.push(new BigInt(bi.value().add(bri.value())));
-        } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
-            stack.push(new BigInt(bi.value().add(java.math.BigInteger.valueOf(ri.value()))));
-        } else if (l instanceof PyInt li && r instanceof BigInt bri) {
-            stack.push(new BigInt(java.math.BigInteger.valueOf(li.value()).add(bri.value())));
-        } else if (isNumeric(l) && isNumeric(r)) {
-            stack.push(new PyFloat(toDouble(l) + toDouble(r)));
-        } else {
-            throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
-        }
+        var r = stack.pop(); var l = stack.pop();
+        stack.push(ArithmeticOps.add(l, r));
     }
 
     private void binarySubtract() {
-        var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
-        if (l instanceof PyInt li && r instanceof PyInt ri) {
-            long lv = li.value();
-            long rv = ri.value();
-            try {
-                long res = Math.subtractExact(lv, rv);
-                if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
-                    stack.push(new BigInt(java.math.BigInteger.valueOf(res)));
-                } else {
-                    stack.push(PyInt.of((int)res));
-                }
-            } catch (ArithmeticException ae) {
-                stack.push(new BigInt(java.math.BigInteger.valueOf(lv).subtract(java.math.BigInteger.valueOf(rv))));
-            }
-        } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
-            stack.push(new BigInt(bi.value().subtract(bri.value())));
-        } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
-            stack.push(new BigInt(bi.value().subtract(java.math.BigInteger.valueOf(ri.value()))));
-        } else if (l instanceof PyInt li && r instanceof BigInt bri) {
-            stack.push(new BigInt(java.math.BigInteger.valueOf(li.value()).subtract(bri.value())));
-        } else if (isNumeric(l) && isNumeric(r)) {
-            stack.push(new PyFloat(toDouble(l) - toDouble(r)));
-        } else {
-            throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
-        }
+        var r = stack.pop(); var l = stack.pop();
+        stack.push(ArithmeticOps.subtract(l, r));
     }
 
     private void binaryMultiply() {
-        var r = unwrapBool(stack.pop()); var l = unwrapBool(stack.pop());
-        if (l instanceof PyStr s && r instanceof PyInt n) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value());
-            if (newLen > executionLimits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
-            }
-            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value()))));
-        } else if (l instanceof PyInt n && r instanceof PyStr s) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value());
-            if (newLen > executionLimits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
-            }
-            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value()))));
-        } else if (l instanceof PyStr s && r instanceof BigInt n) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value().longValue());
-            if (newLen > executionLimits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
-            }
-            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value().intValue()))));
-        } else if (l instanceof BigInt n && r instanceof PyStr s) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value().longValue());
-            if (newLen > executionLimits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + executionLimits.maxStringLength());
-            }
-            stack.push(new PyStr(s.value().repeat((int) Math.max(0, n.value().intValue()))));
-        } else if (l instanceof PyList ll && r instanceof PyInt n) {
-            long newSize = (long) ll.items().size() * Math.max(0, n.value());
-            if (newSize > executionLimits.maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
-            }
-            var items = new ArrayList<PyObject>();
-            long count = Math.max(0, n.value());
-            for (long i = 0; i < count; i++) items.addAll(ll.items());
-            stack.push(new PyList(items));
-        } else if (l instanceof PyTuple tt && r instanceof PyInt n) {
-            long count = Math.max(0, n.value());
-            long newSize = (long) tt.items().size() * count;
-            if (newSize > executionLimits.maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
-            }
-            var items = new ArrayList<PyObject>();
-            for (long i = 0; i < count; i++) items.addAll(tt.items());
-            stack.push(new PyTuple(items));
-        } else if (l instanceof PyInt n && r instanceof PyTuple tt) {
-            long count = Math.max(0, n.value());
-            long newSize = (long) tt.items().size() * count;
-            if (newSize > executionLimits.maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
-            }
-            var items = new ArrayList<PyObject>();
-            for (long i = 0; i < count; i++) items.addAll(tt.items());
-            stack.push(new PyTuple(items));
-        } else if (l instanceof PyInt li && r instanceof PyInt ri) {
-            long lv = li.value();
-            long rv = ri.value();
-            try {
-                long res = Math.multiplyExact(lv, rv);
-                if (res > Integer.MAX_VALUE || res < Integer.MIN_VALUE) {
-                    stack.push(new BigInt(java.math.BigInteger.valueOf(res)));
-                } else {
-                    stack.push(PyInt.of((int)res));
-                }
-            } catch (ArithmeticException ae) {
-                stack.push(new BigInt(java.math.BigInteger.valueOf(lv).multiply(java.math.BigInteger.valueOf(rv))));
-            }
-        } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
-            stack.push(new BigInt(bi.value().multiply(bri.value())));
-        } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
-            stack.push(new BigInt(bi.value().multiply(java.math.BigInteger.valueOf(ri.value()))));
-        } else if (l instanceof PyInt li && r instanceof BigInt bri) {
-            stack.push(new BigInt(java.math.BigInteger.valueOf(li.value()).multiply(bri.value())));
-        } else if (isNumeric(l) && isNumeric(r)) {
-            stack.push(new PyFloat(toDouble(l) * toDouble(r)));
-        } else {
-            throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
-        }
-    }
-
-    // ─── Type method helpers ──────────────────────────────────────────────
-
-    private PyObject strMethod(PyStr s, String method) {
-        return switch (method) {
-            case "upper" -> new PyBuiltinFunction("str.upper", args -> new PyStr(s.value().toUpperCase()));
-            case "lower" -> new PyBuiltinFunction("str.lower", args -> new PyStr(s.value().toLowerCase()));
-            case "strip" -> new PyBuiltinFunction("str.strip", args -> new PyStr(s.value().strip()));
-            case "split" -> new PyBuiltinFunction("str.split", args -> {
-                String[] parts;
-                if (args.length > 0 && args[0] instanceof PyStr sep) {
-                    parts = s.value().split(java.util.regex.Pattern.quote(sep.value()), -1);
-                } else {
-                    parts = s.value().split("\\s+");
-                }
-                var items = new ArrayList<PyObject>();
-                for (String p : parts) if (!p.isEmpty()) items.add(new PyStr(p));
-                return new PyList(items);
-            });
-            case "join" -> new PyBuiltinFunction("str.join", args -> {
-                checkArgCount("str.join", args, 1);
-                if (!(args[0] instanceof PyList list)) throw PyErrors.error("TypeError", "join() argument must be iterable");
-                var sb = new StringBuilder();
-                for (int i = 0; i < list.items().size(); i++) {
-                    if (i > 0) sb.append(s.value());
-                    sb.append(list.items().get(i).toString());
-                }
-                return new PyStr(sb.toString());
-            });
-            case "replace" -> new PyBuiltinFunction("str.replace", args -> {
-                if (args.length < 2) throw PyErrors.error("TypeError", "replace() takes at least 2 arguments");
-                if (!(args[0] instanceof PyStr old) || !(args[1] instanceof PyStr rep))
-                    throw PyErrors.error("TypeError", "replace() arguments must be strings");
-                return new PyStr(s.value().replace(old.value(), rep.value()));
-            });
-            case "startswith" -> new PyBuiltinFunction("str.startswith", args -> {
-                checkArgCount("str.startswith", args, 1);
-                if (!(args[0] instanceof PyStr prefix)) throw PyErrors.error("TypeError", "startswith() argument must be str");
-                return PyBool.of(s.value().startsWith(prefix.value()));
-            });
-            case "endswith" -> new PyBuiltinFunction("str.endswith", args -> {
-                checkArgCount("str.endswith", args, 1);
-                if (!(args[0] instanceof PyStr suffix)) throw PyErrors.error("TypeError", "endswith() argument must be str");
-                return PyBool.of(s.value().endsWith(suffix.value()));
-            });
-            case "find" -> new PyBuiltinFunction("str.find", args -> {
-                checkArgCount("str.find", args, 1);
-                if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "find() argument must be str");
-                return new PyInt(s.value().indexOf(sub.value()));
-            });
-            case "count" -> new PyBuiltinFunction("str.count", args -> {
-                checkArgCount("str.count", args, 1);
-                if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "count() argument must be str");
-                int count = 0; int idx = 0;
-                while ((idx = s.value().indexOf(sub.value(), idx)) != -1) { count++; idx += sub.value().length(); }
-                return new PyInt(count);
-            });
-            case "isdigit" -> new PyBuiltinFunction("str.isdigit", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isDigit)));
-            case "isalpha" -> new PyBuiltinFunction("str.isalpha", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isLetter)));
-            case "isalnum" -> new PyBuiltinFunction("str.isalnum", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isLetterOrDigit)));
-            default -> throw PyErrors.error("AttributeError", "'str' object has no attribute '" + method + "'");
-        };
-    }
-
-    private PyObject setMethod(PySet set, String method) {
-        return switch (method) {
-            case "add" -> new PyBuiltinFunction("set.add", args -> {
-                checkArgCount("set.add", args, 1);
-                set.add(args[0]);
-                return new PyNull();
-            });
-            default -> throw PyErrors.error("AttributeError", "'set' object has no attribute '" + method + "'");
-        };
+        var r = stack.pop(); var l = stack.pop();
+        stack.push(ArithmeticOps.multiply(l, r, executionLimits));
     }
 
     private static String pyPrintStr(PyObject o) {
         if (o == null) return "None";
         if (o instanceof PyException pe) return pe.message();
         return o.toString();
-    }
-
-    private PyObject listMethod(PyList list, String method) {
-        return switch (method) {
-            case "append" -> new PyBuiltinFunction("list.append", args -> { checkArgCount("list.append", args, 1); list.items().add(args[0]); return new PyNull(); });
-            case "pop" -> new PyBuiltinFunction("list.pop", args -> {
-                if (list.items().isEmpty()) throw PyErrors.error("IndexError", "pop from empty list");
-                if (args.length > 0) { int i = toInt(args[0]); if (i < 0) i += list.items().size(); return list.items().remove(i); }
-                return list.items().removeLast();
-            });
-            case "extend" -> new PyBuiltinFunction("list.extend", args -> {
-                checkArgCount("list.extend", args, 1);
-                if (!(args[0] instanceof PyList other)) throw PyErrors.error("TypeError", "extend() argument must be iterable");
-                list.items().addAll(other.items());
-                return new PyNull();
-            });
-            case "insert" -> new PyBuiltinFunction("list.insert", args -> {
-                if (args.length < 2) throw PyErrors.error("TypeError", "insert() takes 2 arguments");
-                int i = toInt(args[0]); if (i < 0) i += list.items().size(); if (i < 0) i = 0;
-                if (i > list.items().size()) i = list.items().size();
-                list.items().add(i, args[1]);
-                return new PyNull();
-            });
-            case "remove" -> new PyBuiltinFunction("list.remove", args -> {
-                checkArgCount("list.remove", args, 1);
-                for (int i = 0; i < list.items().size(); i++) {
-                    if (pyEquals(list.items().get(i), args[0])) { list.items().remove(i); return new PyNull(); }
-                }
-                throw PyErrors.error("ValueError", "list.remove(x): x not in list");
-            });
-            case "index" -> new PyBuiltinFunction("list.index", args -> {
-                checkArgCount("list.index", args, 1);
-                for (int i = 0; i < list.items().size(); i++) {
-                    if (pyEquals(list.items().get(i), args[0])) return new PyInt(i);
-                }
-                throw PyErrors.error("ValueError", args[0] + " is not in list");
-            });
-            case "count" -> new PyBuiltinFunction("list.count", args -> {
-                checkArgCount("list.count", args, 1);
-                int c = 0; for (var item : list.items()) if (pyEquals(item, args[0])) c++;
-                return new PyInt(c);
-            });
-            case "sort" -> new PyBuiltinFunction("list.sort", args -> {
-                list.items().sort(PyOps::compareObjects);
-                return new PyNull();
-            });
-            case "reverse" -> new PyBuiltinFunction("list.reverse", args -> {
-                Collections.reverse(list.items());
-                return new PyNull();
-            });
-            case "copy" -> new PyBuiltinFunction("list.copy", args -> new PyList(new ArrayList<>(list.items())));
-            case "clear" -> new PyBuiltinFunction("list.clear", args -> { list.items().clear(); return new PyNull(); });
-            default -> throw PyErrors.error("AttributeError", "'list' object has no attribute '" + method + "'");
-        };
-    }
-
-    private PyObject dictMethod(PyDict dict, String method) {
-        return switch (method) {
-            case "keys" -> new PyBuiltinFunction("dict.keys", args -> new PyList(dict.keys()));
-            case "values" -> new PyBuiltinFunction("dict.values", args -> new PyList(dict.values()));
-            case "items" -> new PyBuiltinFunction("dict.items", args -> {
-                var items = new ArrayList<PyObject>();
-                for (var entry : dict.itemsList()) items.add(new PyList(entry));
-                return new PyList(items);
-            });
-            case "get" -> new PyBuiltinFunction("dict.get", args -> {
-                if (args.length < 1) throw PyErrors.error("TypeError", "get() takes at least 1 argument");
-                PyObject val = dict.get(args[0]);
-                if (val != null) return val;
-                return (args.length > 1) ? args[1] : new PyNull();
-            });
-            case "update" -> new PyBuiltinFunction("dict.update", args -> {
-                checkArgCount("dict.update", args, 1);
-                if (!(args[0] instanceof PyDict other)) throw PyErrors.error("TypeError", "update() argument must be a dict");
-                for (var key : other.keys()) {
-                    dict.put(key, other.get(key));
-                }
-                return new PyNull();
-            });
-            case "pop" -> new PyBuiltinFunction("dict.pop", args -> {
-                if (args.length < 1) throw PyErrors.error("TypeError", "pop() takes at least 1 argument");
-                PyObject val = dict.remove(args[0]);
-                if (val != null) return val;
-                if (args.length > 1) return args[1];
-                throw PyErrors.error("KeyError", String.valueOf(args[0]));
-            });
-            case "clear" -> new PyBuiltinFunction("dict.clear", args -> { dict.clear(); return new PyNull(); });
-            case "copy" -> new PyBuiltinFunction("dict.copy", args -> new PyDict(dict.map()));
-            default -> throw PyErrors.error("AttributeError", "'dict' object has no attribute '" + method + "'");
-        };
     }
 
     private PyObject callPyCallable(PyObject callable, PyObject[] args) {
@@ -2326,10 +1935,10 @@ public class Jython3Interpreter {
         }
         if (obj instanceof PyClass cls) return cls.lookupMember(attr);
         if (obj instanceof PyModule mod) return mod.attrs().get(attr);
-        if (obj instanceof PyDict dict) return dictMethod(dict, attr);
-        if (obj instanceof PyList list) return listMethod(list, attr);
-        if (obj instanceof PySet set)   return setMethod(set, attr);
-        if (obj instanceof PyStr s)     return strMethod(s, attr);
+        if (obj instanceof PyDict dict) return BuiltinMethodDispatcher.dictMethod(dict, attr);
+        if (obj instanceof PyList list) return BuiltinMethodDispatcher.listMethod(list, attr);
+        if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr);
+        if (obj instanceof PyStr s)     return BuiltinMethodDispatcher.strMethod(s, attr);
         return null;
     }
 

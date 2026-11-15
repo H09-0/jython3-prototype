@@ -1,6 +1,7 @@
 # Compatibility Matrix
 
 This document provides a feature-by-feature evaluation of language support in `jython3-prototype` against the **CPython 3.14** baseline.
+For a high-level summary of the current live state, see [STATUS.md](STATUS.md).
 
 ---
 
@@ -19,26 +20,26 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 
 | Feature | Stage | Implementation & Verification Notes |
 | :--- | :---: | :--- |
-| **Integer Arithmetic** | **T2** | Signed 32-bit `int` with automatic transparent promotion to arbitrary-precision `BigInt`. Overflow-free `+`, `-`, `*`, `//`, `%`, `**`. Tested against large bounds. |
+| **Integer Arithmetic** | **T2** | Signed 32-bit `int` (with `-128..256` cache) and automatic transparent promotion to `BigInt`. Overflow-free `+`, `-`, `*`, `//`, `%`, `**`. |
 | **Floating Point Arithmetic** | **T2** | IEEE 754 64-bit double precision. `/` always produces `float`. Division by zero raises `ZeroDivisionError`. |
-| **Exact BigInt & Float Comparisons** | **T2** | Exact equality and relational comparisons via `BigDecimal` without 64-bit float precision loss. Validated against `9007199254740993 > 9007199254740992.0`. |
-| **String Manipulation** | **T1** | UTF-8 `PyStr`. Triple-quoted strings, escapes, `.upper()`, `.lower()`, `.strip()`, `.split()`, `.join()`, `.replace()`, `.startswith()`, `.endswith()`, `.find()`, `.count()`, `.isdigit()`, `.isalpha()`, `.isalnum()`. |
-| **Boolean & Identity Operations** | **T2** | `True`, `False`, `None`, short-circuit `and` / `or`, unary `not`, identity `is` / `is not`, membership `in` / `not in`. |
-| **Lists** | **T1** | Dynamic mutable `PyList`. Indexing, slicing, `.append()`, `.extend()`, `.insert()`, `.pop()`, `.remove()`, `.index()`, `.count()`, `.sort()`, `.reverse()`, `.copy()`, `.clear()`. |
-| **Dictionaries** | **T2** | Insertion-ordered `PyDict` implementing Python 3 key semantics (1 == 1.0 == True map to the same key; unhashable lists/dicts raise TypeError). Key lookup, `.keys()`, `.values()`, `.items()`, `.get(key, default)`, `.pop()`, `.update()`, `.copy()`, `.clear()`. Differential tested. |
-| **Tuples** | **T1** | Parsed as `(a, b)` and supported in `except (E1, E2)` clauses. Full tuple immutability is in progress. |
-| **Slicing** | **T2** | List and string slicing (`s[a:b]`, `s[:b]`, `s[a:]`, `s[::step]`, `s[::-1]`) implementing exact CPython `slice.indices()` semantics, Unicode/Emoji codepoint boundaries, and step != 0 validation. Differential tested. |
-| **Control Flow** | **T1** | `if` / `elif` / `else`, `while`, `for ... in ...`. Loop control: `break` and `continue` with loop context back-patching across nested loops. |
-| **Functions & Scope** | **T1** | `def name(args):`, `return val`, isolated local call frames, lexical closure capture, nested function definitions. |
-| **Decorators** | **T1** | Function and class decorators `@dec` with bottom-to-top chaining. |
-| **Object-Oriented Programming** | **T1** | `class Name(Bases):`, `__init__`, dynamic instance fields, bound methods, single/multiple inheritance, `super()` proxy. |
-| **Exception Handling** | **T2** | `try / except / else / finally`. Supports class hierarchy matching, multiple except clauses, exception tuples `except (A, B)`, PEP 3110 `as e` deletion at block exit, nested unwinding, handler `finally` execution, and bare `raise`. |
-| **Generators** | **T1** | Functions with `yield` produce `PyGenerator` supporting iteration in `for` loops. Coroutine `.send()` / `.throw()` are in progress. |
-| **execfile()** | **T1** | Direct execution of external Python source files within current scope (Jython 2.7 migration & Oculix automation). |
-| **Context Managers (`with`)** | **T0** | Planned for Phase 11. |
-| **Comprehensions** | **T0** | List, dict, and set comprehensions planned for Phase 11. |
-| **F-Strings (`f"..."`)** | **T0** | String interpolation currently uses `%` and `.format()`. Full f-string parser expansion planned for Phase 11. |
-| **Async / Await** | **T0** | Reserved for Phase 12 (Project Loom virtual threads). |
+| **Exact BigInt & Float Comparisons** | **T2** | Exact equality and relational comparisons via `BigDecimal` without 64-bit float precision loss. |
+| **String Manipulation** | **T2** | UTF-8 `PyStr` with non-surrogate ASCII/BMP fast-path. Triple-quoted strings, raw strings (`r"..."`), escapes, `%` formatting, f-strings (`f"..."`), and string methods. |
+| **F-Strings (`f"..."`)** | **T1** | Interpolated string literals `f"..."` and `f'...'` with embedded expressions. |
+| **Boolean & Identity Operations** | **T2** | `True`, `False`, `None` (`PyNull`), short-circuit `and` / `or`, unary `not`, identity `is` / `is not`, membership `in` / `not in`. |
+| **Lists** | **T2** | Dynamic mutable `PyList`. Indexing, slicing, `.append()`, `.extend()`, `.insert()`, `.pop()`, `.remove()`, `.index()`, `.count()`, `.sort()`, `.reverse()`, `.copy()`, `.clear()`. |
+| **Dictionaries** | **T2** | Insertion-ordered `PyDict` implementing Python 3 key semantics (`1 == 1.0 == True`; unhashable lists/dicts raise `TypeError`). |
+| **Tuples & Unpacking** | **T2** | Immutable `PyTuple` distinct from `PyList`, sequence unpacking `a, b = seq`, and `except (E1, E2)` tuple matching. Note: tuple unpacking inside `for` headers (`for a, b in seq:`) is not yet in grammar. |
+| **Sets** | **T1** | Mutable `PySet` with hashability enforcement (`PyKey.checkHashable`), set literals `{1, 2}`, and set comprehensions. |
+| **Comprehensions** | **T2** | List comprehensions (`[x for x in seq if cond]`), dict comprehensions (`{k: v for ...}`), and set comprehensions (`{x for ...}`), differential tested against CPython. |
+| **Slicing** | **T2** | List, tuple, and string slicing (`s[a:b:c]`, `s[::-1]`) implementing CPython `slice.indices()` semantics and Unicode codepoint safety. |
+| **Control Flow** | **T1** | `if` / `elif` / `else`, `while`, `for ... in ...`, `break`, `continue`, `assert`, chained assignment (`a = b = expr`). |
+| **Functions & Scope** | **T2** | `def`, `lambda`, default arguments, `*args`, `**kwargs`, keyword calls, lexical closures, `global`, `nonlocal` via `PyCell`, decorators. |
+| **Context Managers (`with`)** | **T1** | `with expr [as id]:` executing `__enter__` and `__exit__` on normal and exceptional exits. |
+| **Object-Oriented Programming** | **T1** | `class Name(Bases):`, `__init__`, dynamic instance fields, bound methods, single/multiple inheritance, `super()` (0-arg and 2-arg), version-guarded inline attribute caches. |
+| **Exception Handling** | **T2** | `try / except / else / finally`, class hierarchy matching, exception tuples `except (A, B) as e`, PEP 3110 deletion, nested unwinding, bare `raise`. |
+| **Generators** | **T1** | Functions with `yield` produce `PyGenerator` supporting `for` loops and `list()`/`sum()`/`sorted()`/`reversed()`. Coroutine `.send()` / `.throw()` are not yet implemented. |
+| **execfile()** | **T1** | Direct execution of external Python source files within current scope (gated by `HostAccessPolicy`). |
+| **Async / Await** | **T0** | Reserved for future concurrency phase (Java Virtual Threads). |
 
 ---
 
@@ -47,10 +48,10 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 | Module | Stage | Implementation & Verification Notes |
 | :--- | :---: | :--- |
 | **`math`** | **T1** | `sqrt`, `sin`, `cos`, `tan`, `log`, `floor`, `ceil`, `abs`, `pow`, `pi`, `e`, `inf` |
-| **`sys`** | **T1** | `argv`, `version`, `platform`, `maxsize` (JVM Integer/Long boundary), `exit(code)` |
-| **`os`** | **T1** | `getcwd()`, `getpid()`, `sep`, `pathsep`, `name`, `environ` (dict-like), `listdir(path)` |
-| **`io`** | **T1** | `open(file, mode)` supporting `'r'`, `'w'`, `'a'`, `.read()`, `.write()`, `.close()` |
-| **`json`** | **T1** | `dumps(obj)`, `loads(json_str)` supporting nested dicts, lists, numbers, booleans, and null |
-| **`re`** | **T1** | `search(pattern, str)`, `findall(pattern, str)` backed by Java Regex engine (minor pattern dialect differences from CPython PCRE) |
-| **`time`** | **T2** | `time()`, `time_ns()` (Unix Epoch nanos via `Instant.now()`), `sleep(secs)` (validated against NaN/Inf/negative), `monotonic()`, `perf_counter()` |
-| **`random`** | **T2** | `random()`, `randint(a, b)` (unbiased arbitrary-precision rejection sampling), `choice(seq)` (Unicode/Emoji codepoint-safe), `seed(n)` (per-instance isolation) |
+| **`sys`** | **T1** | `argv`, `version`, `platform`, `maxsize`, `exit(code)` |
+| **`os`** | **T1** | `getcwd()`, `getpid()`, `sep`, `pathsep`, `name`, `environ`, `listdir(path)` (gated by `HostAccessPolicy`) |
+| **`io`** | **T1** | `open(file, mode)` supporting `'r'`, `'w'`, `'a'`, `.read()`, `.write()`, `.close()` (gated by `HostAccessPolicy`) |
+| **`json`** | **T2** | `dumps(obj)`, strict RFC 8259 `loads(json_str)` supporting nested objects/arrays, escapes, `BigInt`s, and raising `json.JSONDecodeError` (subclass of `ValueError`) |
+| **`re`** | **T1** | `search(pattern, str)`, `findall(pattern, str)` backed by `java.util.regex` |
+| **`time`** | **T2** | `time()`, `time_ns()`, `sleep(secs)`, `monotonic()`, `perf_counter()` |
+| **`random`** | **T2** | `random()`, `randint(a, b)`, `choice(seq)`, `seed(n)` (per-instance isolation) |

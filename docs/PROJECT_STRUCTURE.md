@@ -18,7 +18,8 @@ jython3-prototype/
 ├── docs/                           # Focused technical documentation
 │   ├── ARCHITECTURE.md             # Execution engine, bytecode specification, VM design
 │   ├── COMPATIBILITY.md            # Tier-by-tier CPython 3.14 compatibility matrix
-│   ├── ROADMAP.md                  # Development phases & milestones to v1.0.0
+│   ├── ROADMAP.md                  # Future optimization & language milestones
+│   ├── STATUS.md                   # Single source of truth for current live state & glossary
 │   ├── STDLIB.md                   # Built-in standard library modules reference
 │   └── PROJECT_STRUCTURE.md        # This layout guide
 ├── modules/                        # File-based external Python modules path
@@ -44,6 +45,7 @@ jython3-prototype/
     │       ├── parse/              # Lexical stream preprocessors
     │       │   └── PythonIndentStream.java # Converts indentation/dedentation into synthetic INDENT/DEDENT tokens
     │       ├── runtime/            # Python object model and execution frame
+    │       │   ├── ArithmeticOps.java  # Binary arithmetic helpers (+, -, *) extracted from VM loop
     │       │   ├── BigInt.java         # Arbitrary-precision integer wrapping BigInteger
     │       │   ├── ExceptHandler.java  # Active exception handler entry on exceptStack
     │       │   ├── ExceptionTypeRegistry.java # Standard Python exception type hierarchy
@@ -81,18 +83,50 @@ jython3-prototype/
     │       ├── security/           # Java Bridge security policies and sandboxing
     │       │   ├── AllowlistPolicy.java # Default trusted policy (safe standard libraries, blocks unsafe internals)
     │       │   ├── DenyAllPolicy.java   # Complete denial of all Java access
+    │       │   ├── ExecutionContext.java # Runtime instruction/timeout/cancellation tracker
+    │       │   ├── ExecutionLimits.java  # Explicit CPU, memory, and timeout resource limits
+    │       │   ├── HostAccessPolicy.java # Host filesystem & environment access gate
     │       │   ├── JavaAccessPolicy.java # Interface defining access control hooks
     │       │   ├── JavaDescriptors.java # JVM bytecode descriptor generator
+    │       │   ├── PolicySanitizer.java # Graph-aware wrapper sanitizer for host-injected PyObjects
     │       │   └── SandboxedPolicy.java # Strict policy for untrusted code (denies IO, net, UI, threads)
     │       └── stdlib/             # Built-in Python standard library implementations
-    │           ├── BuiltinFunctions.java # Global built-in functions (len, range, type, isinstance, etc.)
-    │           └── BuiltinModules.java   # Java-backed modules (math, sys, os, io, json, re, time, random)
+    │           ├── BuiltinFunctions.java      # Global built-in functions (len, range, type, isinstance, etc.)
+    │           ├── BuiltinMethodDispatcher.java # Built-in type methods (str, list, dict, set)
+    │           ├── BuiltinModules.java        # Facade delegating to stdlib.modules.*
+    │           └── modules/                   # Per-module standard library implementations
+    │               ├── IoModule.java
+    │               ├── JsonModule.java
+    │               ├── MathModule.java
+    │               ├── OsModule.java
+    │               ├── RandomModule.java
+    │               ├── ReModule.java
+    │               ├── StdlibSupport.java
+    │               ├── SysModule.java
+    │               └── TimeModule.java
     └── test/
         └── java/org/example/jython3/
+            ├── BenchmarkSmokeTest.java         # Smoke checks for BenchmarkSuite
             ├── ErrorFactoryTest.java           # Tests error construction and exception matching
             ├── ExceptionTypeRegistryTest.java  # Tests standard exception class hierarchies
+            ├── FieldIntegrationTest.java       # Regression tests from field testing
+            ├── InlineCacheCorrectnessTest.java # Inline cache invalidation & polymorphism tests
             ├── JavaAccessPolicyTest.java       # Tests policy boundaries, privilege isolation, and sandboxing
-            └── Jython3InterpreterTest.java     # 207 end-to-end integration tests for language features
+            ├── JavaBridgeOptimizationTest.java # Bridge overload, array, and policy-isolation tests
+            ├── Jython3InterpreterTest.java     # Core end-to-end integration tests
+            ├── Milestone1ConformanceTest.java  # Milestone 1 runtime semantic conformance tests
+            ├── NonlocalAndBuiltinFixesTest.java # Closure/nonlocal and print/int kwargs tests
+            ├── differential/                   # Differential testing against host CPython 3
+            │   ├── CoreDifferentialTest.java
+            │   └── DifferentialHarness.java
+            └── field/                          # Modular field scenarios & resource/leak profiler
+                ├── AnalyticsScenario.java
+                ├── FieldScenario.java
+                ├── FieldTestRunner.java
+                ├── JavaBridgeScenario.java
+                ├── OopScenario.java
+                ├── RegexScenario.java
+                └── ResourceProfiler.java
 ```
 
 ---

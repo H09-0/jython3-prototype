@@ -67,21 +67,19 @@ move are planned together so the sealed hierarchy stays closed.
 
 ## 3. Execution pipeline
 
-```
+```text
 Python source
-    |
-    v
-Jython3Lexer  ->  PythonIndentStream  ->  Jython3Parser
-    (tokens)        (INDENT/DEDENT)        (parse tree)
-    |
-    v
-CompileVisitor + CodeBuilder
-    |
-    v
-CompiledCode { int[] code, Object[] constants }
-    |
-    v
-Virtual machine: frames, operand stack, call stack, handler stack
+    │
+    ▼  (Jython3Lexer -> PythonIndentStream -> Jython3Parser)
+Parse tree
+    │
+    ▼  (CompileVisitor + CodeBuilder)
+CompiledCode { int[] bytecode, Object[] constPool, int[] lines, Object[] attrCache }
+    │
+    ▼  (Jython3Interpreter VM loop + FastStack + Frame stack)
+    ├── Runtime objects (PyInt, BigInt, PyFloat, PyStr, PyList, PyDict, PyClass, PyNull...)
+    ├── Standard library (BuiltinFunctions + org.example.jython3.stdlib.modules.*)
+    └── Java Bridge (JavaBridge -> TypeConverter plans -> JavaAccessPolicy -> JVM objects)
 ```
 
 - One instruction is one `int`: high 16 bits are an explicit `OpCode` number,
@@ -338,6 +336,18 @@ tests before the next layer is built on top of them.
 | 2026-10-24 | Exception matching uses the type hierarchy, not catch-all names |
 | 2026-10-24 | Java throwables enter through `PyErrors.fromJava` only |
 
+## 10. Runtime Concepts & Null Semantics
+
+| Concept | Java Representation | Role in the VM & Boundary Rules |
+| :--- | :--- | :--- |
+| **Python `None`** | `PyNull` | First-class `PyObject` representing `None` inside stacks, local/global scopes, and Python collections. |
+| **Java `null`** | `null` | Indicates an *absent/unbound* slot in Java maps (`currentLocals`, `PyDict`). `JavaBridge.toPyObject(null)` converts Java `null` to `PyNull`; `toJavaObject(PyNull, RefType)` converts `PyNull` to Java `null` (while primitive Java targets reject `PyNull` with `TypeError`). |
+| **`PyCaller`** | `ThreadLocal<PyCaller>` | Thread-scoped callback bridge installed during `eval()`/`evalCode()` and cleared in `finally` so built-ins and `__str__` can invoke Python callables without leaking across thread pools. |
+| **`PyCell`** | `PyCell` | Mutable box enabling `nonlocal` bindings to be shared and mutated across nested function scopes. |
+| **`PyCompiledCodeWrapper`** | `PyCompiledCodeWrapper` | `PyObject` carrier placing compiled class body `CompiledCode` onto the VM operand stack for `BUILD_CLASS`. |
+| **`ExecutionContext`** | `ExecutionContext` | Enforces `ExecutionLimits` (instruction budget, wall-clock timeout, cancellation) across calls and modules. |
+
+---
+
 Changes to this document require the same review as code: update the decision
-log, update the affected tests, and keep the README compatibility table in
-sync.
+log, update the affected tests, and keep [STATUS.md](STATUS.md) and [COMPATIBILITY.md](COMPATIBILITY.md) in sync.

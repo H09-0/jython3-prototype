@@ -36,7 +36,7 @@ tasks.register<JavaExec>("fieldTest") {
     group = "verification"
     description = "Run Jython 3 real-world field tests & resource/leak profiler"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("org.example.jython3.FieldTestRunner")
+    mainClass.set("org.example.jython3.field.FieldTestRunner")
 }
 
 tasks.register<JavaExec>("runScript") {

@@ -137,4 +137,26 @@ public class FieldIntegrationTest {
         assertEquals("[6, 4, 2, 0]", interp.getGlobal("as_rev").toString());
         assertEquals("[6, 4, 2, 0]", interp.getGlobal("as_sort").toString());
     }
+
+    @Test
+    @DisplayName("re.search and re.findall raise re.error on invalid regex and TypeError on invalid args")
+    void testReErrorHandling() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            import re
+            caught_pat = False
+            try:
+                re.search(r"[unclosed", "abc")
+            except re.error:
+                caught_pat = True
+
+            caught_type = False
+            try:
+                re.findall(123, "abc")
+            except TypeError:
+                caught_type = True
+            """);
+        assertEquals(PyBool.TRUE, interp.getGlobal("caught_pat"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("caught_type"));
+    }
 }
