@@ -1,5 +1,6 @@
 package org.example.jython3.stdlib;
 
+import org.example.jython3.host.HostSession;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
@@ -12,6 +13,8 @@ import org.example.jython3.stdlib.modules.RandomModule;
 import org.example.jython3.stdlib.modules.ReModule;
 import org.example.jython3.stdlib.modules.SysModule;
 import org.example.jython3.stdlib.modules.TimeModule;
+import org.example.jython3.stdlib.modules.UiModule;
+import org.example.jython3.ui.UiToolkit;
 
 /**
  * Facade exposing all Java-backed standard library modules implemented under
@@ -31,4 +34,5 @@ public final class BuiltinModules {
     public static PyModule re()     { return ReModule.create(); }
     public static PyModule time()   { return TimeModule.create(); }
     public static PyModule random() { return RandomModule.create(); }
+    public static PyModule ui(HostSession session, UiToolkit toolkit) { return UiModule.create(session, toolkit); }
 }

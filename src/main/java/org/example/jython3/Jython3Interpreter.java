@@ -89,6 +89,8 @@ import org.example.jython3.security.PolicySanitizer;
 import org.example.jython3.stdlib.BuiltinFunctions;
 import org.example.jython3.stdlib.BuiltinMethodDispatcher;
 import org.example.jython3.stdlib.BuiltinModules;
+import org.example.jython3.ui.HeadlessUiToolkit;
+import org.example.jython3.ui.UiToolkit;
 
 import static org.example.jython3.runtime.PyOps.checkArgCount;
 import static org.example.jython3.runtime.PyOps.compareObjects;
@@ -132,6 +134,7 @@ public class Jython3Interpreter implements AutoCloseable {
     private volatile boolean enforceLimits = false;
     private volatile boolean closed = false;
     private final HostSession hostSession;
+    private UiToolkit uiToolkit = new HeadlessUiToolkit();
 
     /** Requests cooperative cancellation of the currently running evaluation/generator. */
     public void cancel() {
@@ -483,6 +486,14 @@ public class Jython3Interpreter implements AutoCloseable {
     /** The capability-gated host session owned by this interpreter. */
     public HostSession hostSession() {
         return hostSession;
+    }
+
+    public UiToolkit uiToolkit() {
+        return uiToolkit;
+    }
+
+    public void setUiToolkit(UiToolkit uiToolkit) {
+        this.uiToolkit = Objects.requireNonNull(uiToolkit, "uiToolkit");
     }
 
     public boolean isClosed() {
@@ -3143,6 +3154,7 @@ public class Jython3Interpreter implements AutoCloseable {
             case "re"   -> BuiltinModules.re();
             case "time" -> BuiltinModules.time();
             case "random" -> BuiltinModules.random();
+            case "ui" -> BuiltinModules.ui(hostSession, uiToolkit);
             default     -> null;
         };
         if (mod != null) {
