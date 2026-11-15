@@ -18,6 +18,9 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         if (object == null) {
             throw PyErrors.error("AttributeError", "'None' Java object has no attribute '" + name + "'");
         }
+        if (name == null || name.isEmpty()) {
+            throw PyErrors.error("AttributeError", "Java object has no attribute ''");
+        }
         Class<?> clazz = object.getClass();
         if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
 
@@ -79,6 +82,9 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
     public void setMember(String name, PyObject val) {
         if (object == null) {
             throw PyErrors.error("AttributeError", "cannot set attribute on null Java object");
+        }
+        if (name == null || name.isEmpty()) {
+            throw PyErrors.error("AttributeError", "cannot set empty attribute on Java object");
         }
         Class<?> clazz = object.getClass();
         if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());

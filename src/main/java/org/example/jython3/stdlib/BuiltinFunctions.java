@@ -644,6 +644,18 @@ public final class BuiltinFunctions {
                 return new PyStr(bf.name());
             } else if (args[0] instanceof PyBoundMethod bm && "__name__".equals(name)) {
                 return new PyStr(bm.fn().name());
+            } else if (args[0] instanceof PyJavaObject jo) {
+                try {
+                    return jo.getMember(name);
+                } catch (InterpreterException ie) {
+                    if (!"AttributeError".equals(ie.typeName())) throw ie;
+                }
+            } else if (args[0] instanceof PyJavaClass jc) {
+                try {
+                    return jc.getMember(name);
+                } catch (InterpreterException ie) {
+                    if (!"AttributeError".equals(ie.typeName())) throw ie;
+                }
             }
             if ("__class__".equals(name) && !(args[0] instanceof PyJavaObject)
                     && !(args[0] instanceof PyJavaClass) && !(args[0] instanceof PyJavaPackage)) {

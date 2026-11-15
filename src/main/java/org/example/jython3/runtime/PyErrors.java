@@ -58,6 +58,9 @@ public final class PyErrors {
         if (throwable instanceof InterpreterException ie) return ie;
         Throwable cause = unwrap(throwable);
         if (cause instanceof InterpreterException ie) return ie;
+        if (cause instanceof StackOverflowError) {
+            return error("RecursionError", "maximum recursion depth exceeded");
+        }
         String typeName = javaTypeName(cause);
         String message = javaMessage(cause, typeName);
         PyClass type = ExceptionTypeRegistry.current().type(typeName);

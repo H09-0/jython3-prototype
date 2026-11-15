@@ -1,8 +1,10 @@
 package org.example.jython3.bridge;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -14,9 +16,13 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
+import org.example.jython3.runtime.PyBoundMethod;
+import org.example.jython3.runtime.PyBuiltinFunction;
+import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyFloat;
+import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyJavaClass;
 import org.example.jython3.runtime.PyJavaObject;
@@ -142,12 +148,44 @@ public class JavaBridge {
             Map<String, List<Method>> map = new java.util.HashMap<>();
             for (Method m : c.getMethods()) {
                 if (!Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
-                    map.computeIfAbsent(m.getName(), k -> new ArrayList<>()).add(m);
+                    Method accessible = findAccessibleMethod(m);
+                    if (accessible != null) {
+                        map.computeIfAbsent(m.getName(), k -> new ArrayList<>()).add(accessible);
+                    }
                 }
             }
             return map;
         });
         return byName.getOrDefault(name, java.util.Collections.emptyList());
+    }
+
+    /**
+     * Resolves a public method declared on a non-public JDK/implementation class
+     * (such as {@code java.util.Arrays$ArrayList}) to its public interface/superclass
+     * declaration so {@code Method.invoke} succeeds without module-access errors.
+     */
+    public static Method findAccessibleMethod(Method m) {
+        if (Modifier.isPublic(m.getDeclaringClass().getModifiers())) {
+            return m;
+        }
+        String name = m.getName();
+        Class<?>[] params = m.getParameterTypes();
+        var queue = new java.util.ArrayDeque<Class<?>>();
+        var seen = new java.util.HashSet<Class<?>>();
+        queue.add(m.getDeclaringClass());
+        while (!queue.isEmpty()) {
+            Class<?> cur = queue.removeFirst();
+            if (!seen.add(cur)) continue;
+            if (Modifier.isPublic(cur.getModifiers())) {
+                try {
+                    Method candidate = cur.getMethod(name, params);
+                    if (Modifier.isPublic(candidate.getModifiers())) return candidate;
+                } catch (NoSuchMethodException ignored) {}
+            }
+            if (cur.getSuperclass() != null) queue.add(cur.getSuperclass());
+            for (Class<?> iface : cur.getInterfaces()) queue.add(iface);
+        }
+        return null;
     }
 
     public static List<Method> getStaticMethodsNamed(Class<?> clazz, String name) {
@@ -355,6 +393,48 @@ public class JavaBridge {
                 return javaMap;
             }
             return pyObj;
+        }
+
+        // Functional-interface callback proxy for Python callables
+        if (targetType.isInterface()
+                && (pyObj instanceof PyFunction || pyObj instanceof PyBuiltinFunction || pyObj instanceof PyBoundMethod)) {
+            Method sam = findSingleAbstractMethod(targetType);
+            if (sam != null) {
+                if (policy != null && !policy.canAccessClass(targetType.getName())) {
+                    throw denied(targetType.getName());
+                }
+                PyCaller capturedCaller = PyCaller.current();
+                JavaAccessPolicy boundPolicy = policy;
+                return Proxy.newProxyInstance(
+                        targetType.getClassLoader(),
+                        new Class<?>[]{targetType},
+                        (proxy, method, args) -> {
+                            if (method.getDeclaringClass() == Object.class) {
+                                return switch (method.getName()) {
+                                    case "toString" -> pyObj.toString();
+                                    case "hashCode" -> System.identityHashCode(proxy);
+                                    case "equals" -> proxy == (args != null && args.length > 0 ? args[0] : null);
+                                    default -> null;
+                                };
+                            }
+                            PyCaller active = PyCaller.current();
+                            if (active == null) active = capturedCaller;
+                            if (active == null) {
+                                throw PyErrors.error("RuntimeError", "Python callback invoked outside interpreter");
+                            }
+                            int n = args == null ? 0 : args.length;
+                            PyObject[] pyArgs = new PyObject[n];
+                            for (int i = 0; i < n; i++) {
+                                pyArgs[i] = toPyObject(args[i], boundPolicy);
+                            }
+                            PyObject result = active.call(pyObj, pyArgs);
+                            Class<?> retType = method.getReturnType();
+                            if (retType == void.class || retType == Void.class) {
+                                return null;
+                            }
+                            return toJavaObject(result, retType, boundPolicy);
+                        });
+            }
         }
 
         // List conversion
@@ -628,33 +708,54 @@ public class JavaBridge {
         return convs;
     }
 
-    public record MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters) {
+    public record MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters, boolean varArgs) {
         public MethodMatch(Method method, Class<?>[] paramTypes) {
-            this(method, paramTypes, buildConverters(paramTypes));
+            this(method, paramTypes, buildConverters(paramTypes), false);
+        }
+        public MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters) {
+            this(method, paramTypes, converters, false);
         }
     }
 
-    public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters) {
+    public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters, boolean varArgs) {
         public ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes) {
-            this(constructor, paramTypes, buildConverters(paramTypes));
+            this(constructor, paramTypes, buildConverters(paramTypes), false);
+        }
+        public ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters) {
+            this(constructor, paramTypes, converters, false);
         }
     }
 
     public static Object[] convertArgs(PyObject[] args, MethodMatch match, JavaAccessPolicy policy) {
-        TypeConverter[] convs = match.converters();
-        Object[] res = new Object[args.length];
-        for (int i = 0; i < args.length; i++) {
-            res[i] = convs[i].convert(args[i], policy);
-        }
-        return res;
+        return convertWithVarargs(args, match.paramTypes(), match.converters(), match.varArgs(), policy);
     }
 
     public static Object[] convertArgs(PyObject[] args, ConstructorMatch match, JavaAccessPolicy policy) {
-        TypeConverter[] convs = match.converters();
-        Object[] res = new Object[args.length];
-        for (int i = 0; i < args.length; i++) {
+        return convertWithVarargs(args, match.paramTypes(), match.converters(), match.varArgs(), policy);
+    }
+
+    private static Object[] convertWithVarargs(PyObject[] args, Class<?>[] paramTypes,
+                                               TypeConverter[] convs, boolean varArgs, JavaAccessPolicy policy) {
+        if (!varArgs) {
+            Object[] res = new Object[args.length];
+            for (int i = 0; i < args.length; i++) {
+                res[i] = convs[i].convert(args[i], policy);
+            }
+            return res;
+        }
+        int fixed = paramTypes.length - 1;
+        Object[] res = new Object[paramTypes.length];
+        for (int i = 0; i < fixed; i++) {
             res[i] = convs[i].convert(args[i], policy);
         }
+        Class<?> compType = paramTypes[fixed].getComponentType();
+        TypeConverter elemConv = getConverter(compType);
+        int extra = args.length - fixed;
+        Object arr = Array.newInstance(compType, extra);
+        for (int i = 0; i < extra; i++) {
+            Array.set(arr, i, elemConv.convert(args[fixed + i], policy));
+        }
+        res[fixed] = arr;
         return res;
     }
 
@@ -670,25 +771,50 @@ public class JavaBridge {
 
         Method best = null;
         int bestScore = -1;
+        boolean bestVarArgs = false;
+        boolean matchingMethodFound = false;
+        boolean anyMethodPermitted = false;
 
-        for (Method m : methods) {
-            if (!Modifier.isPublic(m.getModifiers()) || m.isSynthetic()) continue;
-            Class<?>[] params = m.getParameterTypes();
-            if (params.length != args.length) continue;
+        // Pass 1: exact arity; Pass 2: varargs fallback
+        for (int pass = 0; pass < 2 && best == null; pass++) {
+            boolean varArgsPass = (pass == 1);
+            for (Method m : methods) {
+                if (!Modifier.isPublic(m.getModifiers()) || m.isSynthetic()) continue;
+                Class<?>[] params = m.getParameterTypes();
+                int score;
+                if (!varArgsPass) {
+                    if (params.length != args.length) continue;
+                    score = scoreCompatibility(params, args);
+                } else {
+                    if (!m.isVarArgs() || args.length < params.length - 1) continue;
+                    score = scoreVarArgsCompatibility(params, args);
+                }
+                if (score < 0) continue;
 
-            int score = scoreCompatibility(params, args);
-            if (score > bestScore) {
-                bestScore = score;
-                best = m;
+                matchingMethodFound = true;
+                if (policy != null && !policy.canCallMethod(clazz.getName(), name,
+                        org.example.jython3.security.JavaDescriptors.of(params))) {
+                    continue;
+                }
+                anyMethodPermitted = true;
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = m;
+                    bestVarArgs = varArgsPass;
+                }
             }
         }
 
-        if (best == null || bestScore < 0) {
+        if (best == null) {
+            if (matchingMethodFound && !anyMethodPermitted) {
+                throw denied("method '" + name + "'");
+            }
             throw PyErrors.error("TypeError",
                     "no matching Java method '" + name + "' for argument types (" + signature(args) + ")");
         }
 
-        var match = new MethodMatch(best, best.getParameterTypes());
+        var params = best.getParameterTypes();
+        var match = new MethodMatch(best, params, buildConverters(params), bestVarArgs);
         putMethodCache(key, match);
         return match;
     }
@@ -705,26 +831,36 @@ public class JavaBridge {
 
         Constructor<?> best = null;
         int bestScore = -1;
+        boolean bestVarArgs = false;
         boolean matchingConstructorFound = false;
         boolean anyConstructorPermitted = false;
 
-        for (Constructor<?> c : clazz.getConstructors()) {
-            if (!Modifier.isPublic(c.getModifiers()) || c.isSynthetic()) continue;
-            Class<?>[] params = c.getParameterTypes();
-            if (params.length != args.length) continue;
+        for (int pass = 0; pass < 2 && best == null; pass++) {
+            boolean varArgsPass = (pass == 1);
+            for (Constructor<?> c : clazz.getConstructors()) {
+                if (!Modifier.isPublic(c.getModifiers()) || c.isSynthetic()) continue;
+                Class<?>[] params = c.getParameterTypes();
+                int score;
+                if (!varArgsPass) {
+                    if (params.length != args.length) continue;
+                    score = scoreCompatibility(params, args);
+                } else {
+                    if (!c.isVarArgs() || args.length < params.length - 1) continue;
+                    score = scoreVarArgsCompatibility(params, args);
+                }
+                if (score < 0) continue;
 
-            int score = scoreCompatibility(params, args);
-            if (score < 0) continue;
+                matchingConstructorFound = true;
+                if (policy != null && !policy.canConstructClass(clazz.getName(), org.example.jython3.security.JavaDescriptors.of(params))) {
+                    continue; // Denied by policy, try next compatible overload
+                }
 
-            matchingConstructorFound = true;
-            if (policy != null && !policy.canConstructClass(clazz.getName(), org.example.jython3.security.JavaDescriptors.of(params))) {
-                continue; // Denied by policy, try next compatible overload
-            }
-
-            anyConstructorPermitted = true;
-            if (score > bestScore) {
-                bestScore = score;
-                best = c;
+                anyConstructorPermitted = true;
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = c;
+                    bestVarArgs = varArgsPass;
+                }
             }
         }
 
@@ -736,9 +872,47 @@ public class JavaBridge {
                     "no matching Java constructor for class '" + clazz.getName() + "' with (" + signature(args) + ")");
         }
 
-        var match = new ConstructorMatch(best, best.getParameterTypes());
+        var params = best.getParameterTypes();
+        var match = new ConstructorMatch(best, params, buildConverters(params), bestVarArgs);
         putConstructorCache(key, match);
         return match;
+    }
+
+    private static Method findSingleAbstractMethod(Class<?> iface) {
+        if (!iface.isInterface()) return null;
+        Method sam = null;
+        for (Method m : iface.getMethods()) {
+            if (!Modifier.isAbstract(m.getModifiers())) continue;
+            if (isObjectMethod(m)) continue;
+            if (sam != null) return null;
+            sam = m;
+        }
+        return sam;
+    }
+
+    private static boolean isObjectMethod(Method m) {
+        String n = m.getName();
+        Class<?>[] p = m.getParameterTypes();
+        return ("toString".equals(n) && p.length == 0)
+                || ("hashCode".equals(n) && p.length == 0)
+                || ("equals".equals(n) && p.length == 1 && p[0] == Object.class);
+    }
+
+    private static int scoreVarArgsCompatibility(Class<?>[] params, PyObject[] args) {
+        int fixed = params.length - 1;
+        int total = 0;
+        for (int i = 0; i < fixed; i++) {
+            int s = scoreParam(params[i], args[i]);
+            if (s < 0) return -1;
+            total += s;
+        }
+        Class<?> comp = params[fixed].getComponentType();
+        for (int i = fixed; i < args.length; i++) {
+            int s = scoreParam(comp, args[i]);
+            if (s < 0) return -1;
+            total += s;
+        }
+        return total;
     }
 
     private static int scoreParam(Class<?> p, PyObject a) {
@@ -772,7 +946,7 @@ public class JavaBridge {
         }
         if (p.isArray()) {
             if (a instanceof PyList) return 10;
-            if (a instanceof PyJavaObject jo && jo.object().getClass().isArray()) return 10;
+            if (a instanceof PyJavaObject jo && p.isInstance(jo.object())) return 10;
             return -1;
         }
         if (p == double.class || p == Double.class) {
@@ -811,6 +985,10 @@ public class JavaBridge {
             if (a instanceof PyList) return 10;
             if (a instanceof PyDict) return 8;
             return 1;
+        }
+        if ((a instanceof PyFunction || a instanceof PyBuiltinFunction || a instanceof PyBoundMethod)
+                && findSingleAbstractMethod(p) != null) {
+            return 8;
         }
         if (p.isInstance(a)) {
             return 10;
