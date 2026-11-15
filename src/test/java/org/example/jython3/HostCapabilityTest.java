@@ -141,6 +141,22 @@ class HostCapabilityTest {
         assertEquals("TimeoutError", timeoutErr.typeName());
         assertNull(PyCaller.current());
 
+        // Callback timeout also enforced INSIDE eval() and interrupts blocking time.sleep() promptly
+        interp.eval("""
+            import time
+            def sleeper():
+                time.sleep(5)
+            """);
+        interp.setGlobal("invoke_sleeper", new PyBuiltinFunction("invoke_sleeper",
+                a -> interp.hostSession().invokeCallback(interp.getGlobal("sleeper"))));
+        long t0 = System.nanoTime();
+        var sleepTimeout = assertThrows(InterpreterException.class, () -> interp.eval("invoke_sleeper()"));
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
+        assertEquals("TimeoutError", sleepTimeout.typeName());
+        assertTrue(elapsedMs < 1_000, "blocking callback must abort promptly, took " + elapsedMs + " ms");
+        assertFalse(Thread.currentThread().isInterrupted(), "watchdog interrupt must be cleared after callback");
+        assertNull(PyCaller.current());
+
         // Closing interpreter closes session and prevents further eval/callbacks
         interp.hostSession().registerResource(closedCount::incrementAndGet);
         interp.close();

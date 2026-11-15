@@ -506,6 +506,13 @@ public class Jython3Interpreter implements AutoCloseable {
         return closed;
     }
 
+    private static final java.util.concurrent.ScheduledExecutorService CALLBACK_WATCHDOG =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "jython3-callback-watchdog");
+                t.setDaemon(true);
+                return t;
+            });
+
     /**
      * Invokes a Python callback from a host UI/event/timer/control adapter with
      * thread-safe context installation, bounded callback timeout/limits, and cleanup.
@@ -519,32 +526,56 @@ public class Jython3Interpreter implements AutoCloseable {
         PyCaller.CURRENT.set(interpreterCaller);
         ExecutionContext prevCtx = currentContext;
         boolean prevEnforce = enforceLimits;
-        boolean installedFreshContext = false;
+
+        var cbTimeout = hostSession.capabilities().callbackTimeout();
+        var cbLimits = ExecutionLimits.builder()
+                .maxInstructions(executionLimits.maxInstructions())
+                .timeout(cbTimeout)
+                .maxSourceLength(executionLimits.maxSourceLength())
+                .maxCollectionSize(executionLimits.maxCollectionSize())
+                .maxStringLength(executionLimits.maxStringLength())
+                .maxExponent(executionLimits.maxExponent())
+                .build();
+        ExecutionContext cbCtx = new ExecutionContext(cbLimits, prevCtx);
+        final Thread cbThread = Thread.currentThread();
+        final var callbackDone = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final var watchdogFired = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.ScheduledFuture<?> watchdogFuture = null;
+        if (cbTimeout != null && !cbTimeout.isZero() && !cbTimeout.isNegative()) {
+            long timeoutMs = Math.max(1L, cbTimeout.toMillis());
+            watchdogFuture = CALLBACK_WATCHDOG.schedule(() -> {
+                if (callbackDone.compareAndSet(false, true)) {
+                    watchdogFired.set(true);
+                    cbCtx.cancelByTimeout();
+                    cbThread.interrupt();
+                }
+            }, timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+
         try {
-            if (currentContext == null) {
-                var cbLimits = ExecutionLimits.builder()
-                        .maxInstructions(executionLimits.maxInstructions())
-                        .timeout(hostSession.capabilities().callbackTimeout())
-                        .maxSourceLength(executionLimits.maxSourceLength())
-                        .maxCollectionSize(executionLimits.maxCollectionSize())
-                        .maxStringLength(executionLimits.maxStringLength())
-                        .maxExponent(executionLimits.maxExponent())
-                        .build();
-                currentContext = new ExecutionContext(cbLimits);
-                enforceLimits = currentContext.hasActiveLimits();
-                hostSession.bindContext(currentContext);
-                installedFreshContext = true;
-                if (stack == null) stack = new FastStack();
-                if (currentGlobals == null) currentGlobals = globals;
-                if (currentLocals == null) currentLocals = globals;
-            }
+            currentContext = cbCtx;
+            enforceLimits = cbCtx.hasActiveLimits();
+            hostSession.bindContext(cbCtx);
+            if (stack == null) stack = new FastStack();
+            if (currentGlobals == null) currentGlobals = globals;
+            if (currentLocals == null) currentLocals = globals;
             return callPyCallable(callable, args != null ? args : new PyObject[0]);
-        } finally {
-            if (installedFreshContext) {
-                hostSession.bindContext(prevCtx);
-                currentContext = prevCtx;
-                enforceLimits = prevEnforce;
+        } catch (InterpreterException ie) {
+            if (watchdogFired.get() && (cbCtx.isTimedOut() || "KeyboardInterrupt".equals(ie.typeName()))) {
+                throw PyErrors.error("TimeoutError", "Host callback timed out: limit=" + cbTimeout);
             }
+            throw ie;
+        } finally {
+            callbackDone.set(true);
+            if (watchdogFuture != null) {
+                watchdogFuture.cancel(false);
+            }
+            if (watchdogFired.get()) {
+                Thread.interrupted(); // clear watchdog interrupt so UI/host thread remains clean
+            }
+            hostSession.bindContext(prevCtx);
+            currentContext = prevCtx;
+            enforceLimits = prevEnforce;
             if (previousCaller != null) {
                 PyCaller.CURRENT.set(previousCaller);
             } else {
