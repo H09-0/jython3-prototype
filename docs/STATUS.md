@@ -28,12 +28,11 @@
 - **Collections**: Mutable `PyList`, immutable `PyTuple`, insertion-ordered `PyDict` (with `1 == 1.0 == True` key semantics and zero-allocation lookup key), `PySet` (with hashability enforcement).
 - **Comprehensions**: List (`[x for x in seq if cond]`), dict (`{k: v for ...}`), and set (`{x for ...}`) comprehensions.
 - **Functions & Scope**: `def`, `lambda`, default parameters, `*args`, `**kwargs`, keyword calls, lexical closures, `global`, `nonlocal` via `PyCell`, decorators, and generators (`yield` with `PyGenerator`).
-- **Assignments & Unpacking**: Chained assignment (`a = b = expr`), tuple/sequence unpacking (`a, b = pair`), augmented assignment.
-- **Control Flow & Exceptions**: `if`/`elif`/`else`, `while`, `for`, `break`/`continue`, `assert`, `with` context managers (`__enter__`/`__exit__`), `try`/`except (A, B) as e`/`else`/`finally`, `raise`.
+- **Assignments & Unpacking**: Unified `LValue` model (`NameTarget`, `AttributeTarget`, `SubscriptTarget`, `TupleTarget`) supporting chained assignment (`a = b = obj.x = expr`), tuple/sequence unpacking (`a, b = pair`, `for a, b in pairs:`), `del` (`del x`, `del obj.attr`, `del items[0]`), and single-evaluation augmented assignment (`x += 1`, `obj.value += 1`, `items[0] += 1`, `matrix[0][1] *= 2`).
+- **Control Flow & Exceptions**: `if`/`elif`/`else`, `while`, `for` (with tuple target unpacking), `break`/`continue`, `assert`, `with` context managers (`__enter__`/`__exit__`), `try`/`except (A, B) as e`/`else`/`finally`, `raise`.
 - **OOP**: Classes, single & multiple inheritance, `super()` (0-arg and 2-arg), bound methods, version-guarded monomorphic inline caching (`LOAD_ATTR`) and hierarchy invalidation.
 
 ### Known Language Gaps
-- Tuple unpacking directly inside `for` headers (`for a, b in seq:`).
 - Async/await (`async def`, `await`).
 - Coroutine `.send()` / `.throw()` on suspended generator frames.
 - `raise ... from ...` explicit exception chaining (`__cause__`).

@@ -39,8 +39,6 @@ suite
 
 simple_stmt
     : assign_stmt
-    | tuple_assign_stmt
-    | subscript_assign_stmt
     | aug_assign_stmt
     | import_stmt
     | return_stmt
@@ -57,16 +55,9 @@ simple_stmt
     | assert_stmt
     ;
 
-/** identifier = expr  or  identifier = identifier = expr  (chained assignment) */
+/** Unified assignment (simple, chained, attribute, subscript, and tuple unpacking) */
 assign_stmt
-    : ID ASSIGN expr
-    | ID ASSIGN ID ASSIGN expr
-    ;
-
-/** Tuple unpacking: a, b = expr  or  a, b = x, y  or  (a, b) = expr */
-tuple_assign_stmt
-    : LPAREN ID (COMMA ID)+ RPAREN ASSIGN rhs_tuple
-    | ID (COMMA ID)+ ASSIGN rhs_tuple
+    : (target_list ASSIGN)+ rhs_tuple
     ;
 
 /** Right-hand side that may itself be a tuple: 1, 2  or  (1, 2)  or  expr */
@@ -75,15 +66,22 @@ rhs_tuple
     | expr                          # RhsSingle
     ;
 
-/** container[key] = expr or obj.attr = expr */
-subscript_assign_stmt
-    : expr LBRACK expr RBRACK ASSIGN expr
-    | expr DOT ID ASSIGN expr
+/** Augmented assignment: x += expr, obj.attr += expr, items[0] += expr, matrix[0][1] *= expr */
+aug_assign_stmt
+    : single_target aug_op expr
     ;
 
-/** Augmented assignment: x += expr, x -= expr, etc. */
-aug_assign_stmt
-    : ID aug_op expr
+/** One or more assignment/deletion targets (comma-separated -> TupleTarget). */
+target_list
+    : single_target (COMMA single_target)* COMMA?
+    ;
+
+single_target
+    : expr LBRACK slice_item RBRACK    # TargetSubscript
+    | expr DOT ID                      # TargetAttr
+    | LPAREN target_list RPAREN        # TargetParenTuple
+    | LBRACK target_list RBRACK        # TargetListTuple
+    | ID                               # TargetName
     ;
 
 aug_op
@@ -119,9 +117,9 @@ raise_stmt
     : RAISE expr?
     ;
 
-/** return [expr] */
+/** return [rhs_tuple] */
 return_stmt
-    : RETURN expr?
+    : RETURN rhs_tuple?
     ;
 
 /** yield [expr] */
@@ -129,10 +127,9 @@ yield_stmt
     : YIELD expr?
     ;
 
-/** del variable or del container[key] */
+/** del target_list */
 del_stmt
-    : DEL ID
-    | DEL expr LBRACK expr RBRACK
+    : DEL target_list
     ;
 
 /** pass – no-op */
@@ -210,9 +207,9 @@ while_stmt
     : WHILE expr COLON suite
     ;
 
-/** for id in expr : suite */
+/** for target_list in expr : suite */
 for_stmt
-    : FOR ID IN expr COLON suite
+    : FOR target_list IN expr COLON suite
     ;
 
 /** try: suite except [ExcType [as var]]: suite [finally: suite] */

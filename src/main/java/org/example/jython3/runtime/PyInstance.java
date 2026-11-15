@@ -64,6 +64,15 @@ public final class PyInstance implements PyObject {
         }
     }
 
+    public boolean deleteField(String name) {
+        if (!fields.containsKey(name)) return false;
+        fields.remove(name);
+        if (boundMethodCache != null) {
+            boundMethodCache.remove(name);
+        }
+        return true;
+    }
+
     public Map<String, PyObject> fields() {
         return fields;
     }

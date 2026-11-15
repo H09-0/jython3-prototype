@@ -40,7 +40,9 @@ jython3-prototype/
     │       │   ├── CodeBuilder.java    # Bytecode instruction emitter and branch patcher
     │       │   ├── CompiledCode.java   # Immutable CompiledCode record (int[] bytecode, Object[] constPool)
     │       │   ├── CompileVisitor.java # ANTLR Visitor generating 32-bit encoded instructions
-    │       │   ├── OpCode.java         # 77 stable bytecode operations
+    │       │   ├── KwCallInfo.java     # Keyword call site metadata record
+    │       │   ├── LValue.java         # Unified assignment target model (Name, Attribute, Subscript, Tuple)
+    │       │   ├── OpCode.java         # 81 stable bytecode operations
     │       │   └── StringEscapes.java  # Python string escape sequence unescaper
     │       ├── parse/              # Lexical stream preprocessors
     │       │   └── PythonIndentStream.java # Converts indentation/dedentation into synthetic INDENT/DEDENT tokens

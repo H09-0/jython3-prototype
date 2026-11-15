@@ -359,4 +359,110 @@ public class FieldIntegrationTest {
         assertEquals(PyBool.TRUE, interp.getGlobal("bad_end"));
         assertEquals(PyBool.TRUE, interp.getGlobal("bad_kw"));
     }
+
+    @Test
+    @DisplayName("Unified LValue: compound assignment on vars/attrs/subscripts/nested, single evaluation, unpacking, del, and for-unpacking")
+    void testUnifiedLValueAndCompoundAssignment() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            class CounterBox:
+                def __init__(self, v):
+                    self.value = v
+                    self.temp = 999
+
+            x = 10
+            x += 5
+
+            obj = CounterBox(20)
+            obj.value += 7
+
+            items = [10, 20, 30]
+            items[0] += 5
+
+            matrix = [[1, 2], [3, 4]]
+            matrix[0][1] *= 10
+
+            # Verify target expressions are evaluated ONLY ONCE in augmented assignment
+            eval_counts = {"obj": 0, "mat": 0, "idx": 0}
+            def get_obj():
+                eval_counts["obj"] += 1
+                return obj
+            def get_row():
+                eval_counts["mat"] += 1
+                return matrix[1]
+            def get_idx():
+                eval_counts["idx"] += 1
+                return 0
+
+            get_obj().value += 3
+            get_row()[get_idx()] += 100
+
+            # Unified LValue in tuple unpacking, chained assignment, del, and for-loop unpacking
+            obj.value, items[2] = 50, 60
+            a = b = c = items[1] = 77
+
+            del obj.temp
+            has_temp = hasattr(obj, "temp")
+
+            pair_sum = 0
+            for k, v in [(1, 10), (2, 20), (3, 30)]:
+                pair_sum += k * v
+
+            # Immutable target fails cleanly with TypeError
+            imm_failed = False
+            t = (1, 2, 3)
+            try:
+                t[0] += 10
+            except TypeError:
+                imm_failed = True
+            """);
+
+        assertEquals(new PyInt(15), interp.getGlobal("x"));
+        var obj = (org.example.jython3.runtime.PyInstance) interp.getGlobal("obj");
+        assertEquals(new PyInt(50), obj.getField("value"));
+        assertEquals("[15, 77, 60]", interp.getGlobal("items").toString());
+        assertEquals("[[1, 20], [103, 4]]", interp.getGlobal("matrix").toString());
+
+        var evalCounts = (org.example.jython3.runtime.PyDict) interp.getGlobal("eval_counts");
+        assertEquals(new PyInt(1), evalCounts.get(new PyStr("obj")));
+        assertEquals(new PyInt(1), evalCounts.get(new PyStr("mat")));
+        assertEquals(new PyInt(1), evalCounts.get(new PyStr("idx")));
+
+        assertEquals(new PyInt(77), interp.getGlobal("a"));
+        assertEquals(new PyInt(77), interp.getGlobal("b"));
+        assertEquals(new PyInt(77), interp.getGlobal("c"));
+        assertEquals(PyBool.FALSE, interp.getGlobal("has_temp"));
+        assertEquals(new PyInt(140), interp.getGlobal("pair_sum"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("imm_failed"));
+    }
+
+    @Test
+    @DisplayName("Closures and lambdas capture only referenced enclosing variables")
+    void testSelectiveClosureCapture() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            def make_closures():
+                used_var = 42
+                unused_heavy = [1, 2, 3, 4, 5]
+                def inner_fn(x):
+                    return x + used_var
+                lam = lambda y: y * used_var
+                return inner_fn, lam
+
+            fn_obj, lam_obj = make_closures()
+            r_fn = fn_obj(8)
+            r_lam = lam_obj(2)
+            """);
+        assertEquals(new PyInt(50), interp.getGlobal("r_fn"));
+        assertEquals(new PyInt(84), interp.getGlobal("r_lam"));
+
+        var fnObj = (org.example.jython3.runtime.PyFunction) interp.getGlobal("fn_obj");
+        var lamObj = (org.example.jython3.runtime.PyFunction) interp.getGlobal("lam_obj");
+        assertTrue(fnObj.closure().containsKey("used_var"));
+        org.junit.jupiter.api.Assertions.assertFalse(fnObj.closure().containsKey("unused_heavy"),
+                "Unreferenced local variable must not be retained in function closure");
+        assertTrue(lamObj.closure().containsKey("used_var"));
+        org.junit.jupiter.api.Assertions.assertFalse(lamObj.closure().containsKey("unused_heavy"),
+                "Unreferenced local variable must not be retained in lambda closure");
+    }
 }

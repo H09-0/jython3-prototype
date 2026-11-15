@@ -130,23 +130,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return visitChildren(c);
     }
 
-    @Override public Void visitAssign_stmt(Jython3Parser.Assign_stmtContext c) {
-        visit(c.expr());
-        // Handle chained assignment: a = b = expr  (emits DUP_TOP for all but last)
-        var ids = c.ID();
-        for (int i = 0; i < ids.size(); i++) {
-            if (i < ids.size() - 1) b.emit(OpCode.DUP_TOP);
-            b.emit(OpCode.STORE_FAST, ids.get(i).getText());
-        }
-        return null;
-    }
+    // ── Unified LValue assignment, unpacking, augmented assignment & del ──────
 
-    // ── Tuple unpacking: a, b = expr  or  (a, b) = expr ──────────────────────
-    @Override public Void visitTuple_assign_stmt(Jython3Parser.Tuple_assign_stmtContext c) {
-        // Compile the right-hand side.  rhs_tuple is either:
-        //   RhsTupleMany: multiple expressions  → build a tuple on the stack
-        //   RhsSingle:    single expression      → value already on stack
-        var rhs = c.rhs_tuple();
+    private void emitRhsTuple(Jython3Parser.Rhs_tupleContext rhs) {
         if (rhs instanceof Jython3Parser.RhsTupleManyContext many) {
             int n = many.expr().size();
             for (var e : many.expr()) visit(e);
@@ -154,9 +140,90 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         } else {
             visit(((Jython3Parser.RhsSingleContext) rhs).expr());
         }
-        int count = c.ID().size();
-        b.emitRaw(OpCode.UNPACK_SEQUENCE, count);
-        for (var id : c.ID()) b.emit(OpCode.STORE_FAST, id.getText());
+    }
+
+    private void emitStore(LValue target) {
+        switch (target) {
+            case LValue.NameTarget nt -> b.emit(OpCode.STORE_FAST, nt.name());
+            case LValue.AttributeTarget at -> {
+                visit(at.objectExpr());
+                b.emit(OpCode.ROT_TWO);
+                b.emit(OpCode.STORE_ATTR, at.attribute());
+            }
+            case LValue.SubscriptTarget st -> {
+                visit(st.containerExpr());
+                visit(st.indexExpr());
+                b.emit(OpCode.ROT_THREE);
+                b.emit(OpCode.STORE_SUBSCR);
+            }
+            case LValue.TupleTarget tt -> {
+                b.emitRaw(OpCode.UNPACK_SEQUENCE, tt.elements().size());
+                for (LValue elem : tt.elements()) {
+                    emitStore(elem);
+                }
+            }
+        }
+    }
+
+    private void emitAugAssign(LValue target, Jython3Parser.ExprContext rhsExpr, OpCode binaryOp) {
+        switch (target) {
+            case LValue.NameTarget nt -> {
+                b.emit(OpCode.LOAD_FAST, nt.name());
+                visit(rhsExpr);
+                b.emit(binaryOp);
+                b.emit(OpCode.STORE_FAST, nt.name());
+            }
+            case LValue.AttributeTarget at -> {
+                visit(at.objectExpr());                     // [obj] (evaluated once)
+                b.emit(OpCode.DUP_TOP);                     // [obj, obj]
+                b.emit(OpCode.LOAD_ATTR, at.attribute());   // [obj, old_val]
+                visit(rhsExpr);                             // [obj, old_val, rhs]
+                b.emit(binaryOp);                           // [obj, new_val]
+                b.emit(OpCode.STORE_ATTR, at.attribute());  // []
+            }
+            case LValue.SubscriptTarget st -> {
+                visit(st.containerExpr());                  // [container] (evaluated once)
+                visit(st.indexExpr());                      // [container, key] (evaluated once)
+                b.emit(OpCode.DUP_TOP_TWO);                 // [container, key, container, key]
+                b.emit(OpCode.BINARY_SUBSCR);               // [container, key, old_val]
+                visit(rhsExpr);                             // [container, key, old_val, rhs]
+                b.emit(binaryOp);                           // [container, key, new_val]
+                b.emit(OpCode.STORE_SUBSCR);                // []
+            }
+            case LValue.TupleTarget tt ->
+                throw new CompileError("illegal target for augmented assignment");
+        }
+    }
+
+    private void emitDelete(LValue target) {
+        switch (target) {
+            case LValue.NameTarget nt -> b.emit(OpCode.DELETE_FAST, nt.name());
+            case LValue.AttributeTarget at -> {
+                visit(at.objectExpr());
+                b.emit(OpCode.DELETE_ATTR, at.attribute());
+            }
+            case LValue.SubscriptTarget st -> {
+                visit(st.containerExpr());
+                visit(st.indexExpr());
+                b.emit(OpCode.DELETE_SUBSCR);
+            }
+            case LValue.TupleTarget tt -> {
+                for (LValue elem : tt.elements()) {
+                    emitDelete(elem);
+                }
+            }
+        }
+    }
+
+    @Override public Void visitAssign_stmt(Jython3Parser.Assign_stmtContext c) {
+        emitRhsTuple(c.rhs_tuple());
+        var targetLists = c.target_list();
+        for (int i = 0; i < targetLists.size(); i++) {
+            if (i < targetLists.size() - 1) {
+                b.emit(OpCode.DUP_TOP);
+            }
+            emitStore(LValue.fromTargetList(targetLists.get(i)));
+        }
         return null;
     }
 
@@ -198,37 +265,20 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return null;
     }
 
-    @Override public Void visitSubscript_assign_stmt(Jython3Parser.Subscript_assign_stmtContext c) {
-        if (c.LBRACK() != null) {
-            // container[key] = expr
-            visit(c.expr(0)); // container
-            visit(c.expr(1)); // key/index
-            visit(c.expr(2)); // value
-            b.emit(OpCode.STORE_SUBSCR);
-        } else {
-            // obj.attr = expr
-            visit(c.expr(0)); // obj
-            visit(c.expr(1)); // value
-            b.emit(OpCode.STORE_ATTR, c.ID().getText());
-        }
-        return null;
-    }
-
     @Override public Void visitAug_assign_stmt(Jython3Parser.Aug_assign_stmtContext c) {
-        String name = c.ID().getText();
-        b.emit(OpCode.LOAD_FAST, name);
-        visit(c.expr());
+        LValue target = LValue.fromSingleTarget(c.single_target());
         String opText = c.aug_op().getText();
-        switch (opText) {
-            case "+="  -> b.emit(OpCode.ADD);
-            case "-="  -> b.emit(OpCode.SUBTRACT);
-            case "*="  -> b.emit(OpCode.MULTIPLY);
-            case "/="  -> b.emit(OpCode.DIVIDE);
-            case "//=" -> b.emit(OpCode.FLOOR_DIVIDE);
-            case "%="  -> b.emit(OpCode.MODULO);
-            case "**=" -> b.emit(OpCode.POWER);
-        }
-        b.emit(OpCode.STORE_FAST, name);
+        OpCode op = switch (opText) {
+            case "+="  -> OpCode.ADD;
+            case "-="  -> OpCode.SUBTRACT;
+            case "*="  -> OpCode.MULTIPLY;
+            case "/="  -> OpCode.DIVIDE;
+            case "//=" -> OpCode.FLOOR_DIVIDE;
+            case "%="  -> OpCode.MODULO;
+            case "**=" -> OpCode.POWER;
+            default    -> throw new CompileError("unknown augmented assignment operator: " + opText);
+        };
+        emitAugAssign(target, c.expr(), op);
         return null;
     }
 
@@ -257,8 +307,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitReturn_stmt(Jython3Parser.Return_stmtContext c) {
-        if (c.expr() != null) {
-            visit(c.expr());
+        if (c.rhs_tuple() != null) {
+            emitRhsTuple(c.rhs_tuple());
         } else {
             b.emit(OpCode.LOAD_CONST, null);
         }
@@ -279,13 +329,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitDel_stmt(Jython3Parser.Del_stmtContext c) {
-        if (c.ID() != null) {
-            b.emit(OpCode.DELETE_FAST, c.ID().getText());
-        } else {
-            visit(c.expr(0)); // container
-            visit(c.expr(1)); // key
-            b.emit(OpCode.DELETE_SUBSCR);
-        }
+        emitDelete(LValue.fromTargetList(c.target_list()));
         return null;
     }
 
@@ -535,7 +579,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         int loopTarget = b.size();
         int forIter = b.size();
         b.emitRaw(OpCode.FOR_ITER, 0);
-        b.emit(OpCode.STORE_FAST, c.ID().getText());
+        emitStore(LValue.fromTargetList(c.target_list()));
 
         // Push loop context: continue → jump back to FOR_ITER
         var ctx = new LoopContext();

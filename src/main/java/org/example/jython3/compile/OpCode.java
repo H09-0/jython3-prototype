@@ -54,7 +54,12 @@ public enum OpCode {
     // ── call-site splat (*args and **kwargs)
     CALL_FUNCTION_EX(74),   // raw arg: 0 = args only, 1 = args + kwargs; stack: [callable, args_list, (kw_dict)]
     LIST_EXTEND(75),        // pops iterable, extends list on top of stack
-    DICT_MERGE(76);         // pops mapping, merges into dict on top of stack
+    DICT_MERGE(76),         // pops mapping, merges into dict on top of stack
+    // ── unified LValue stack & attribute operations
+    DUP_TOP_TWO(77),        // duplicates the top two stack items: [..., a, b] -> [..., a, b, a, b]
+    ROT_TWO(78),            // swaps the top two stack items: [..., a, b] -> [..., b, a]
+    ROT_THREE(79),          // rotates third item to top: [..., c, b, a] -> [..., b, a, c]
+    DELETE_ATTR(80);        // arg: pool index of attribute name; pops object and deletes attribute
 
     private final int code;
 

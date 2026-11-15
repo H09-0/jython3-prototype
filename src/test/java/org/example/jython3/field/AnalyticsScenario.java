@@ -24,8 +24,7 @@ public final class AnalyticsScenario implements FieldScenario {
         totals = [(o["id"], o["user"], o["region"], compute_order_total(o)) for o in orders]
 
         user_spend = {}
-        for entry in totals:
-            oid, user, region, amt = entry
+        for oid, user, region, amt in totals:
             user_spend[user] = user_spend.get(user, 0.0) + amt
 
         ranked = sorted(list(user_spend.items()), key=lambda pair: pair[1], reverse=True)

@@ -811,9 +811,14 @@ public class Jython3Interpreter {
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
                     else if (v instanceof org.example.jython3.runtime.BigInt bi) stack.push(bi);
                     else if (v instanceof PyFunction f) {
-                        if (currentLocals != null && currentLocals != globals) {
+                        if ("<lambda>".equals(f.name()) && currentLocals != null && currentLocals != globals) {
+                            var refs = f.code() != null ? f.code().referencedNames() : java.util.Set.<String>of();
                             var captured = new HashMap<String, PyObject>(f.closure());
-                            captured.putAll(currentLocals);
+                            for (Map.Entry<String, PyObject> e : currentLocals.entrySet()) {
+                                if (refs.contains(e.getKey())) {
+                                    captured.put(e.getKey(), e.getValue());
+                                }
+                            }
                             stack.push(new PyFunction(f.name(), f.params(), f.defaults(),
                                     f.argsParam(), f.kwargsParam(), f.code(), captured));
                         } else {
@@ -929,6 +934,25 @@ public class Jython3Interpreter {
                             throw PyErrors.error("KeyError", String.valueOf(key));
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(container) + "' object doesn't support item deletion");
+                    }
+                }
+                case DELETE_ATTR -> {
+                    String attr = (String) pool[ai];
+                    PyObject obj = stack.pop();
+                    if (obj instanceof PyInstance inst) {
+                        if (!inst.deleteField(attr)) {
+                            throw PyErrors.error("AttributeError", "'" + inst.pyClass().name() + "' object has no attribute '" + attr + "'");
+                        }
+                    } else if (obj instanceof PyClass cls) {
+                        if (cls.removeMember(attr) == null) {
+                            throw PyErrors.error("AttributeError", "type object '" + cls.name() + "' has no attribute '" + attr + "'");
+                        }
+                    } else if (obj instanceof PyModule mod) {
+                        if (mod.attrs().remove(attr) == null) {
+                            throw PyErrors.error("AttributeError", "module '" + mod.name() + "' has no attribute '" + attr + "'");
+                        }
+                    } else {
+                        throw PyErrors.error("AttributeError", "'" + typeName(obj) + "' object has no attribute '" + attr + "'");
                     }
                 }
 
@@ -1157,16 +1181,13 @@ public class Jython3Interpreter {
                     String funcName = (String) pool[ai];
                     PyObject fnObj = stack.pop();
                     if (fnObj instanceof PyFunction fn) {
-                        // Capture all current locals (closure) except the function name itself
-                        if (currentLocals != null) {
+                        var refs = fn.code() != null ? fn.code().referencedNames() : java.util.Set.<String>of();
+                        // Capture only referenced enclosing locals (closure) except the function name itself
+                        if (currentLocals != null && currentLocals != globals) {
                             for (Map.Entry<String, PyObject> e : currentLocals.entrySet()) {
-                                if (!e.getKey().equals(funcName)) {
+                                if (!e.getKey().equals(funcName) && refs.contains(e.getKey())) {
                                     fn.closure().putIfAbsent(e.getKey(), e.getValue());
                                 }
-                            }
-                        } else {
-                            for (Map.Entry<String, PyObject> e : globals.entrySet()) {
-                                fn.closure().putIfAbsent(e.getKey(), e.getValue());
                             }
                         }
                     }
@@ -1432,6 +1453,27 @@ public class Jython3Interpreter {
                 // ── Stack ──
                 case POP_TOP -> stack.pop();
                 case DUP_TOP -> stack.push(stack.peek());
+                case DUP_TOP_TWO -> {
+                    PyObject top = stack.pop();
+                    PyObject second = stack.peek();
+                    stack.push(top);
+                    stack.push(second);
+                    stack.push(top);
+                }
+                case ROT_TWO -> {
+                    PyObject top = stack.pop();
+                    PyObject second = stack.pop();
+                    stack.push(top);
+                    stack.push(second);
+                }
+                case ROT_THREE -> {
+                    PyObject top = stack.pop();
+                    PyObject second = stack.pop();
+                    PyObject third = stack.pop();
+                    stack.push(second);
+                    stack.push(top);
+                    stack.push(third);
+                }
 
                 // ── Data structures ──
                 case BUILD_LIST -> {

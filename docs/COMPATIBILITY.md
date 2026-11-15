@@ -28,7 +28,7 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 | **Boolean & Identity Operations** | **T2** | `True`, `False`, `None` (`PyNull`), short-circuit `and` / `or`, unary `not`, identity `is` / `is not`, membership `in` / `not in`. |
 | **Lists** | **T2** | Dynamic mutable `PyList`. Indexing, slicing, `.append()`, `.extend()`, `.insert()`, `.pop()`, `.remove()`, `.index()`, `.count()`, `.sort()`, `.reverse()`, `.copy()`, `.clear()`. |
 | **Dictionaries** | **T2** | Insertion-ordered `PyDict` implementing Python 3 key semantics (`1 == 1.0 == True`; unhashable lists/dicts raise `TypeError`). |
-| **Tuples & Unpacking** | **T2** | Immutable `PyTuple` distinct from `PyList`, sequence unpacking `a, b = seq`, and `except (E1, E2)` tuple matching. Note: tuple unpacking inside `for` headers (`for a, b in seq:`) is not yet in grammar. |
+| **Tuples & Unpacking** | **T2** | Immutable `PyTuple` distinct from `PyList`, sequence unpacking `a, b = seq`, `for a, b in seq:`, `return a, b`, and `except (E1, E2)` tuple matching. |
 | **Sets** | **T1** | Mutable `PySet` with hashability enforcement (`PyKey.checkHashable`), set literals `{1, 2}`, and set comprehensions. |
 | **Comprehensions** | **T2** | List comprehensions (`[x for x in seq if cond]`), dict comprehensions (`{k: v for ...}`), and set comprehensions (`{x for ...}`), differential tested against CPython. |
 | **Slicing** | **T2** | List, tuple, and string slicing (`s[a:b:c]`, `s[::-1]`) implementing CPython `slice.indices()` semantics and Unicode codepoint safety. |
