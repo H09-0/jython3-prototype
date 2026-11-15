@@ -55,6 +55,7 @@ import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyException;
 import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyFrameInfo;
+import org.example.jython3.runtime.PyFrozenSet;
 import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
@@ -1372,22 +1373,30 @@ public class Jython3Interpreter {
                 case COMPARE_NEQ    -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(!pyEquals(l, r))); }
                 case COMPARE_LT     -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                        stack.push(PyBool.of(PyOps.setSize(l) < PyOps.setSize(r) && PyOps.setIsSubset(l, r)));
+                    } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) < 0));
                 }
                 case COMPARE_GT     -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                        stack.push(PyBool.of(PyOps.setSize(l) > PyOps.setSize(r) && PyOps.setIsSubset(r, l)));
+                    } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) > 0));
                 }
                 case COMPARE_LTE    -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                        stack.push(PyBool.of(PyOps.setIsSubset(l, r)));
+                    } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) <= 0));
                 }
                 case COMPARE_GTE    -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
+                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                        stack.push(PyBool.of(PyOps.setIsSubset(r, l)));
+                    } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) >= 0));
                 }
                 case COMPARE_IN     -> { var container = stack.pop(); var item = stack.pop(); stack.push(PyBool.of(pyContains(container, item))); }
@@ -1968,6 +1977,8 @@ public class Jython3Interpreter {
                         stack.push(new PyIterator(d.keys(), 0));
                     } else if (o instanceof PySet s) {
                         stack.push(new PyIterator(new ArrayList<>(s.items()), 0));
+                    } else if (o instanceof PyFrozenSet fs) {
+                        stack.push(new PyIterator(new ArrayList<>(fs.items()), 0));
                     } else if (o instanceof PyGenerator gen) {
                         stack.push(gen);
                     } else if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
@@ -2078,6 +2089,8 @@ public class Jython3Interpreter {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("list") : BuiltinMethodDispatcher.listMethod(list, attr));
                     } else if (obj instanceof PySet set) {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("set") : BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy));
+                    } else if (obj instanceof PyFrozenSet fs) {
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("frozenset") : BuiltinMethodDispatcher.frozenSetMethod(fs, attr, javaAccessPolicy));
                     } else if (obj instanceof PyStr s) {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("str") : BuiltinMethodDispatcher.strMethod(s, attr));
                     } else if (obj instanceof PyJavaObject jo) {
@@ -2456,6 +2469,7 @@ public class Jython3Interpreter {
         if (obj instanceof PyDict dict) return BuiltinMethodDispatcher.dictMethod(dict, attr);
         if (obj instanceof PyList list) return BuiltinMethodDispatcher.listMethod(list, attr);
         if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy);
+        if (obj instanceof PyFrozenSet fs) return BuiltinMethodDispatcher.frozenSetMethod(fs, attr, javaAccessPolicy);
         if (obj instanceof PyStr s)     return BuiltinMethodDispatcher.strMethod(s, attr);
         return null;
     }

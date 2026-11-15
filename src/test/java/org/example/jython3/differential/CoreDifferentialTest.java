@@ -502,4 +502,20 @@ public class CoreDifferentialTest {
                 + "    while tb is not None:\n        names.append(tb.tb_frame.f_code.co_name)\n        tb = tb.tb_next\n"
                 + "    print(str(e), tb is None, names)");
     }
+
+    @Test
+    void testSetBitwiseAndFrozenSetDifferential() {
+        assertMatchesCPython("set_bitwise_and_comparisons",
+                "a = {1, 2, 3}\nb = {3.0, 4, 5}\nfs = frozenset([2, 3, 6])\n"
+                + "print(sorted(a | b), (a & b) == {3}, sorted(a - b), sorted(a ^ b))\n"
+                + "print(type(a | fs) is set, type(fs | a) is frozenset)\n"
+                + "print({1} < {1, 2}, {1} < {1}, {1} <= {1}, {1} <= {2}, {1} > {2}, {1, 2} >= {1}, {1, 2} <= frozenset([1, 2]))\n"
+                + "print({1, 2}.issubset([1, 2, 3]), {1, 2}.issuperset([1.0]), {1, 2}.isdisjoint([3, 4]), sorted({1, 2}.symmetric_difference([2.0, 3])))\n"
+                + "c = {1, 2}\nc |= {3}\nc &= {2, 3}\nc ^= {3, 4}\nc -= {4}\nprint(sorted(c))");
+        assertMatchesCPython("frozenset_hash_eq_and_methods",
+                "f1 = frozenset([1, 2, 3])\nf2 = frozenset([3.0, True, 2])\n"
+                + "print(f1 == f2, f1 == {1, 2, 3}, hash(f1) == hash(f2), {f1: 'ok'}[f2], len({f1, f2}))\n"
+                + "print(repr(frozenset()), isinstance(f1, frozenset), isinstance(f1, set), f1.copy() is f1)\n"
+                + "print(sorted(frozenset(x * 2 for x in range(4))))");
+    }
 }

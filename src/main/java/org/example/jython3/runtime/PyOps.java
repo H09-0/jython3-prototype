@@ -142,6 +142,7 @@ public final class PyOps {
             case PyList l -> !l.items().isEmpty();
             case PyTuple t -> !t.items().isEmpty();
             case PySet s -> !s.isEmpty();
+            case PyFrozenSet fs -> !fs.isEmpty();
             case PyDict d -> d.size() > 0;
             case PyIterator it -> true;
             case PyFloat f -> f.value() != 0.0;
@@ -203,8 +204,11 @@ public final class PyOps {
             // Python semantics: keys matched via PyKey hash/eq (1 == 1.0 == True), values via pyEquals
             return ad.equals(bd);
         }
-        if (a instanceof PySet sa && b instanceof PySet sb) {
-            return sa.equals(sb);
+        if (a instanceof PySet sa) {
+            return sa.equals(b);
+        }
+        if (a instanceof PyFrozenSet fa) {
+            return fa.equals(b);
         }
         if (a instanceof PyBoundMethod ma && b instanceof PyBoundMethod mb) {
             return ma.instance() == mb.instance() && ma.fn() == mb.fn();
@@ -271,6 +275,31 @@ public final class PyOps {
         return bdInt.compareTo(bdFloat);
     }
 
+    public static boolean isSetLike(PyObject o) {
+        return o instanceof PySet || o instanceof PyFrozenSet;
+    }
+
+    public static int setSize(PyObject o) {
+        if (o instanceof PySet s) return s.size();
+        if (o instanceof PyFrozenSet fs) return fs.size();
+        throw new IllegalArgumentException("not a set");
+    }
+
+    public static java.util.Set<PyKey> setKeys(PyObject o) {
+        if (o instanceof PySet s) return s.keySet();
+        if (o instanceof PyFrozenSet fs) return fs.keySet();
+        throw new IllegalArgumentException("not a set");
+    }
+
+    public static boolean setIsSubset(PyObject sub, PyObject sup) {
+        if (setSize(sub) > setSize(sup)) return false;
+        var supKeys = setKeys(sup);
+        for (PyKey k : setKeys(sub)) {
+            if (!supKeys.contains(k)) return false;
+        }
+        return true;
+    }
+
     public static boolean pyContains(PyObject container, PyObject item) {
         if (container instanceof PyList list) {
             for (var el : list.items()) if (pyEquals(el, item)) return true;
@@ -282,6 +311,9 @@ public final class PyOps {
         }
         if (container instanceof PySet set) {
             return set.contains(item);
+        }
+        if (container instanceof PyFrozenSet fs) {
+            return fs.contains(item);
         }
         if (container instanceof PyStr s && item instanceof PyStr sub) return s.value().contains(sub.value());
         if (container instanceof PyDict dict) return dict.containsKey(item);
@@ -299,6 +331,7 @@ public final class PyOps {
             case PyList l -> "list";
             case PyTuple t -> "tuple";
             case PySet s -> "set";
+            case PyFrozenSet fs -> "frozenset";
             case PyDict d -> "dict";
             case PyFunction f -> "function";
             case PyClass c -> "type";

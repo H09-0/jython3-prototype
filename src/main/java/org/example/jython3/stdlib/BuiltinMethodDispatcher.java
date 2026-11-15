@@ -4,6 +4,7 @@ import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
+import org.example.jython3.runtime.PyFrozenSet;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyNull;
@@ -167,8 +168,127 @@ public final class BuiltinMethodDispatcher {
                 }
                 return res;
             });
+            case "symmetric_difference" -> new PyBuiltinFunction("set.symmetric_difference", args -> {
+                checkArgCount("set.symmetric_difference", args, 1);
+                var otherSet = new PySet(BuiltinFunctions.collectIterable(args[0], policy));
+                PySet res = new PySet();
+                for (PyObject el : set.items()) {
+                    if (!otherSet.contains(el)) res.add(el);
+                }
+                for (PyObject el : otherSet.items()) {
+                    if (!set.contains(el)) res.add(el);
+                }
+                return res;
+            });
+            case "issubset" -> new PyBuiltinFunction("set.issubset", args -> {
+                checkArgCount("set.issubset", args, 1);
+                var otherSet = toSetView(args[0], policy);
+                if (set.size() > otherSet.size()) return PyBool.FALSE;
+                for (PyObject el : set.items()) {
+                    if (!otherSet.contains(el)) return PyBool.FALSE;
+                }
+                return PyBool.TRUE;
+            });
+            case "issuperset" -> new PyBuiltinFunction("set.issuperset", args -> {
+                checkArgCount("set.issuperset", args, 1);
+                for (PyObject el : BuiltinFunctions.collectIterable(args[0], policy)) {
+                    if (!set.contains(el)) return PyBool.FALSE;
+                }
+                return PyBool.TRUE;
+            });
+            case "isdisjoint" -> new PyBuiltinFunction("set.isdisjoint", args -> {
+                checkArgCount("set.isdisjoint", args, 1);
+                for (PyObject el : BuiltinFunctions.collectIterable(args[0], policy)) {
+                    if (set.contains(el)) return PyBool.FALSE;
+                }
+                return PyBool.TRUE;
+            });
             default -> throw PyErrors.error("AttributeError", "'set' object has no attribute '" + method + "'");
         };
+    }
+
+    public static PyObject frozenSetMethod(PyFrozenSet fs, String method, JavaAccessPolicy policy) {
+        return switch (method) {
+            case "copy" -> new PyBuiltinFunction("frozenset.copy", args -> {
+                checkArgCount("frozenset.copy", args, 0);
+                return fs;
+            });
+            case "union" -> new PyBuiltinFunction("frozenset.union", args -> {
+                var acc = new PySet(fs.items());
+                for (PyObject other : args) {
+                    for (PyObject el : BuiltinFunctions.collectIterable(other, policy)) {
+                        acc.add(el);
+                    }
+                }
+                return new PyFrozenSet(acc.items());
+            });
+            case "intersection" -> new PyBuiltinFunction("frozenset.intersection", args -> {
+                if (args.length == 0) return fs;
+                var otherSets = new ArrayList<PySet>(args.length);
+                for (PyObject other : args) {
+                    otherSets.add(new PySet(BuiltinFunctions.collectIterable(other, policy)));
+                }
+                var kept = new ArrayList<PyObject>();
+                for (PyObject el : fs.items()) {
+                    boolean inAll = true;
+                    for (PySet os : otherSets) {
+                        if (!os.contains(el)) { inAll = false; break; }
+                    }
+                    if (inAll) kept.add(el);
+                }
+                return new PyFrozenSet(kept);
+            });
+            case "difference" -> new PyBuiltinFunction("frozenset.difference", args -> {
+                var acc = new PySet(fs.items());
+                for (PyObject other : args) {
+                    for (PyObject el : BuiltinFunctions.collectIterable(other, policy)) {
+                        acc.remove(el);
+                    }
+                }
+                return new PyFrozenSet(acc.items());
+            });
+            case "symmetric_difference" -> new PyBuiltinFunction("frozenset.symmetric_difference", args -> {
+                checkArgCount("frozenset.symmetric_difference", args, 1);
+                var otherSet = new PySet(BuiltinFunctions.collectIterable(args[0], policy));
+                var acc = new ArrayList<PyObject>();
+                for (PyObject el : fs.items()) {
+                    if (!otherSet.contains(el)) acc.add(el);
+                }
+                for (PyObject el : otherSet.items()) {
+                    if (!fs.contains(el)) acc.add(el);
+                }
+                return new PyFrozenSet(acc);
+            });
+            case "issubset" -> new PyBuiltinFunction("frozenset.issubset", args -> {
+                checkArgCount("frozenset.issubset", args, 1);
+                var otherSet = toSetView(args[0], policy);
+                if (fs.size() > otherSet.size()) return PyBool.FALSE;
+                for (PyObject el : fs.items()) {
+                    if (!otherSet.contains(el)) return PyBool.FALSE;
+                }
+                return PyBool.TRUE;
+            });
+            case "issuperset" -> new PyBuiltinFunction("frozenset.issuperset", args -> {
+                checkArgCount("frozenset.issuperset", args, 1);
+                for (PyObject el : BuiltinFunctions.collectIterable(args[0], policy)) {
+                    if (!fs.contains(el)) return PyBool.FALSE;
+                }
+                return PyBool.TRUE;
+            });
+            case "isdisjoint" -> new PyBuiltinFunction("frozenset.isdisjoint", args -> {
+                checkArgCount("frozenset.isdisjoint", args, 1);
+                for (PyObject el : BuiltinFunctions.collectIterable(args[0], policy)) {
+                    if (fs.contains(el)) return PyBool.FALSE;
+                }
+                return PyBool.TRUE;
+            });
+            default -> throw PyErrors.error("AttributeError", "'frozenset' object has no attribute '" + method + "'");
+        };
+    }
+
+    private static PySet toSetView(PyObject obj, JavaAccessPolicy policy) {
+        if (obj instanceof PySet s) return s;
+        return new PySet(BuiltinFunctions.collectIterable(obj, policy));
     }
 
     public static PyObject listMethod(PyList list, String method) {

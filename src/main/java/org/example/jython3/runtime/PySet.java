@@ -37,6 +37,14 @@ public final class PySet implements PyObject {
         entries.putIfAbsent(new PyKey(v), v);
     }
 
+    public java.util.Set<PyKey> keySet() {
+        return Collections.unmodifiableSet(entries.keySet());
+    }
+
+    public boolean containsKey(PyKey k) {
+        return entries.containsKey(k);
+    }
+
     /** Python {@code v in set}; raises {@code TypeError} if {@code v} is unhashable. */
     public boolean contains(PyObject v) {
         return entries.containsKey(new PyKey(v));
@@ -69,12 +77,15 @@ public final class PySet implements PyObject {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof PySet other)) return false;
-        if (size() != other.size()) return false;
-        for (PyKey k : entries.keySet()) {
-            if (!other.entries.containsKey(k)) return false;
+        if (o instanceof PySet other) {
+            if (size() != other.size()) return false;
+            return entries.keySet().containsAll(other.entries.keySet());
         }
-        return true;
+        if (o instanceof PyFrozenSet other) {
+            if (size() != other.size()) return false;
+            return entries.keySet().containsAll(other.keySet());
+        }
+        return false;
     }
 
     @Override

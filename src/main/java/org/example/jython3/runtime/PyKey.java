@@ -37,6 +37,9 @@ public final class PyKey {
         if (obj instanceof PyList || obj instanceof PyDict || obj instanceof PySet || obj instanceof PySlice) {
             throw PyErrors.error("TypeError", "unhashable type: '" + PyOps.typeName(obj) + "'");
         }
+        if (obj instanceof PyFrozenSet fs) {
+            return fs.hashCode();
+        }
         if (obj instanceof PyTuple t) {
             int hash = 1;
             for (PyObject item : t.items()) {

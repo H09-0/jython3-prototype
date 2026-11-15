@@ -85,7 +85,66 @@ public final class ArithmeticOps {
         } else if (isNumeric(l) && isNumeric(r)) {
             return new PyFloat(toDouble(l) - toDouble(r));
         }
-        throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
+        if (PyOps.isSetLike(rawL) && PyOps.isSetLike(rawR)) {
+            return setDifference(rawL, rawR);
+        }
+        throw PyErrors.error("TypeError",
+                "unsupported operand type(s) for -: '" + typeName(rawL) + "' and '" + typeName(rawR) + "'");
+    }
+
+    private static PyObject buildSetResult(boolean mutable, java.util.Map<PyKey, PyObject> entries) {
+        if (mutable) {
+            var res = new PySet();
+            for (PyObject v : entries.values()) res.add(v);
+            return res;
+        }
+        return PyFrozenSet.fromValidatedMap(entries);
+    }
+
+    private static java.util.Collection<PyObject> setItems(PyObject o) {
+        return (o instanceof PySet s) ? s.items() : ((PyFrozenSet) o).items();
+    }
+
+    private static boolean setHasKey(PyObject o, PyKey k) {
+        return (o instanceof PySet s) ? s.containsKey(k) : ((PyFrozenSet) o).containsKey(k);
+    }
+
+    private static PyObject setUnion(PyObject l, PyObject r) {
+        var map = new java.util.LinkedHashMap<PyKey, PyObject>();
+        for (PyObject v : setItems(l)) map.putIfAbsent(new PyKey(v), v);
+        for (PyObject v : setItems(r)) map.putIfAbsent(new PyKey(v), v);
+        return buildSetResult(l instanceof PySet, map);
+    }
+
+    private static PyObject setIntersection(PyObject l, PyObject r) {
+        var map = new java.util.LinkedHashMap<PyKey, PyObject>();
+        for (PyObject v : setItems(l)) {
+            PyKey k = new PyKey(v);
+            if (setHasKey(r, k)) map.putIfAbsent(k, v);
+        }
+        return buildSetResult(l instanceof PySet, map);
+    }
+
+    private static PyObject setDifference(PyObject l, PyObject r) {
+        var map = new java.util.LinkedHashMap<PyKey, PyObject>();
+        for (PyObject v : setItems(l)) {
+            PyKey k = new PyKey(v);
+            if (!setHasKey(r, k)) map.putIfAbsent(k, v);
+        }
+        return buildSetResult(l instanceof PySet, map);
+    }
+
+    private static PyObject setSymmetricDifference(PyObject l, PyObject r) {
+        var map = new java.util.LinkedHashMap<PyKey, PyObject>();
+        for (PyObject v : setItems(l)) {
+            PyKey k = new PyKey(v);
+            if (!setHasKey(r, k)) map.putIfAbsent(k, v);
+        }
+        for (PyObject v : setItems(r)) {
+            PyKey k = new PyKey(v);
+            if (!setHasKey(l, k)) map.putIfAbsent(k, v);
+        }
+        return buildSetResult(l instanceof PySet, map);
     }
 
     public static PyObject multiply(PyObject rawL, PyObject rawR, ExecutionLimits limits) {
@@ -167,6 +226,9 @@ public final class ArithmeticOps {
     }
 
     public static PyObject bitwiseAnd(PyObject rawL, PyObject rawR) {
+        if (PyOps.isSetLike(rawL) && PyOps.isSetLike(rawR)) {
+            return setIntersection(rawL, rawR);
+        }
         if (rawL instanceof PyBool lb && rawR instanceof PyBool rb) {
             return PyBool.of(lb.value() & rb.value());
         }
@@ -185,6 +247,9 @@ public final class ArithmeticOps {
     }
 
     public static PyObject bitwiseOr(PyObject rawL, PyObject rawR) {
+        if (PyOps.isSetLike(rawL) && PyOps.isSetLike(rawR)) {
+            return setUnion(rawL, rawR);
+        }
         if (rawL instanceof PyBool lb && rawR instanceof PyBool rb) {
             return PyBool.of(lb.value() | rb.value());
         }
@@ -203,6 +268,9 @@ public final class ArithmeticOps {
     }
 
     public static PyObject bitwiseXor(PyObject rawL, PyObject rawR) {
+        if (PyOps.isSetLike(rawL) && PyOps.isSetLike(rawR)) {
+            return setSymmetricDifference(rawL, rawR);
+        }
         if (rawL instanceof PyBool lb && rawR instanceof PyBool rb) {
             return PyBool.of(lb.value() ^ rb.value());
         }

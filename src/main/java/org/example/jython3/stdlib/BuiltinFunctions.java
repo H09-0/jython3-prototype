@@ -96,6 +96,7 @@ public final class BuiltinFunctions {
             if (o instanceof PyTuple t) return new PyInt(t.items().size());
             if (o instanceof PyDict d) return new PyInt(d.size());
             if (o instanceof org.example.jython3.runtime.PySet set) return new PyInt(set.size());
+            if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new PyInt(fs.size());
             if (o instanceof PyInstance inst) {
                 if (inst.hasField("__len__")) {
                     PyObject lenMethod = inst.getField("__len__");
@@ -327,6 +328,14 @@ public final class BuiltinFunctions {
             if (args.length == 0) return new org.example.jython3.runtime.PySet();
             checkArgCount("set", args, 1);
             return new org.example.jython3.runtime.PySet(collectIterable(args[0], javaPolicy));
+        }));
+
+        // frozenset() / frozenset(iterable) — immutable, hashable set keyed by PyKey
+        defineType.accept("frozenset", PyBuiltinFunction.builtinType("frozenset", args -> {
+            if (args.length == 0) return org.example.jython3.runtime.PyFrozenSet.EMPTY;
+            checkArgCount("frozenset", args, 1);
+            if (args[0] instanceof org.example.jython3.runtime.PyFrozenSet fs) return fs;
+            return new org.example.jython3.runtime.PyFrozenSet(collectIterable(args[0], javaPolicy));
         }));
 
         // dict()
@@ -769,6 +778,7 @@ public final class BuiltinFunctions {
         if (o instanceof PyList list) return new ArrayList<>(list.items());
         if (o instanceof PyTuple tuple) return new ArrayList<>(tuple.items());
         if (o instanceof org.example.jython3.runtime.PySet s) return new ArrayList<>(s.items());
+        if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new ArrayList<>(fs.items());
         if (o instanceof PyStr s) return s.toCodePointList();
         if (o instanceof PyDict d) return d.keys();
         PyIterator it = toIterator(o, policy);
@@ -785,6 +795,7 @@ public final class BuiltinFunctions {
         if (o instanceof PyList list) return new PyIterator(list.items(), 0);
         if (o instanceof PyTuple tuple) return new PyIterator(tuple.items(), 0);
         if (o instanceof org.example.jython3.runtime.PySet s) return new PyIterator(new ArrayList<>(s.items()), 0);
+        if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new PyIterator(new ArrayList<>(fs.items()), 0);
         if (o instanceof PyStr s) {
             return s.codePointIterator();
         }
@@ -899,7 +910,11 @@ public final class BuiltinFunctions {
         } else if (o instanceof PyList) {
             Collections.addAll(names, "append", "clear", "copy", "count", "extend", "index", "insert", "pop", "remove", "reverse", "sort");
         } else if (o instanceof org.example.jython3.runtime.PySet) {
-            Collections.addAll(names, "add", "clear", "copy", "difference", "discard", "intersection", "pop", "remove", "union", "update");
+            Collections.addAll(names, "add", "clear", "copy", "difference", "discard", "intersection",
+                    "isdisjoint", "issubset", "issuperset", "pop", "remove", "symmetric_difference", "union", "update");
+        } else if (o instanceof org.example.jython3.runtime.PyFrozenSet) {
+            Collections.addAll(names, "copy", "difference", "intersection", "isdisjoint",
+                    "issubset", "issuperset", "symmetric_difference", "union");
         } else if (o instanceof PyStr) {
             Collections.addAll(names, "count", "endswith", "find", "isalnum", "isalpha", "isdigit", "join", "lower", "replace", "split", "startswith", "strip", "upper");
         } else if (o instanceof PyFunction || o instanceof PyBuiltinFunction || o instanceof PyBoundMethod) {
@@ -940,6 +955,7 @@ public final class BuiltinFunctions {
         if (obj instanceof PyDict) return builtinTypes.get("dict");
         if (obj instanceof PyTuple) return builtinTypes.get("tuple");
         if (obj instanceof org.example.jython3.runtime.PySet) return builtinTypes.get("set");
+        if (obj instanceof org.example.jython3.runtime.PyFrozenSet) return builtinTypes.get("frozenset");
         if (obj instanceof PyBuiltinFunction bf) {
             return bf.isType() ? builtinTypes.get("type") : BUILTIN_FN_TYPE;
         }
@@ -997,6 +1013,7 @@ public final class BuiltinFunctions {
                 case "dict"   -> (obj instanceof PyDict);
                 case "tuple"  -> (obj instanceof PyTuple);
                 case "set"    -> (obj instanceof org.example.jython3.runtime.PySet);
+                case "frozenset" -> (obj instanceof org.example.jython3.runtime.PyFrozenSet);
                 case "object" -> true;
                 case "type"   -> (obj instanceof PyClass || (obj instanceof PyBuiltinFunction b && b.isType()));
                 case "NoneType" -> (obj instanceof PyNull);

@@ -27,7 +27,7 @@ For completed historical releases, see [CHANGELOG.md](../CHANGELOG.md).
 - [ ] Generator coroutine `.send()`, `.throw()`, `.close()`, and `yield from` delegation.
 - [ ] PEP 3110 exception-target deletion on `raise` exit paths inside `except ... as e:` without `finally`.
 - [ ] Dynamic 3-argument `type(name, bases, dict)` and MRO / `__bases__` mutation support.
-- [ ] Set bitwise operators (`|`, `&`, `-`, `^`) and `frozenset`.
+- [ ] In-place `+=`/`|=`/`&=`/`-=`/`^=` aliasing semantics (`__iadd__`/`__ior__`) for mutable `list` and `set`.
 
 ### Virtual Threads & Concurrency
 - [ ] Native support for Java 21+ Virtual Threads (Project Loom).

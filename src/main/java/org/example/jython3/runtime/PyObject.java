@@ -4,7 +4,7 @@ package org.example.jython3.runtime;
 
 public sealed interface PyObject permits
         PyInt, BigInt, PyStr, PyNull, PyBool, PyFunction, PyClass, PyInstance, PyBoundMethod, PySuper,
-        PyList, PyTuple, PySet, PyDict, PyIterator, PyModule, PyBuiltinFunction, PyFloat, PyException,
+        PyList, PyTuple, PySet, PyFrozenSet, PyDict, PyIterator, PyModule, PyBuiltinFunction, PyFloat, PyException,
         PyCompiledCodeWrapper, PyGenerator, PySlice, PyCell,
         PyTraceback, PyFrameInfo, PyCodeInfo,
         PyJavaClass, PyJavaObject, PyJavaMethod,
