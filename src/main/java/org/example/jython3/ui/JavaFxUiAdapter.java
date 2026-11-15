@@ -125,6 +125,27 @@ public final class JavaFxUiAdapter implements UiToolkit {
     }
 
     @Override
+    public UiCheckBox createCheckBox(HostSession session, String text, boolean checked) {
+        session.require(HostCapability.UI, "fx.create_checkbox", text);
+        dispatcher.assertUiThread("fx.create_checkbox");
+        return delegate.createCheckBox(session, text, checked);
+    }
+
+    @Override
+    public UiProgressBar createProgressBar(HostSession session, double value, boolean indeterminate) {
+        session.require(HostCapability.UI, "fx.create_progressbar", "");
+        dispatcher.assertUiThread("fx.create_progressbar");
+        return delegate.createProgressBar(session, value, indeterminate);
+    }
+
+    @Override
+    public UiListView createListView(HostSession session, java.util.List<String> items) {
+        session.require(HostCapability.UI, "fx.create_listview", "");
+        dispatcher.assertUiThread("fx.create_listview");
+        return delegate.createListView(session, items);
+    }
+
+    @Override
     public UiTimer createTimer(HostSession session, int intervalMs, PyObject callback) {
         session.require(HostCapability.TIMER, "fx.create_timer", intervalMs + "ms");
         return delegate.createTimer(session, intervalMs, callback);

@@ -32,6 +32,8 @@ public final class EmbeddedRuntime implements AutoCloseable {
             "headless-ui",
             "swing-edt-ui",
             "javafx-dispatch-adapter",
+            "ui-layouts",
+            "basic-widgets",
             "simulated-control",
             "live-control-state",
             "lazy-generators",

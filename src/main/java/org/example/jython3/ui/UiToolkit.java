@@ -12,6 +12,21 @@ import java.util.List;
  */
 public interface UiToolkit {
 
+    enum UiLayout {
+        FLOW, VBOX, HBOX, GRID;
+
+        public static UiLayout parse(String raw) {
+            if (raw == null) return FLOW;
+            return switch (raw.trim().toLowerCase()) {
+                case "flow" -> FLOW;
+                case "vbox", "vertical" -> VBOX;
+                case "hbox", "horizontal" -> HBOX;
+                case "grid" -> GRID;
+                default -> throw new IllegalArgumentException("unknown layout: " + raw);
+            };
+        }
+    }
+
     UiDispatcher dispatcher();
 
     UiWindow createWindow(HostSession session, String title, int width, int height);
@@ -23,6 +38,12 @@ public interface UiToolkit {
     UiTextField createTextField(HostSession session, String text);
 
     UiPanel createPanel(HostSession session);
+
+    UiCheckBox createCheckBox(HostSession session, String text, boolean checked);
+
+    UiProgressBar createProgressBar(HostSession session, double value, boolean indeterminate);
+
+    UiListView createListView(HostSession session, List<String> items);
 
     UiTimer createTimer(HostSession session, int intervalMs, PyObject callback);
 
@@ -70,6 +91,37 @@ public interface UiToolkit {
     interface UiPanel extends UiWidget {
         void add(UiWidget child);
         List<UiWidget> children();
+        UiLayout layout();
+        void setLayout(UiLayout layout);
+        int spacing();
+        void setSpacing(int spacing);
+        int columns();
+        void setColumns(int columns);
+    }
+
+    interface UiCheckBox extends UiWidget {
+        String text();
+        void setText(String text);
+        boolean isChecked();
+        void setChecked(boolean checked);
+        void onChange(PyObject callback);
+        int listenerCount();
+    }
+
+    interface UiProgressBar extends UiWidget {
+        double value();
+        void setValue(double value);
+        boolean isIndeterminate();
+        void setIndeterminate(boolean indeterminate);
+    }
+
+    interface UiListView extends UiWidget {
+        List<String> items();
+        void setItems(List<String> items);
+        int selectedIndex();
+        void setSelectedIndex(int index);
+        void onSelect(PyObject callback);
+        int listenerCount();
     }
 
     interface UiTimer extends AutoCloseable {

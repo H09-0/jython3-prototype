@@ -213,6 +213,31 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
     }
 
     @Override
+    public UiCheckBox createCheckBox(HostSession session, String text, boolean checked) {
+        session.require(HostCapability.UI, "create_checkbox", text);
+        dispatcher.assertUiThread("create_checkbox");
+        var cb = new HeadlessCheckBox("chk-" + idSeq.getAndIncrement(), session, text, checked);
+        session.registerResource(cb::clearListeners);
+        return cb;
+    }
+
+    @Override
+    public UiProgressBar createProgressBar(HostSession session, double value, boolean indeterminate) {
+        session.require(HostCapability.UI, "create_progressbar", "");
+        dispatcher.assertUiThread("create_progressbar");
+        return new HeadlessProgressBar("prg-" + idSeq.getAndIncrement(), value, indeterminate);
+    }
+
+    @Override
+    public UiListView createListView(HostSession session, List<String> items) {
+        session.require(HostCapability.UI, "create_listview", "");
+        dispatcher.assertUiThread("create_listview");
+        var lv = new HeadlessListView("lst-" + idSeq.getAndIncrement(), session, items);
+        session.registerResource(lv::clearListeners);
+        return lv;
+    }
+
+    @Override
     public UiTimer createTimer(HostSession session, int intervalMs, PyObject callback) {
         session.require(HostCapability.TIMER, "create_timer", intervalMs + "ms");
         if (intervalMs < 1) {
@@ -400,6 +425,9 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
     private final class HeadlessPanel implements UiPanel {
         private final String id;
         private final List<UiWidget> children = new ArrayList<>();
+        private UiLayout layout = UiLayout.FLOW;
+        private int spacing = 0;
+        private int columns = 2;
 
         HeadlessPanel(String id) { this.id = id; }
 
@@ -409,6 +437,132 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
             children.add(Objects.requireNonNull(child, "child"));
         }
         @Override public List<UiWidget> children() { return List.copyOf(children); }
+        @Override public UiLayout layout() { return layout; }
+        @Override public void setLayout(UiLayout layout) {
+            dispatcher.assertUiThread("panel.setLayout");
+            this.layout = Objects.requireNonNull(layout, "layout");
+        }
+        @Override public int spacing() { return spacing; }
+        @Override public void setSpacing(int spacing) {
+            dispatcher.assertUiThread("panel.setSpacing");
+            if (spacing < 0) throw PyErrors.error("ValueError", "spacing must be >= 0");
+            this.spacing = spacing;
+        }
+        @Override public int columns() { return columns; }
+        @Override public void setColumns(int columns) {
+            dispatcher.assertUiThread("panel.setColumns");
+            if (columns < 1) throw PyErrors.error("ValueError", "columns must be >= 1");
+            this.columns = columns;
+        }
+    }
+
+    private final class HeadlessCheckBox implements UiCheckBox {
+        private final String id;
+        private final HostSession session;
+        private String text;
+        private boolean checked;
+        private final List<PyObject> changeListeners = new CopyOnWriteArrayList<>();
+
+        HeadlessCheckBox(String id, HostSession session, String text, boolean checked) {
+            this.id = id;
+            this.session = session;
+            this.text = text != null ? text : "";
+            this.checked = checked;
+        }
+
+        @Override public String id() { return id; }
+        @Override public String text() { return text; }
+        @Override public void setText(String text) {
+            dispatcher.assertUiThread("checkbox.setText");
+            this.text = text != null ? text : "";
+        }
+        @Override public boolean isChecked() { return checked; }
+        @Override public void setChecked(boolean checked) {
+            dispatcher.assertUiThread("checkbox.setChecked");
+            if (this.checked != checked) {
+                this.checked = checked;
+                dispatchEvent(session, changeListeners,
+                        new UiEvent("checkbox.change", id, Boolean.toString(checked), System.currentTimeMillis()));
+            }
+        }
+        @Override public void onChange(PyObject callback) {
+            session.require(HostCapability.INPUT, "on_change", id);
+            addListenerChecked(session, changeListeners, callback, id);
+        }
+        @Override public int listenerCount() { return changeListeners.size(); }
+        void clearListeners() { changeListeners.clear(); }
+    }
+
+    private final class HeadlessProgressBar implements UiProgressBar {
+        private final String id;
+        private double value;
+        private boolean indeterminate;
+
+        HeadlessProgressBar(String id, double value, boolean indeterminate) {
+            this.id = id;
+            this.value = validateProgress(value);
+            this.indeterminate = indeterminate;
+        }
+
+        @Override public String id() { return id; }
+        @Override public double value() { return value; }
+        @Override public void setValue(double value) {
+            dispatcher.assertUiThread("progressbar.setValue");
+            this.value = validateProgress(value);
+        }
+        @Override public boolean isIndeterminate() { return indeterminate; }
+        @Override public void setIndeterminate(boolean indeterminate) {
+            dispatcher.assertUiThread("progressbar.setIndeterminate");
+            this.indeterminate = indeterminate;
+        }
+    }
+
+    private final class HeadlessListView implements UiListView {
+        private final String id;
+        private final HostSession session;
+        private List<String> items;
+        private int selectedIndex = -1;
+        private final List<PyObject> selectListeners = new CopyOnWriteArrayList<>();
+
+        HeadlessListView(String id, HostSession session, List<String> items) {
+            this.id = id;
+            this.session = session;
+            this.items = items == null ? List.of() : List.copyOf(items);
+        }
+
+        @Override public String id() { return id; }
+        @Override public List<String> items() { return items; }
+        @Override public void setItems(List<String> items) {
+            dispatcher.assertUiThread("listview.setItems");
+            this.items = items == null ? List.of() : List.copyOf(items);
+            if (selectedIndex >= this.items.size()) {
+                selectedIndex = -1;
+            }
+        }
+        @Override public int selectedIndex() { return selectedIndex; }
+        @Override public void setSelectedIndex(int index) {
+            dispatcher.assertUiThread("listview.setSelectedIndex");
+            if (index < -1 || index >= items.size()) {
+                throw PyErrors.error("IndexError", "list view index out of range: " + index);
+            }
+            this.selectedIndex = index;
+            String val = index >= 0 ? items.get(index) : "";
+            dispatchEvent(session, selectListeners,
+                    new UiEvent("listview.select", id, val, System.currentTimeMillis()));
+        }
+        @Override public void onSelect(PyObject callback) {
+            session.require(HostCapability.INPUT, "on_select", id);
+            addListenerChecked(session, selectListeners, callback, id);
+        }
+        @Override public int listenerCount() { return selectListeners.size(); }
+        void clearListeners() { selectListeners.clear(); }
+    }
+
+    private static double validateProgress(double value) {
+        if (Double.isNaN(value) || value < 0.0 || value > 1.0) {
+            throw PyErrors.error("ValueError", "progress value must be between 0.0 and 1.0");
+        }
+        return value;
     }
 
     private final class HeadlessTimer implements UiTimer {

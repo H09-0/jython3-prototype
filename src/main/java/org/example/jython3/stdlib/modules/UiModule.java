@@ -4,6 +4,7 @@ import org.example.jython3.host.HostSession;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyErrors;
+import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyHostHandle;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyList;
@@ -11,10 +12,13 @@ import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyStr;
+import org.example.jython3.runtime.PyTuple;
 import org.example.jython3.ui.UiToolkit;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -52,8 +56,62 @@ public final class UiModule {
             return wrapTextField(session, toolkit.createTextField(session, text), widgetRegistry);
         }));
 
-        attrs.put("Panel", new PyBuiltinFunction("ui.Panel", args -> {
-            return wrapPanel(session, toolkit.createPanel(session), widgetRegistry);
+        attrs.put("Panel", new PyBuiltinFunction("ui.Panel", (args, kwargs) -> {
+            UiToolkit.UiPanel pnl = toolkit.createPanel(session);
+            if (kwargs.containsKey("layout")) pnl.setLayout(parseLayout(kwargs.get("layout")));
+            else if (args.length >= 1) pnl.setLayout(parseLayout(args[0]));
+            if (kwargs.containsKey("spacing")) pnl.setSpacing(intArg(kwargs.get("spacing")));
+            else if (args.length >= 2) pnl.setSpacing(intArg(args[1]));
+            if (kwargs.containsKey("columns")) pnl.setColumns(intArg(kwargs.get("columns")));
+            return wrapPanel(session, pnl, widgetRegistry);
+        }));
+
+        attrs.put("VBox", new PyBuiltinFunction("ui.VBox", (args, kwargs) -> {
+            UiToolkit.UiPanel pnl = toolkit.createPanel(session);
+            pnl.setLayout(UiToolkit.UiLayout.VBOX);
+            if (kwargs.containsKey("spacing")) pnl.setSpacing(intArg(kwargs.get("spacing")));
+            else if (args.length >= 1) pnl.setSpacing(intArg(args[0]));
+            return wrapPanel(session, pnl, widgetRegistry);
+        }));
+
+        attrs.put("HBox", new PyBuiltinFunction("ui.HBox", (args, kwargs) -> {
+            UiToolkit.UiPanel pnl = toolkit.createPanel(session);
+            pnl.setLayout(UiToolkit.UiLayout.HBOX);
+            if (kwargs.containsKey("spacing")) pnl.setSpacing(intArg(kwargs.get("spacing")));
+            else if (args.length >= 1) pnl.setSpacing(intArg(args[0]));
+            return wrapPanel(session, pnl, widgetRegistry);
+        }));
+
+        attrs.put("Grid", new PyBuiltinFunction("ui.Grid", (args, kwargs) -> {
+            UiToolkit.UiPanel pnl = toolkit.createPanel(session);
+            pnl.setLayout(UiToolkit.UiLayout.GRID);
+            if (kwargs.containsKey("columns")) pnl.setColumns(intArg(kwargs.get("columns")));
+            else if (args.length >= 1) pnl.setColumns(intArg(args[0]));
+            if (kwargs.containsKey("spacing")) pnl.setSpacing(intArg(kwargs.get("spacing")));
+            else if (args.length >= 2) pnl.setSpacing(intArg(args[1]));
+            return wrapPanel(session, pnl, widgetRegistry);
+        }));
+
+        attrs.put("CheckBox", new PyBuiltinFunction("ui.CheckBox", (args, kwargs) -> {
+            String text = kwargs.containsKey("text") ? strArg(kwargs.get("text"), "CheckBox text")
+                    : (args.length >= 1 ? strArg(args[0], "CheckBox text") : "");
+            boolean checked = kwargs.containsKey("checked") ? boolArg(kwargs.get("checked"))
+                    : (args.length >= 2 && boolArg(args[1]));
+            return wrapCheckBox(session, toolkit.createCheckBox(session, text, checked), widgetRegistry);
+        }));
+
+        attrs.put("ProgressBar", new PyBuiltinFunction("ui.ProgressBar", (args, kwargs) -> {
+            double val = kwargs.containsKey("value") ? doubleArg(kwargs.get("value"))
+                    : (args.length >= 1 ? doubleArg(args[0]) : 0.0);
+            boolean indet = kwargs.containsKey("indeterminate") ? boolArg(kwargs.get("indeterminate"))
+                    : (args.length >= 2 && boolArg(args[1]));
+            return wrapProgressBar(session, toolkit.createProgressBar(session, val, indet), widgetRegistry);
+        }));
+
+        attrs.put("ListView", new PyBuiltinFunction("ui.ListView", (args, kwargs) -> {
+            List<String> items = kwargs.containsKey("items") ? strListArg(kwargs.get("items"))
+                    : (args.length >= 1 ? strListArg(args[0]) : List.of());
+            return wrapListView(session, toolkit.createListView(session, items), widgetRegistry);
         }));
 
         attrs.put("Timer", new PyBuiltinFunction("ui.Timer", args -> {
@@ -153,6 +211,9 @@ public final class UiModule {
         PyHostHandle h = PyHostHandle.builder("ui.Panel")
                 .bindSession(session)
                 .prop("id", () -> new PyStr(pnl.id()))
+                .prop("layout", () -> new PyStr(pnl.layout().name().toLowerCase()), v -> pnl.setLayout(parseLayout(v)))
+                .prop("spacing", () -> PyInt.of(pnl.spacing()), v -> pnl.setSpacing(intArg(v)))
+                .prop("columns", () -> PyInt.of(pnl.columns()), v -> pnl.setColumns(intArg(v)))
                 .method("add", new PyBuiltinFunction("Panel.add", a -> {
                     if (a.length != 1 || !(a[0] instanceof PyHostHandle ch) || !reg.containsKey(ch)) {
                         throw PyErrors.error("TypeError", "Panel.add() expects a UI widget");
@@ -167,6 +228,53 @@ public final class UiModule {
         return h;
     }
 
+    private static PyHostHandle wrapCheckBox(HostSession session, UiToolkit.UiCheckBox cb, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+        PyHostHandle h = PyHostHandle.builder("ui.CheckBox")
+                .bindSession(session)
+                .prop("id", () -> new PyStr(cb.id()))
+                .prop("text", () -> new PyStr(cb.text()), v -> cb.setText(strArg(v, "text")))
+                .prop("checked", () -> PyBool.of(cb.isChecked()), v -> cb.setChecked(boolArg(v)))
+                .method("on_change", new PyBuiltinFunction("CheckBox.on_change", a -> {
+                    if (a.length != 1) throw PyErrors.error("TypeError", "on_change() takes 1 callback");
+                    cb.onChange(a[0]);
+                    return PyNull.INSTANCE;
+                }))
+                .build();
+        reg.put(h, cb);
+        return h;
+    }
+
+    private static PyHostHandle wrapProgressBar(HostSession session, UiToolkit.UiProgressBar bar, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+        PyHostHandle h = PyHostHandle.builder("ui.ProgressBar")
+                .bindSession(session)
+                .prop("id", () -> new PyStr(bar.id()))
+                .prop("value", () -> new PyFloat(bar.value()), v -> bar.setValue(doubleArg(v)))
+                .prop("indeterminate", () -> PyBool.of(bar.isIndeterminate()), v -> bar.setIndeterminate(boolArg(v)))
+                .build();
+        reg.put(h, bar);
+        return h;
+    }
+
+    private static PyHostHandle wrapListView(HostSession session, UiToolkit.UiListView lv, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+        PyHostHandle h = PyHostHandle.builder("ui.ListView")
+                .bindSession(session)
+                .prop("id", () -> new PyStr(lv.id()))
+                .prop("items", () -> {
+                    List<PyObject> out = new ArrayList<>();
+                    for (String s : lv.items()) out.add(new PyStr(s));
+                    return new PyList(out);
+                }, v -> lv.setItems(strListArg(v)))
+                .prop("selected_index", () -> PyInt.of(lv.selectedIndex()), v -> lv.setSelectedIndex(intArg(v)))
+                .method("on_select", new PyBuiltinFunction("ListView.on_select", a -> {
+                    if (a.length != 1) throw PyErrors.error("TypeError", "on_select() takes 1 callback");
+                    lv.onSelect(a[0]);
+                    return PyNull.INSTANCE;
+                }))
+                .build();
+        reg.put(h, lv);
+        return h;
+    }
+
     private static PyHostHandle wrapTimer(HostSession session, UiToolkit.UiTimer timer) {
         return PyHostHandle.builder("ui.Timer")
                 .bindSession(session)
@@ -176,6 +284,32 @@ public final class UiModule {
                 .method("start", new PyBuiltinFunction("Timer.start", a -> { timer.start(); return PyNull.INSTANCE; }))
                 .method("stop", new PyBuiltinFunction("Timer.stop", a -> { timer.stop(); return PyNull.INSTANCE; }))
                 .build();
+    }
+
+    private static UiToolkit.UiLayout parseLayout(PyObject o) {
+        try {
+            return UiToolkit.UiLayout.parse(strArg(o, "layout"));
+        } catch (IllegalArgumentException e) {
+            throw PyErrors.error("ValueError", e.getMessage());
+        }
+    }
+
+    private static double doubleArg(PyObject o) {
+        if (o instanceof PyFloat f) return f.value();
+        if (o instanceof PyInt i) return i.value();
+        throw PyErrors.error("TypeError", "expected float or int");
+    }
+
+    private static List<String> strListArg(PyObject o) {
+        List<PyObject> raw;
+        if (o instanceof PyList l) raw = l.items();
+        else if (o instanceof PyTuple t) raw = t.items();
+        else throw PyErrors.error("TypeError", "expected list or tuple of str");
+        List<String> out = new ArrayList<>(raw.size());
+        for (PyObject item : raw) {
+            out.add(strArg(item, "list item"));
+        }
+        return out;
     }
 
     private static String strArg(PyObject o, String label) {
