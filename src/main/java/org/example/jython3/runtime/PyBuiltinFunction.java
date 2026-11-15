@@ -14,20 +14,35 @@ public final class PyBuiltinFunction implements PyObject {
     private final String name;
     private final Function<PyObject[], PyObject> posFn;
     private final KwTarget kwFn;
+    private final boolean isType;
 
     public PyBuiltinFunction(String name, Function<PyObject[], PyObject> fn) {
-        this.name = name;
-        this.posFn = fn;
-        this.kwFn = null;
+        this(name, fn, null, false);
     }
 
     public PyBuiltinFunction(String name, KwTarget kwFn) {
+        this(name, args -> kwFn.call(args, Collections.emptyMap()), kwFn, false);
+    }
+
+    private PyBuiltinFunction(String name, Function<PyObject[], PyObject> posFn, KwTarget kwFn, boolean isType) {
         this.name = name;
-        this.posFn = args -> kwFn.call(args, Collections.emptyMap());
+        this.posFn = posFn;
         this.kwFn = kwFn;
+        this.isType = isType;
+    }
+
+    /** Creates a built-in Python type object (renders as {@code <class 'name'>}). */
+    public static PyBuiltinFunction builtinType(String name, Function<PyObject[], PyObject> fn) {
+        return new PyBuiltinFunction(name, fn, null, true);
+    }
+
+    /** Creates a built-in Python type object accepting keyword arguments. */
+    public static PyBuiltinFunction builtinType(String name, KwTarget kwFn) {
+        return new PyBuiltinFunction(name, args -> kwFn.call(args, Collections.emptyMap()), kwFn, true);
     }
 
     public String name() { return name; }
+    public boolean isType() { return isType; }
     public Function<PyObject[], PyObject> fn() { return posFn; }
     public KwTarget kwFn() { return kwFn; }
 
@@ -43,6 +58,6 @@ public final class PyBuiltinFunction implements PyObject {
 
     @Override
     public String toString() {
-        return "<built-in function " + name + ">";
+        return isType ? "<class '" + name + "'>" : "<built-in function " + name + ">";
     }
 }

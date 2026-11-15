@@ -414,6 +414,14 @@ public class CoreDifferentialTest {
                 + "def f():\n    pass\n"
                 + "x = C()\n"
                 + "print(C.__name__, ValueError.__name__, x.__class__ is C, type(x).__name__, f.__name__, len.__name__, x.m.__name__)");
+        assertMatchesCPython("unified_type_identity",
+                "class C:\n    def m(self):\n        pass\n"
+                + "def f():\n    pass\n"
+                + "print(type(1), type('x'), type([]), type({}), type(set()), type(ValueError()))\n"
+                + "print(type(1) is int, type('x') is str, type([]) is list, type({}) is dict, type(set()) is set)\n"
+                + "print(type(ValueError()) is ValueError, type(C()).__name__, type(f).__name__, type(len).__name__, type(None).__name__)\n"
+                + "print(isinstance(True, int), issubclass(bool, int), issubclass(C, object), issubclass(int, object), issubclass(C, int))\n"
+                + "print((1).__class__ is int, 'x'.__class__ is str, [].__class__ is list, {}.__class__ is dict, set().__class__ is set)");
         assertMatchesCPython("traceback_frames_and_with_tb",
                 "def tb_names(exc):\n    out = []\n    tb = exc.__traceback__\n    while tb is not None:\n        out.append((tb.tb_frame.f_code.co_name, tb.tb_lineno))\n        tb = tb.tb_next\n    return out\n"
                 + "def boom():\n    raise ValueError('x')\n"

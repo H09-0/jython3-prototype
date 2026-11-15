@@ -122,6 +122,7 @@ public class Jython3Interpreter {
 
     /** Built-in functions and standard types template for module initialization. */
     private final Map<String, PyObject> builtinSymbols = new HashMap<>();
+    private final Map<String, PyBuiltinFunction> builtinTypes = new HashMap<>();
     private final PyCaller interpreterCaller;
 
     public void clearCache() {
@@ -399,7 +400,8 @@ public class Jython3Interpreter {
 
     /** Install built-in functions into the global namespace. */
     private void registerBuiltins() {
-        BuiltinFunctions.register(builtinSymbols::put, interpreterCaller, javaAccessPolicy);
+        builtinTypes.clear();
+        BuiltinFunctions.register(builtinSymbols::put, interpreterCaller, javaAccessPolicy, builtinTypes);
         for (var entry : exceptionTypes.types().entrySet()) {
             builtinSymbols.put(entry.getKey(), entry.getValue());
         }
@@ -1821,7 +1823,7 @@ public class Jython3Interpreter {
                                     member = inst.fields().get(attr);
                                 }
                                 if (member == null && "__class__".equals(attr)) {
-                                    member = cls;
+                                    member = (cls == BuiltinFunctions.OBJECT_CLASS) ? builtinTypes.get("object") : cls;
                                 }
                                 if (member == null) {
                                     throw PyErrors.error("AttributeError", "'" + cls.name() + "' object has no attribute '" + attr + "'");
@@ -1839,6 +1841,7 @@ public class Jython3Interpreter {
                     } else if (obj instanceof PyClass cls) {
                         PyObject val = cls.lookupMember(attr);
                         if (val == null && "__name__".equals(attr)) val = new PyStr(cls.name());
+                        if (val == null && "__class__".equals(attr)) val = builtinTypes.get("type");
                         if (val == null) throw PyErrors.error("AttributeError", "type object '" + cls.name() + "' has no attribute '" + attr + "'");
                         stack.push(val);
                     } else if (obj instanceof PyException pe) {
@@ -1859,25 +1862,29 @@ public class Jython3Interpreter {
                         stack.push(val);
                     } else if (obj instanceof PyFunction fn) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(fn.name()));
+                        else if ("__class__".equals(attr)) stack.push(BuiltinFunctions.FUNCTION_TYPE);
                         else throw PyErrors.error("AttributeError", "'function' object has no attribute '" + attr + "'");
                     } else if (obj instanceof PyBuiltinFunction bf) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(bf.name()));
-                        else throw PyErrors.error("AttributeError", "'builtin_function_or_method' object has no attribute '" + attr + "'");
+                        else if ("__class__".equals(attr)) stack.push(BuiltinFunctions.typeOf(bf, builtinTypes));
+                        else throw PyErrors.error("AttributeError", "'" + typeName(bf) + "' object has no attribute '" + attr + "'");
                     } else if (obj instanceof PyBoundMethod bm) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(bm.fn().name()));
+                        else if ("__class__".equals(attr)) stack.push(BuiltinFunctions.METHOD_TYPE);
                         else throw PyErrors.error("AttributeError", "'method' object has no attribute '" + attr + "'");
                     } else if (obj instanceof PyModule mod) {
                         PyObject val = mod.attrs().get(attr);
+                        if (val == null && "__class__".equals(attr)) val = BuiltinFunctions.MODULE_TYPE;
                         if (val == null) throw PyErrors.error("AttributeError", "module '" + mod.name() + "' has no attribute '" + attr + "'");
                         stack.push(val);
                     } else if (obj instanceof PyDict dict) {
-                        stack.push(BuiltinMethodDispatcher.dictMethod(dict, attr));
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("dict") : BuiltinMethodDispatcher.dictMethod(dict, attr));
                     } else if (obj instanceof PyList list) {
-                        stack.push(BuiltinMethodDispatcher.listMethod(list, attr));
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("list") : BuiltinMethodDispatcher.listMethod(list, attr));
                     } else if (obj instanceof PySet set) {
-                        stack.push(BuiltinMethodDispatcher.setMethod(set, attr));
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("set") : BuiltinMethodDispatcher.setMethod(set, attr));
                     } else if (obj instanceof PyStr s) {
-                        stack.push(BuiltinMethodDispatcher.strMethod(s, attr));
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("str") : BuiltinMethodDispatcher.strMethod(s, attr));
                     } else if (obj instanceof PyJavaObject jo) {
                         stack.push(jo.getMember(attr));
                     } else if (obj instanceof PyJavaClass jc) {
@@ -1886,6 +1893,8 @@ public class Jython3Interpreter {
                         stack.push(jp.getMember(attr));
                     } else if (obj instanceof PySuper sup) {
                         stack.push(sup.getMethod(attr));
+                    } else if ("__class__".equals(attr)) {
+                        stack.push(BuiltinFunctions.typeOf(obj, builtinTypes));
                     } else {
                         throw PyErrors.error("AttributeError", "'" + typeName(obj) + "' object has no attribute '" + attr + "'");
                     }
@@ -2198,22 +2207,43 @@ public class Jython3Interpreter {
             if (v != null) return v;
             PyClass cls = inst.pyClass();
             PyObject cv = cls.lookupMember(attr);
-            if (cv == null && "__class__".equals(attr)) return cls;
+            if (cv == null && "__class__".equals(attr)) {
+                return (cls == BuiltinFunctions.OBJECT_CLASS) ? builtinTypes.get("object") : cls;
+            }
             if (cv instanceof PyFunction fn) return new PyBoundMethod(inst, fn);
             return cv;
         }
         if (obj instanceof PyClass cls) {
             PyObject cv = cls.lookupMember(attr);
-            return (cv == null && "__name__".equals(attr)) ? new PyStr(cls.name()) : cv;
+            if (cv != null) return cv;
+            if ("__name__".equals(attr)) return new PyStr(cls.name());
+            if ("__class__".equals(attr)) return builtinTypes.get("type");
+            return null;
         }
         if (obj instanceof PyException pe) return pe.pythonAttribute(attr);
         if (obj instanceof PyTraceback tb) return tb.pythonAttribute(attr);
         if (obj instanceof PyFrameInfo fr) return fr.pythonAttribute(attr);
         if (obj instanceof PyCodeInfo co) return co.pythonAttribute(attr);
-        if (obj instanceof PyFunction fn && "__name__".equals(attr)) return new PyStr(fn.name());
-        if (obj instanceof PyBuiltinFunction bf && "__name__".equals(attr)) return new PyStr(bf.name());
-        if (obj instanceof PyBoundMethod bm && "__name__".equals(attr)) return new PyStr(bm.fn().name());
-        if (obj instanceof PyModule mod) return mod.attrs().get(attr);
+        if (obj instanceof PyFunction fn) {
+            if ("__name__".equals(attr)) return new PyStr(fn.name());
+            if ("__class__".equals(attr)) return BuiltinFunctions.FUNCTION_TYPE;
+            return null;
+        }
+        if (obj instanceof PyBuiltinFunction bf) {
+            if ("__name__".equals(attr)) return new PyStr(bf.name());
+            if ("__class__".equals(attr)) return BuiltinFunctions.typeOf(bf, builtinTypes);
+            return null;
+        }
+        if (obj instanceof PyBoundMethod bm) {
+            if ("__name__".equals(attr)) return new PyStr(bm.fn().name());
+            if ("__class__".equals(attr)) return BuiltinFunctions.METHOD_TYPE;
+            return null;
+        }
+        if (obj instanceof PyModule mod) {
+            PyObject val = mod.attrs().get(attr);
+            return (val == null && "__class__".equals(attr)) ? BuiltinFunctions.MODULE_TYPE : val;
+        }
+        if ("__class__".equals(attr)) return BuiltinFunctions.typeOf(obj, builtinTypes);
         if (obj instanceof PyDict dict) return BuiltinMethodDispatcher.dictMethod(dict, attr);
         if (obj instanceof PyList list) return BuiltinMethodDispatcher.listMethod(list, attr);
         if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr);

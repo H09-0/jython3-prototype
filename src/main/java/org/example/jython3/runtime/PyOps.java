@@ -291,7 +291,7 @@ public final class PyOps {
             case PyClass c -> "type";
             case PyInstance inst -> inst.pyClass().name();
             case PyBoundMethod bm -> "method";
-            case PyBuiltinFunction bf -> "builtin_function_or_method";
+            case PyBuiltinFunction bf -> bf.isType() ? "type" : "builtin_function_or_method";
             case PyModule m -> "module";
             case PyIterator it -> "iterator";
             case PyException e -> e.typeName();

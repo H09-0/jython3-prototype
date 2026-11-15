@@ -28,12 +28,16 @@ import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInstance;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyIterator;
+import org.example.jython3.runtime.PyJavaClass;
+import org.example.jython3.runtime.PyJavaMethod;
 import org.example.jython3.runtime.PyJavaObject;
+import org.example.jython3.runtime.PyJavaPackage;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
+import org.example.jython3.runtime.PySlice;
 import org.example.jython3.runtime.PyStr;
 import org.example.jython3.runtime.PySuper;
 import org.example.jython3.runtime.PyTuple;
@@ -50,8 +54,39 @@ import static org.example.jython3.runtime.PyOps.typeName;
 public final class BuiltinFunctions {
     private BuiltinFunctions() {}
 
+    /** Marker class for bare {@code object()} instances; maps back to the interpreter's {@code object} type. */
+    public static final PyClass OBJECT_CLASS = new PyClass("object", null, Collections.emptyMap());
+
+    private static PyBuiltinFunction uninstantiableType(String name) {
+        return PyBuiltinFunction.builtinType(name, args -> {
+            throw PyErrors.error("TypeError", "cannot create '" + name + "' instances");
+        });
+    }
+
+    public static final PyBuiltinFunction NONE_TYPE = uninstantiableType("NoneType");
+    public static final PyBuiltinFunction FUNCTION_TYPE = uninstantiableType("function");
+    public static final PyBuiltinFunction BUILTIN_FN_TYPE = uninstantiableType("builtin_function_or_method");
+    public static final PyBuiltinFunction METHOD_TYPE = uninstantiableType("method");
+    public static final PyBuiltinFunction GENERATOR_TYPE = uninstantiableType("generator");
+    public static final PyBuiltinFunction ITERATOR_TYPE = uninstantiableType("iterator");
+    public static final PyBuiltinFunction MODULE_TYPE = uninstantiableType("module");
+    public static final PyBuiltinFunction SLICE_TYPE = uninstantiableType("slice");
+    public static final PyBuiltinFunction TRACEBACK_TYPE = uninstantiableType("traceback");
+    public static final PyBuiltinFunction FRAME_TYPE = uninstantiableType("frame");
+    public static final PyBuiltinFunction CODE_TYPE = uninstantiableType("code");
+
     public static void register(BiConsumer<String, PyObject> define, PyCaller caller,
                                 org.example.jython3.security.JavaAccessPolicy javaPolicy) {
+        register(define, caller, javaPolicy, new java.util.HashMap<>());
+    }
+
+    public static void register(BiConsumer<String, PyObject> define, PyCaller caller,
+                                org.example.jython3.security.JavaAccessPolicy javaPolicy,
+                                Map<String, PyBuiltinFunction> builtinTypes) {
+        BiConsumer<String, PyBuiltinFunction> defineType = (name, fn) -> {
+            builtinTypes.put(name, fn);
+            define.accept(name, fn);
+        };
         // len(obj)
         define.accept("len", new PyBuiltinFunction("len", args -> {
             checkArgCount("len", args, 1);
@@ -85,7 +120,8 @@ public final class BuiltinFunctions {
         }));
 
         // str(obj)
-        define.accept("str", new PyBuiltinFunction("str", args -> {
+        defineType.accept("str", PyBuiltinFunction.builtinType("str", args -> {
+            if (args.length == 0) return new PyStr("");
             checkArgCount("str", args, 1);
             if (args[0] instanceof PyException pe) {
                 return new PyStr(pe.message());
@@ -163,7 +199,7 @@ public final class BuiltinFunctions {
         }));
 
         // int(obj, base=10)
-        define.accept("int", new PyBuiltinFunction("int", (args, kwargs) -> {
+        defineType.accept("int", PyBuiltinFunction.builtinType("int", (args, kwargs) -> {
             if (args.length == 0) return new PyInt(0);
             if (args.length > 2) throw PyErrors.error("TypeError", "int() takes at most 2 arguments (" + args.length + " given)");
             if (args.length == 2 && kwargs.containsKey("base")) {
@@ -180,6 +216,7 @@ public final class BuiltinFunctions {
             }
             PyObject o = args[0];
             if (o instanceof PyInt i && base == 10) return i;
+            if (o instanceof BigInt bi && base == 10) return bi;
             if (o instanceof PyFloat f && base == 10) return new PyInt((int) f.value());
             if (o instanceof PyBool b && base == 10) return new PyInt(b.value() ? 1 : 0);
             if (o instanceof PyStr s) {
@@ -198,23 +235,29 @@ public final class BuiltinFunctions {
         }));
 
         // float(obj)
-        define.accept("float", new PyBuiltinFunction("float", args -> {
+        defineType.accept("float", PyBuiltinFunction.builtinType("float", args -> {
+            if (args.length == 0) return new PyFloat(0.0);
             checkArgCount("float", args, 1);
             return new PyFloat(toDouble(args[0]));
         }));
 
         // bool(obj)
-        define.accept("bool", new PyBuiltinFunction("bool", args -> {
+        defineType.accept("bool", PyBuiltinFunction.builtinType("bool", args -> {
+            if (args.length == 0) return PyBool.FALSE;
             checkArgCount("bool", args, 1);
             return PyBool.of(isTruthy(args[0]));
         }));
 
+        // object()
+        defineType.accept("object", PyBuiltinFunction.builtinType("object", args -> {
+            checkArgCount("object", args, 0);
+            return new PyInstance(OBJECT_CLASS);
+        }));
+
         // type(obj)
-        define.accept("type", new PyBuiltinFunction("type", args -> {
+        defineType.accept("type", PyBuiltinFunction.builtinType("type", args -> {
             checkArgCount("type", args, 1);
-            if (args[0] instanceof PyException pe) return pe.type();
-            if (args[0] instanceof PyInstance inst) return inst.pyClass();
-            return new PyStr("<class '" + typeName(args[0]) + "'>");
+            return typeOf(args[0], builtinTypes);
         }));
 
         // abs(x)
@@ -263,21 +306,21 @@ public final class BuiltinFunctions {
         }));
 
         // list(iterable?)
-        define.accept("list", new PyBuiltinFunction("list", args -> {
+        defineType.accept("list", PyBuiltinFunction.builtinType("list", args -> {
             if (args.length == 0) return new PyList(new ArrayList<>());
             checkArgCount("list", args, 1);
             return new PyList(collectIterable(args[0], javaPolicy));
         }));
 
         // set() / set(iterable) — elements keyed by PyKey (unhashable elements raise TypeError)
-        define.accept("set", new PyBuiltinFunction("set", args -> {
+        defineType.accept("set", PyBuiltinFunction.builtinType("set", args -> {
             if (args.length == 0) return new org.example.jython3.runtime.PySet();
             checkArgCount("set", args, 1);
             return new org.example.jython3.runtime.PySet(collectIterable(args[0], javaPolicy));
         }));
 
         // dict()
-        define.accept("dict", new PyBuiltinFunction("dict", args -> {
+        defineType.accept("dict", PyBuiltinFunction.builtinType("dict", args -> {
             if (args.length == 0) return new PyDict(new LinkedHashMap<>());
             checkArgCount("dict", args, 1);
             if (args[0] instanceof PyDict d) return new PyDict(new LinkedHashMap<>(d.map()));
@@ -411,14 +454,15 @@ public final class BuiltinFunctions {
         define.accept("filter", new PyBuiltinFunction("filter", args -> filter(caller, args)));
 
         // tuple([iterable])
-        define.accept("tuple", new PyBuiltinFunction("tuple", args -> {
+        defineType.accept("tuple", PyBuiltinFunction.builtinType("tuple", args -> {
             if (args.length == 0) return PyTuple.EMPTY;
             checkArgCount("tuple", args, 1);
             if (args[0] instanceof PyTuple t) return t;
             if (args[0] instanceof PyList list) return new PyTuple(list.items());
             if (args[0] instanceof PyStr s) return new PyTuple(s.toCodePointList());
             if (args[0] instanceof PyDict d) return new PyTuple(new ArrayList<>(d.map().keySet()));
-            throw PyErrors.error("TypeError", "'" + typeName(args[0]) + "' object is not iterable");
+            if (args[0] instanceof org.example.jython3.runtime.PySet s) return new PyTuple(new ArrayList<>(s.items()));
+            return new PyTuple(collectIterable(args[0], javaPolicy));
         }));
 
         // isinstance(obj, type_or_tuple)
@@ -489,9 +533,13 @@ public final class BuiltinFunctions {
             checkArgCount("hasattr", args, 2);
             if (!(args[1] instanceof PyStr s)) throw PyErrors.error("TypeError", "attribute name must be string");
             String name = s.value();
+            if ("__class__".equals(name) && !(args[0] instanceof PyJavaObject)
+                    && !(args[0] instanceof PyJavaClass) && !(args[0] instanceof PyJavaPackage)) {
+                return PyBool.TRUE;
+            }
             if (args[0] instanceof PyModule mod) return PyBool.of(mod.attrs().containsKey(name));
             if (args[0] instanceof PyDict d) return PyBool.of(d.map().containsKey(new PyStr(name)));
-            if (args[0] instanceof PyInstance inst) return PyBool.of(inst.hasField(name) || "__class__".equals(name));
+            if (args[0] instanceof PyInstance inst) return PyBool.of(inst.hasField(name));
             if (args[0] instanceof PyClass cls) return PyBool.of(cls.hasMember(name) || "__name__".equals(name));
             if (args[0] instanceof PyException pe) return PyBool.of(pe.pythonAttribute(name) != null);
             if (args[0] instanceof PyTraceback tb) return PyBool.of(tb.pythonAttribute(name) != null);
@@ -512,6 +560,9 @@ public final class BuiltinFunctions {
                 PyObject val = mod.attrs().get(name);
                 if (val != null) return val;
             } else if (args[0] instanceof PyInstance inst) {
+                if ("__class__".equals(name) && !inst.fields().containsKey(name) && !inst.pyClass().hasMember(name)) {
+                    return inst.pyClass() == OBJECT_CLASS ? builtinTypes.get("object") : inst.pyClass();
+                }
                 try {
                     return inst.getField(name);
                 } catch (InterpreterException ignored) {
@@ -539,6 +590,10 @@ public final class BuiltinFunctions {
                 return new PyStr(bf.name());
             } else if (args[0] instanceof PyBoundMethod bm && "__name__".equals(name)) {
                 return new PyStr(bm.fn().name());
+            }
+            if ("__class__".equals(name) && !(args[0] instanceof PyJavaObject)
+                    && !(args[0] instanceof PyJavaClass) && !(args[0] instanceof PyJavaPackage)) {
+                return typeOf(args[0], builtinTypes);
             }
             if (args.length == 3) return args[2];
             throw PyErrors.error("AttributeError", "object has no attribute '" + name + "'");
@@ -631,6 +686,40 @@ public final class BuiltinFunctions {
         return new PyList(result);
     }
 
+    /**
+     * Canonical Python type object for {@code obj} ({@code type(obj)} and {@code obj.__class__}).
+     */
+    public static PyObject typeOf(PyObject obj, Map<String, PyBuiltinFunction> builtinTypes) {
+        if (obj instanceof PyException pe) return pe.type();
+        if (obj instanceof PyInstance inst) {
+            PyClass cls = inst.pyClass();
+            return cls == OBJECT_CLASS ? builtinTypes.get("object") : cls;
+        }
+        if (obj instanceof PyClass) return builtinTypes.get("type");
+        if (obj instanceof PyBool) return builtinTypes.get("bool");
+        if (obj instanceof PyInt || obj instanceof BigInt) return builtinTypes.get("int");
+        if (obj instanceof PyFloat) return builtinTypes.get("float");
+        if (obj instanceof PyStr) return builtinTypes.get("str");
+        if (obj instanceof PyList) return builtinTypes.get("list");
+        if (obj instanceof PyDict) return builtinTypes.get("dict");
+        if (obj instanceof PyTuple) return builtinTypes.get("tuple");
+        if (obj instanceof org.example.jython3.runtime.PySet) return builtinTypes.get("set");
+        if (obj instanceof PyBuiltinFunction bf) {
+            return bf.isType() ? builtinTypes.get("type") : BUILTIN_FN_TYPE;
+        }
+        if (obj instanceof PyFunction) return FUNCTION_TYPE;
+        if (obj instanceof PyBoundMethod) return METHOD_TYPE;
+        if (obj instanceof PyNull) return NONE_TYPE;
+        if (obj instanceof PyGenerator) return GENERATOR_TYPE;
+        if (obj instanceof PyIterator) return ITERATOR_TYPE;
+        if (obj instanceof PyModule) return MODULE_TYPE;
+        if (obj instanceof PySlice) return SLICE_TYPE;
+        if (obj instanceof PyTraceback) return TRACEBACK_TYPE;
+        if (obj instanceof PyFrameInfo) return FRAME_TYPE;
+        if (obj instanceof PyCodeInfo) return CODE_TYPE;
+        return new PyStr("<class '" + typeName(obj) + "'>");
+    }
+
     private static boolean checkIsInstance(PyObject obj, PyObject typeArg) {
         // Tuple of types: isinstance(x, (A, B))
         if (typeArg instanceof PyTuple tuple) {
@@ -660,8 +749,8 @@ public final class BuiltinFunctions {
             return false;
         }
 
-        // Built-in types registered as PyBuiltinFunction constructors
-        if (typeArg instanceof PyBuiltinFunction bf) {
+        // Built-in type objects
+        if (typeArg instanceof PyBuiltinFunction bf && bf.isType()) {
             return switch (bf.name()) {
                 // In Python, bool is a subclass of int: isinstance(True, int) is True
                 case "int"    -> (obj instanceof PyInt || obj instanceof BigInt || obj instanceof PyBool);
@@ -673,6 +762,18 @@ public final class BuiltinFunctions {
                 case "tuple"  -> (obj instanceof PyTuple);
                 case "set"    -> (obj instanceof org.example.jython3.runtime.PySet);
                 case "object" -> true;
+                case "type"   -> (obj instanceof PyClass || (obj instanceof PyBuiltinFunction b && b.isType()));
+                case "NoneType" -> (obj instanceof PyNull);
+                case "function" -> (obj instanceof PyFunction);
+                case "builtin_function_or_method" -> (obj instanceof PyBuiltinFunction b && !b.isType());
+                case "method" -> (obj instanceof PyBoundMethod);
+                case "generator" -> (obj instanceof PyGenerator);
+                case "iterator" -> (obj instanceof PyIterator);
+                case "module" -> (obj instanceof PyModule);
+                case "slice" -> (obj instanceof PySlice);
+                case "traceback" -> (obj instanceof PyTraceback);
+                case "frame" -> (obj instanceof PyFrameInfo);
+                case "code" -> (obj instanceof PyCodeInfo);
                 default       -> false;
             };
         }
@@ -687,6 +788,9 @@ public final class BuiltinFunctions {
     }
 
     private static boolean checkIsSubclass(PyObject derived, PyObject target) {
+        if (!(derived instanceof PyClass || (derived instanceof PyBuiltinFunction bf && bf.isType()))) {
+            throw PyErrors.error("TypeError", "issubclass() arg 1 must be a class");
+        }
         // Tuple of targets: issubclass(C, (A, B))
         if (target instanceof PyTuple tuple) {
             for (PyObject item : tuple.items()) {
@@ -701,27 +805,27 @@ public final class BuiltinFunctions {
             return false;
         }
 
+        if (!(target instanceof PyClass || (target instanceof PyBuiltinFunction bt && bt.isType()))) {
+            throw PyErrors.error("TypeError",
+                    "issubclass() arg 2 must be a class, a tuple of classes, or a union");
+        }
+
         // User-defined classes
-        if (derived instanceof PyClass c1 && target instanceof PyClass c2) {
-            return c1.isSubclassOf(c2);
+        if (derived instanceof PyClass c1) {
+            if (target instanceof PyClass c2) return c1.isSubclassOf(c2);
+            PyBuiltinFunction b2 = (PyBuiltinFunction) target;
+            return "object".equals(b2.name());
         }
 
         // Built-in types
-        if (derived instanceof PyBuiltinFunction b1 && target instanceof PyBuiltinFunction b2) {
-            String dName = b1.name();
-            String tName = b2.name();
-            if (dName.equals(tName)) return true;
-            // In Python, bool is a subclass of int
-            if ("bool".equals(dName) && "int".equals(tName)) return true;
-            if ("object".equals(tName)) return true;
-            return false;
-        }
-
-        if (target instanceof PyBuiltinFunction b2 && "object".equals(b2.name())) {
-            return derived instanceof PyClass || derived instanceof PyBuiltinFunction;
-        }
-
-        throw PyErrors.error("TypeError",
-                "issubclass() arg 1 must be a class, and arg 2 must be a class, a tuple of classes, or a union");
+        PyBuiltinFunction b1 = (PyBuiltinFunction) derived;
+        if (target instanceof PyClass) return false;
+        PyBuiltinFunction b2 = (PyBuiltinFunction) target;
+        String dName = b1.name();
+        String tName = b2.name();
+        if (dName.equals(tName)) return true;
+        // In Python, bool is a subclass of int
+        if ("bool".equals(dName) && "int".equals(tName)) return true;
+        return "object".equals(tName);
     }
 }
