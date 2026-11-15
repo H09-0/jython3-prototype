@@ -14,6 +14,8 @@ import org.example.jython3.runtime.InterpreterException;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBoundMethod;
 import org.example.jython3.runtime.PyBuiltinFunction;
+import org.example.jython3.runtime.PyByteArray;
+import org.example.jython3.runtime.PyBytes;
 import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyClassMethod;
@@ -113,6 +115,8 @@ public final class BuiltinFunctions {
             if (o instanceof org.example.jython3.runtime.PySet set) return new PyInt(set.size());
             if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new PyInt(fs.size());
             if (o instanceof PyRange r) return PyInt.of(r.lenInt());
+            if (o instanceof PyBytes b) return PyInt.of(b.length());
+            if (o instanceof PyByteArray ba) return PyInt.of(ba.length());
             if (o instanceof PyInstance inst) {
                 if (inst.hasField("__len__")) {
                     PyObject lenMethod = inst.getField("__len__");
@@ -445,6 +449,17 @@ public final class BuiltinFunctions {
             return total;
         }));
 
+        // bytes([source[, encoding[, errors]]])
+        defineType.accept("bytes", PyBuiltinFunction.builtinType("bytes", args -> {
+            if (args.length == 0) return PyBytes.EMPTY;
+            return PyBytes.wrapOwned(buildBytesArray(args, javaPolicy, caller.executionLimits().maxStringLength()));
+        }));
+
+        // bytearray([source[, encoding[, errors]]])
+        defineType.accept("bytearray", PyBuiltinFunction.builtinType("bytearray", args -> {
+            if (args.length == 0) return new PyByteArray();
+            return new PyByteArray(buildBytesArray(args, javaPolicy, caller.executionLimits().maxStringLength()));
+        }));
         // list(iterable?)
         defineType.accept("list", PyBuiltinFunction.builtinType("list", args -> {
             if (args.length == 0) return new PyList(new ArrayList<>());
@@ -1113,6 +1128,8 @@ public final class BuiltinFunctions {
     private static PyIterator toIterator(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
         if (o instanceof PyIterator it) return it;
         if (o instanceof PyRange r) return r.iterator();
+        if (o instanceof PyBytes b) return b.iterator();
+        if (o instanceof PyByteArray ba) return ba.iterator();
         if (o instanceof PyList list) return new PyIterator(list.items(), 0);
         if (o instanceof PyTuple tuple) return new PyIterator(tuple.items(), 0);
         if (o instanceof org.example.jython3.runtime.PySet s) return new PyIterator(new ArrayList<>(s.items()), 0);
@@ -1245,6 +1262,10 @@ public final class BuiltinFunctions {
             Collections.addAll(names, "indices", "start", "step", "stop");
         } else if (o instanceof PyRange) {
             Collections.addAll(names, "count", "index", "start", "step", "stop");
+        } else if (o instanceof PyBytes) {
+            Collections.addAll(names, "count", "decode", "endswith", "find", "hex", "startswith");
+        } else if (o instanceof PyByteArray) {
+            Collections.addAll(names, "append", "clear", "copy", "count", "decode", "endswith", "extend", "find", "hex", "pop", "reverse", "startswith");
         } else if (o instanceof org.example.jython3.runtime.PyHostHandle hh) {
             names.addAll(hh.attrNames());
         } else if (o instanceof PyStr) {
@@ -1321,6 +1342,8 @@ public final class BuiltinFunctions {
         if (obj instanceof PyGenerator) return GENERATOR_TYPE;
         if (obj instanceof PyIterator) return ITERATOR_TYPE;
         if (obj instanceof PyRange) return builtinTypes.get("range");
+        if (obj instanceof PyBytes) return builtinTypes.get("bytes");
+        if (obj instanceof PyByteArray) return builtinTypes.get("bytearray");
         if (obj instanceof PyModule) return MODULE_TYPE;
         if (obj instanceof PySlice) return SLICE_TYPE;
         if (obj instanceof PyTraceback) return TRACEBACK_TYPE;
@@ -1401,6 +1424,8 @@ public final class BuiltinFunctions {
                 case "generator" -> (obj instanceof PyGenerator);
                 case "iterator" -> (obj instanceof PyIterator);
                 case "range" -> (obj instanceof PyRange);
+                case "bytes" -> (obj instanceof PyBytes);
+                case "bytearray" -> (obj instanceof PyByteArray);
                 case "module" -> (obj instanceof PyModule);
                 case "slice" -> (obj instanceof PySlice);
                 case "traceback" -> (obj instanceof PyTraceback);
@@ -1478,6 +1503,48 @@ public final class BuiltinFunctions {
             return "-" + prefix + val.negate().toString(radix);
         }
         return prefix + val.toString(radix);
+    }
+
+    private static byte[] buildBytesArray(PyObject[] args,
+                                          org.example.jython3.security.JavaAccessPolicy policy,
+                                          int maxLen) {
+        if (args.length > 3) {
+            throw PyErrors.error("TypeError", "bytes() takes at most 3 arguments (" + args.length + " given)");
+        }
+        PyObject src = args[0];
+        if (src instanceof PyStr s) {
+            if (args.length < 2) {
+                throw PyErrors.error("TypeError", "string argument without an encoding");
+            }
+            if (!(args[1] instanceof PyStr encStr)) {
+                throw PyErrors.error("TypeError", "encoding must be str, not " + typeName(args[1]));
+            }
+            byte[] out = s.value().getBytes(PyBytes.resolveCharset(encStr.value()));
+            if (out.length > maxLen) {
+                throw PyErrors.error("MemoryError", "bytes length exceeds limit (" + maxLen + ")");
+            }
+            return out;
+        }
+        if (args.length > 1) {
+            throw PyErrors.error("TypeError", "encoding without a string argument");
+        }
+        if (src instanceof PyInt || src instanceof PyBool || src instanceof BigInt) {
+            long n = toBigIntStrict(src, "bytes").longValueExact();
+            if (n < 0) throw PyErrors.error("ValueError", "negative count");
+            if (n > maxLen) throw PyErrors.error("MemoryError", "bytes count exceeds limit (" + maxLen + ")");
+            return new byte[(int) n];
+        }
+        if (src instanceof PyBytes b) return b.bytesUnsafe().clone();
+        if (src instanceof PyByteArray ba) return ba.copyBytes();
+        List<PyObject> items = collectIterable(src, policy);
+        if (items.size() > maxLen) {
+            throw PyErrors.error("MemoryError", "bytes length exceeds limit (" + maxLen + ")");
+        }
+        byte[] out = new byte[items.size()];
+        for (int i = 0; i < items.size(); i++) {
+            out[i] = (byte) PyBytes.extractByteValue(items.get(i));
+        }
+        return out;
     }
 
     private static String formatValue(PyObject val, String spec, int maxStrLen) {

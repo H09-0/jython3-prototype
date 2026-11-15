@@ -46,6 +46,26 @@ public final class ArithmeticOps {
             var items = new ArrayList<>(lt.items());
             items.addAll(rt.items());
             return new PyTuple(items);
+        } else if (l instanceof PyBytes lb && (r instanceof PyBytes || r instanceof PyByteArray)) {
+            byte[] a = lb.bytesUnsafe();
+            byte[] b = PyBytes.extractBuffer(r);
+            if (limits != null && (long) a.length + b.length > limits.maxStringLength()) {
+                throw PyErrors.error("MemoryError", "Bytes length exceeds maximum allowed limit: " + limits.maxStringLength());
+            }
+            byte[] out = new byte[a.length + b.length];
+            System.arraycopy(a, 0, out, 0, a.length);
+            System.arraycopy(b, 0, out, a.length, b.length);
+            return PyBytes.wrapOwned(out);
+        } else if (l instanceof PyByteArray lba && (r instanceof PyBytes || r instanceof PyByteArray)) {
+            byte[] a = lba.copyBytes();
+            byte[] b = PyBytes.extractBuffer(r);
+            if (limits != null && (long) a.length + b.length > limits.maxStringLength()) {
+                throw PyErrors.error("MemoryError", "ByteArray length exceeds maximum allowed limit: " + limits.maxStringLength());
+            }
+            byte[] out = new byte[a.length + b.length];
+            System.arraycopy(a, 0, out, 0, a.length);
+            System.arraycopy(b, 0, out, a.length, b.length);
+            return new PyByteArray(out);
         } else if (l instanceof PyTuple && !(r instanceof PyTuple)) {
             throw PyErrors.error("TypeError", "can only concatenate tuple (not \"" + typeName(r) + "\") to tuple");
         } else if (!(l instanceof PyTuple) && r instanceof PyTuple) {
@@ -320,6 +340,14 @@ public final class ArithmeticOps {
             var items = new ArrayList<PyObject>();
             for (long i = 0; i < count; i++) items.addAll(tt.items());
             return new PyTuple(items);
+        } else if (l instanceof PyBytes pb && (r instanceof PyInt || r instanceof BigInt)) {
+            return repeatBytes(pb.bytesUnsafe(), r, limits, true);
+        } else if ((l instanceof PyInt || l instanceof BigInt) && r instanceof PyBytes pb) {
+            return repeatBytes(pb.bytesUnsafe(), l, limits, true);
+        } else if (l instanceof PyByteArray pba && (r instanceof PyInt || r instanceof BigInt)) {
+            return repeatBytes(pba.copyBytes(), r, limits, false);
+        } else if ((l instanceof PyInt || l instanceof BigInt) && r instanceof PyByteArray pba) {
+            return repeatBytes(pba.copyBytes(), l, limits, false);
         } else if (l instanceof PyInt li && r instanceof PyInt ri) {
             long lv = li.value();
             long rv = ri.value();
@@ -524,6 +552,33 @@ public final class ArithmeticOps {
             return new PyFloat(lv - Math.floor(lv / rv) * rv);
         }
         throw PyErrors.error("TypeError", "unsupported operand types for %");
+    }
+
+    private static PyObject repeatBytes(byte[] src, PyObject countObj, ExecutionLimits limits, boolean immutable) {
+        long count;
+        if (countObj instanceof PyInt pi) count = pi.value();
+        else {
+            BigInteger bi = ((BigInt) countObj).value();
+            if (bi.signum() <= 0 || src.length == 0) count = 0;
+            else {
+                try { count = bi.intValueExact(); }
+                catch (ArithmeticException ae) {
+                    throw PyErrors.error("OverflowError", "Bytes length exceeds maximum allowed limit: " + limits.maxStringLength());
+                }
+            }
+        }
+        if (count <= 0 || src.length == 0) {
+            return immutable ? PyBytes.EMPTY : new PyByteArray();
+        }
+        long newLen = (long) src.length * count;
+        if (limits != null && newLen > limits.maxStringLength()) {
+            throw PyErrors.error("MemoryError", "Bytes length exceeds maximum allowed limit: " + limits.maxStringLength());
+        }
+        byte[] out = new byte[(int) newLen];
+        for (int c = 0; c < count; c++) {
+            System.arraycopy(src, 0, out, c * src.length, src.length);
+        }
+        return immutable ? PyBytes.wrapOwned(out) : new PyByteArray(out);
     }
 
     public static PyObject pow(PyObject rawL, PyObject rawR, ExecutionLimits limits) {

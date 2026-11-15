@@ -45,6 +45,8 @@ import org.example.jython3.runtime.ModuleLoader;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBoundMethod;
 import org.example.jython3.runtime.PyBuiltinFunction;
+import org.example.jython3.runtime.PyByteArray;
+import org.example.jython3.runtime.PyBytes;
 import org.example.jython3.runtime.PyCaller;
 import org.example.jython3.runtime.PyCell;
 import org.example.jython3.runtime.PyClass;
@@ -1709,6 +1711,8 @@ public class Jython3Interpreter implements AutoCloseable {
                         throw PyErrors.error("TypeError", "'tuple' object does not support item assignment");
                     } else if (container instanceof PyDict dict) {
                         dict.put(key, val);
+                    } else if (container instanceof PyByteArray ba) {
+                        ba.setAt(key, val);
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(container) + "' object does not support item assignment");
                     }
@@ -1826,8 +1830,19 @@ public class Jython3Interpreter implements AutoCloseable {
                         }
                         list.items().addAll(extra);
                         stack.push(list);
+                    } else if (l instanceof PyByteArray ba) {
+                        byte[] extra;
+                        if (r instanceof PyBytes || r instanceof PyByteArray) {
+                            extra = PyBytes.extractBuffer(r);
+                        } else {
+                            var items = BuiltinFunctions.collectIterable(r, javaAccessPolicy);
+                            extra = new byte[items.size()];
+                            for (int i = 0; i < items.size(); i++) extra[i] = (byte) PyBytes.extractByteValue(items.get(i));
+                        }
+                        ba.extend(extra, executionLimits.maxStringLength());
+                        stack.push(ba);
                     } else {
-                        stack.push(ArithmeticOps.add(l, r));
+                        stack.push(ArithmeticOps.add(l, r, executionLimits));
                     }
                 }
                 case INPLACE_SUBTRACT -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.inplaceSubtract(l, r)); }
@@ -2707,6 +2722,14 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push(r.slice(sl));
                     } else if (ctr instanceof PyRange r) {
                         stack.push(r.getAt(idx));
+                    } else if (ctr instanceof PyBytes b && idx instanceof PySlice sl) {
+                        stack.push(b.slice(sl));
+                    } else if (ctr instanceof PyBytes b) {
+                        stack.push(b.getAt(idx));
+                    } else if (ctr instanceof PyByteArray ba && idx instanceof PySlice sl) {
+                        stack.push(ba.slice(sl));
+                    } else if (ctr instanceof PyByteArray ba) {
+                        stack.push(ba.getAt(idx));
                     } else if (ctr instanceof PyInstance inst) {
                         PyObject getitem = inst.getField("__getitem__");
                         if (getitem != null) {
@@ -2754,6 +2777,8 @@ public class Jython3Interpreter implements AutoCloseable {
                     PyObject o = stack.pop();
                     if (o instanceof PyIterator iter) stack.push(iter);
                     else if (o instanceof PyRange r) stack.push(r.iterator());
+                    else if (o instanceof PyBytes b) stack.push(b.iterator());
+                    else if (o instanceof PyByteArray ba) stack.push(ba.iterator());
                     else if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0));
                     else if (o instanceof PyTuple tuple) stack.push(new PyIterator(tuple.items(), 0));
                     else if (o instanceof PyStr s) {
@@ -2889,6 +2914,19 @@ public class Jython3Interpreter implements AutoCloseable {
                     } else if (obj instanceof PyBuiltinFunction bf) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(bf.name()));
                         else if ("__class__".equals(attr)) stack.push(BuiltinFunctions.typeOf(bf, builtinTypes));
+                        else if (bf.isType() && "fromhex".equals(attr) && "bytes".equals(bf.name())) {
+                            stack.push(new PyBuiltinFunction("bytes.fromhex", a -> {
+                                PyOps.checkArgCount("fromhex", a, 1);
+                                if (!(a[0] instanceof PyStr hs)) throw PyErrors.error("TypeError", "fromhex() argument must be str");
+                                return PyBytes.wrapOwned(PyBytes.parseHex(hs.value()));
+                            }));
+                        } else if (bf.isType() && "fromhex".equals(attr) && "bytearray".equals(bf.name())) {
+                            stack.push(new PyBuiltinFunction("bytearray.fromhex", a -> {
+                                PyOps.checkArgCount("fromhex", a, 1);
+                                if (!(a[0] instanceof PyStr hs)) throw PyErrors.error("TypeError", "fromhex() argument must be str");
+                                return new PyByteArray(PyBytes.parseHex(hs.value()));
+                            }));
+                        }
                         else throw PyErrors.error("AttributeError", "'" + typeName(bf) + "' object has no attribute '" + attr + "'");
                     } else if (obj instanceof PyBoundMethod bm) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(bm.fn().name()));
@@ -2929,6 +2967,14 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push("__class__".equals(attr)
                                 ? BuiltinFunctions.typeOf(r, builtinTypes)
                                 : BuiltinMethodDispatcher.rangeAttr(r, attr));
+                    } else if (obj instanceof PyBytes b) {
+                        stack.push("__class__".equals(attr)
+                                ? BuiltinFunctions.typeOf(b, builtinTypes)
+                                : BuiltinMethodDispatcher.bytesMethod(b, attr));
+                    } else if (obj instanceof PyByteArray ba) {
+                        stack.push("__class__".equals(attr)
+                                ? BuiltinFunctions.typeOf(ba, builtinTypes)
+                                : BuiltinMethodDispatcher.byteArrayMethod(ba, attr));
                     } else if (obj instanceof PyHostHandle hh) {
                         if ("__class__".equals(attr)) {
                             stack.push(BuiltinFunctions.typeOf(hh, builtinTypes));

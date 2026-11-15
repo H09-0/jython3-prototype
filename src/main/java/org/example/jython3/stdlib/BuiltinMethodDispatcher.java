@@ -2,6 +2,8 @@ package org.example.jython3.stdlib;
 
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBuiltinFunction;
+import org.example.jython3.runtime.PyByteArray;
+import org.example.jython3.runtime.PyBytes;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyFrozenSet;
@@ -116,6 +118,12 @@ public final class BuiltinMethodDispatcher {
             case "isdigit" -> new PyBuiltinFunction("str.isdigit", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isDigit)));
             case "isalpha" -> new PyBuiltinFunction("str.isalpha", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isLetter)));
             case "isalnum" -> new PyBuiltinFunction("str.isalnum", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isLetterOrDigit)));
+            case "encode" -> new PyBuiltinFunction("str.encode", (args, kwargs) -> {
+                String enc = kwargs.containsKey("encoding") ? kwargs.get("encoding").toString()
+                        : (args.length >= 1 ? args[0].toString() : "utf-8");
+                var cs = PyBytes.resolveCharset(enc);
+                return PyBytes.wrapOwned(s.value().getBytes(cs));
+            });
             default -> throw PyErrors.error("AttributeError", "'str' object has no attribute '" + method + "'");
         };
     }
@@ -319,6 +327,119 @@ public final class BuiltinMethodDispatcher {
     private static PySet toSetView(PyObject obj, JavaAccessPolicy policy) {
         if (obj instanceof PySet s) return s;
         return new PySet(BuiltinFunctions.collectIterable(obj, policy));
+    }
+
+    public static PyObject bytesMethod(PyBytes b, String method) {
+        return switch (method) {
+            case "decode" -> new PyBuiltinFunction("bytes.decode", (args, kwargs) -> {
+                String enc = kwargs.containsKey("encoding") ? kwargs.get("encoding").toString()
+                        : (args.length >= 1 ? args[0].toString() : "utf-8");
+                String errs = kwargs.containsKey("errors") ? kwargs.get("errors").toString()
+                        : (args.length >= 2 ? args[1].toString() : "strict");
+                return new PyStr(b.decode(enc, errs));
+            });
+            case "hex" -> new PyBuiltinFunction("bytes.hex", args -> {
+                checkArgCount("bytes.hex", args, 0);
+                return new PyStr(b.toHex());
+            });
+            case "startswith" -> new PyBuiltinFunction("bytes.startswith", args -> {
+                checkArgCount("bytes.startswith", args, 1);
+                byte[] pre = PyBytes.extractBuffer(args[0]);
+                byte[] data = b.bytesUnsafe();
+                if (pre.length > data.length) return PyBool.FALSE;
+                for (int i = 0; i < pre.length; i++) if (data[i] != pre[i]) return PyBool.FALSE;
+                return PyBool.TRUE;
+            });
+            case "endswith" -> new PyBuiltinFunction("bytes.endswith", args -> {
+                checkArgCount("bytes.endswith", args, 1);
+                byte[] suf = PyBytes.extractBuffer(args[0]);
+                byte[] data = b.bytesUnsafe();
+                if (suf.length > data.length) return PyBool.FALSE;
+                int off = data.length - suf.length;
+                for (int i = 0; i < suf.length; i++) if (data[off + i] != suf[i]) return PyBool.FALSE;
+                return PyBool.TRUE;
+            });
+            case "find" -> new PyBuiltinFunction("bytes.find", args -> {
+                checkArgCount("bytes.find", args, 1);
+                return PyInt.of(PyBytes.indexOfBytes(b.bytesUnsafe(), PyBytes.extractBuffer(args[0])));
+            });
+            case "count" -> new PyBuiltinFunction("bytes.count", args -> {
+                checkArgCount("bytes.count", args, 1);
+                byte[] hay = b.bytesUnsafe();
+                if (args[0] instanceof PyInt || args[0] instanceof PyBool) {
+                    int needle = PyBytes.extractByteValue(args[0]);
+                    int cnt = 0;
+                    for (byte v : hay) if ((v & 0xFF) == needle) cnt++;
+                    return PyInt.of(cnt);
+                }
+                byte[] needle = PyBytes.extractBuffer(args[0]);
+                if (needle.length == 0) return PyInt.of(hay.length + 1);
+                int cnt = 0;
+                for (int i = 0; i <= hay.length - needle.length; ) {
+                    boolean match = true;
+                    for (int j = 0; j < needle.length; j++) {
+                        if (hay[i + j] != needle[j]) { match = false; break; }
+                    }
+                    if (match) { cnt++; i += needle.length; } else { i++; }
+                }
+                return PyInt.of(cnt);
+            });
+            default -> throw PyErrors.error("AttributeError", "'bytes' object has no attribute '" + method + "'");
+        };
+    }
+
+    public static PyObject byteArrayMethod(PyByteArray ba, String method) {
+        return switch (method) {
+            case "decode" -> new PyBuiltinFunction("bytearray.decode", (args, kwargs) -> {
+                String enc = kwargs.containsKey("encoding") ? kwargs.get("encoding").toString()
+                        : (args.length >= 1 ? args[0].toString() : "utf-8");
+                String errs = kwargs.containsKey("errors") ? kwargs.get("errors").toString()
+                        : (args.length >= 2 ? args[1].toString() : "strict");
+                return new PyStr(ba.decode(enc, errs));
+            });
+            case "hex" -> new PyBuiltinFunction("bytearray.hex", args -> {
+                checkArgCount("bytearray.hex", args, 0);
+                return new PyStr(ba.toHex());
+            });
+            case "append" -> new PyBuiltinFunction("bytearray.append", args -> {
+                checkArgCount("bytearray.append", args, 1);
+                ba.append(PyBytes.extractByteValue(args[0]));
+                return PyNull.INSTANCE;
+            });
+            case "extend" -> new PyBuiltinFunction("bytearray.extend", args -> {
+                checkArgCount("bytearray.extend", args, 1);
+                var ctx = org.example.jython3.security.ExecutionContext.current();
+                int maxLen = ctx != null ? ctx.limits().maxStringLength() : 100_000_000;
+                if (args[0] instanceof PyBytes || args[0] instanceof PyByteArray) {
+                    ba.extend(PyBytes.extractBuffer(args[0]), maxLen);
+                } else {
+                    var items = BuiltinFunctions.collectIterable(args[0], org.example.jython3.security.DenyAllPolicy.INSTANCE);
+                    byte[] more = new byte[items.size()];
+                    for (int i = 0; i < items.size(); i++) more[i] = (byte) PyBytes.extractByteValue(items.get(i));
+                    ba.extend(more, maxLen);
+                }
+                return PyNull.INSTANCE;
+            });
+            case "clear" -> new PyBuiltinFunction("bytearray.clear", args -> {
+                checkArgCount("bytearray.clear", args, 0);
+                ba.clear();
+                return PyNull.INSTANCE;
+            });
+            case "copy" -> new PyBuiltinFunction("bytearray.copy", args -> {
+                checkArgCount("bytearray.copy", args, 0);
+                return new PyByteArray(ba.copyBytes());
+            });
+            case "pop" -> new PyBuiltinFunction("bytearray.pop", args -> {
+                int idx = args.length >= 1 ? toInt(args[0]) : -1;
+                return PyInt.of(ba.pop(idx));
+            });
+            case "reverse" -> new PyBuiltinFunction("bytearray.reverse", args -> {
+                checkArgCount("bytearray.reverse", args, 0);
+                ba.reverse();
+                return PyNull.INSTANCE;
+            });
+            default -> bytesMethod(PyBytes.wrapOwned(ba.copyBytes()), method);
+        };
     }
 
     public static PyObject rangeAttr(PyRange r, String attr) {

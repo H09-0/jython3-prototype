@@ -34,8 +34,12 @@ public final class PyKey {
     }
 
     static int computeHash(PyObject obj) {
-        if (obj instanceof PyList || obj instanceof PyDict || obj instanceof PySet || obj instanceof PySlice) {
+        if (obj instanceof PyList || obj instanceof PyDict || obj instanceof PySet
+                || obj instanceof PySlice || obj instanceof PyByteArray) {
             throw PyErrors.error("TypeError", "unhashable type: '" + PyOps.typeName(obj) + "'");
+        }
+        if (obj instanceof PyBytes b) {
+            return b.hashCode();
         }
         if (obj instanceof PyFrozenSet fs) {
             return fs.hashCode();

@@ -155,6 +155,8 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
                 py[i] = PyBool.of(bv);
             } else if (v instanceof BigInt bi) {
                 py[i] = bi;
+            } else if (v instanceof org.example.jython3.runtime.PyBytes pb) {
+                py[i] = pb;
             } else if (v instanceof String s && !s.startsWith("@global:") && !s.startsWith("@nonlocal:")) {
                 py[i] = new PyStr(s);
             } else if (v instanceof CompiledCode cc) {

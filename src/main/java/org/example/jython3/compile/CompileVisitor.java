@@ -1102,6 +1102,78 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         b.emit(OpCode.LOAD_CONST, StringEscapes.unescape(unquoted));
         return null;
     }
+
+    @Override public Void visitBStr(Jython3Parser.BStrContext c) {
+        String raw = c.BSTRING().getText().substring(1); // drop b/B
+        String unquoted;
+        if (raw.startsWith("'''") || raw.startsWith("\"\"\"")) {
+            unquoted = raw.substring(3, raw.length() - 3);
+        } else {
+            unquoted = raw.substring(1, raw.length() - 1);
+        }
+        byte[] bytes = parseBytesLiteral(unquoted);
+        b.emit(OpCode.LOAD_CONST, org.example.jython3.runtime.PyBytes.wrapOwned(bytes));
+        return null;
+    }
+
+    private static byte[] parseBytesLiteral(String s) {
+        var out = new java.io.ByteArrayOutputStream(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c > 0x7F) {
+                throw new CompileError("bytes can only contain ASCII literal characters");
+            }
+            if (c == '\\' && i + 1 < s.length()) {
+                char next = s.charAt(++i);
+                switch (next) {
+                    case '\n' -> {}
+                    case '\r' -> { if (i + 1 < s.length() && s.charAt(i + 1) == '\n') i++; }
+                    case 'n' -> out.write('\n');
+                    case 't' -> out.write('\t');
+                    case 'r' -> out.write('\r');
+                    case 'a' -> out.write(0x07);
+                    case 'b' -> out.write('\b');
+                    case 'f' -> out.write('\f');
+                    case 'v' -> out.write(0x0B);
+                    case '\\' -> out.write('\\');
+                    case '\'' -> out.write('\'');
+                    case '"' -> out.write('"');
+                    case 'x' -> {
+                        if (i + 2 < s.length()) {
+                            int hi = Character.digit(s.charAt(i + 1), 16);
+                            int lo = Character.digit(s.charAt(i + 2), 16);
+                            if (hi >= 0 && lo >= 0) {
+                                out.write((hi << 4) | lo);
+                                i += 2;
+                                break;
+                            }
+                        }
+                        throw new CompileError("(unicode error) invalid \\x escape in bytes literal");
+                    }
+                    default -> {
+                        if (next >= '0' && next <= '7') {
+                            int val = next - '0';
+                            int count = 1;
+                            while (count < 3 && i + 1 < s.length()) {
+                                char oc = s.charAt(i + 1);
+                                if (oc < '0' || oc > '7') break;
+                                val = (val << 3) | (oc - '0');
+                                i++;
+                                count++;
+                            }
+                            out.write(val & 0xFF);
+                        } else {
+                            out.write('\\');
+                            out.write(next & 0xFF);
+                        }
+                    }
+                }
+            } else {
+                out.write(c);
+            }
+        }
+        return out.toByteArray();
+    }
     @Override public Void visitTrueLit(Jython3Parser.TrueLitContext c) { b.emit(OpCode.LOAD_CONST, Boolean.TRUE); return null; }
     @Override public Void visitFalseLit(Jython3Parser.FalseLitContext c) { b.emit(OpCode.LOAD_CONST, Boolean.FALSE); return null; }
     @Override public Void visitNoneLit(Jython3Parser.NoneLitContext c) { b.emit(OpCode.LOAD_CONST, null); return null; }

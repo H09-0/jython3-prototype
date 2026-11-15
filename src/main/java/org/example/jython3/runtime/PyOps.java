@@ -128,6 +128,8 @@ public final class PyOps {
 
     public static boolean isTruthy(PyObject v) {
         if (v instanceof PyRange r) return !r.isEmpty();
+        if (v instanceof PyBytes b) return b.length() > 0;
+        if (v instanceof PyByteArray ba) return ba.length() > 0;
         if (v instanceof PyBool b) return b.value();
         if (v instanceof PyInt i) return i.value() != 0;
         if (v instanceof BigInt bi) return !bi.value().equals(java.math.BigInteger.ZERO);
@@ -165,6 +167,8 @@ public final class PyOps {
         if (a instanceof PyFloat af && b instanceof BigInt bb) return equalsBigIntAndFloat(bb, af);
         if (a instanceof PyFloat af && b instanceof PyFloat bf) return af.value() == bf.value();
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().equals(bs.value());
+        if (a instanceof PyBytes ab) return ab.equals(b);
+        if (a instanceof PyByteArray aba) return aba.equals(b);
         if (a instanceof PyRange ra && b instanceof PyRange rb) return ra.equals(rb);
         if (isNumeric(a) && isNumeric(b)) return toDouble(a) == toDouble(b);
         if (a instanceof PyList al && b instanceof PyList bl) {
@@ -300,6 +304,12 @@ public final class PyOps {
         if (container instanceof PyRange r) {
             return r.contains(item);
         }
+        if (container instanceof PyBytes b) {
+            return b.contains(item);
+        }
+        if (container instanceof PyByteArray ba) {
+            return ba.contains(item);
+        }
         if (container instanceof PyStr s && item instanceof PyStr sub) return s.value().contains(sub.value());
         if (container instanceof PyDict dict) return dict.containsKey(item);
         throw PyErrors.error("TypeError", "argument of type '" + typeName(container) + "' is not iterable");
@@ -324,6 +334,8 @@ public final class PyOps {
         if (o instanceof PyModule) return "module";
         if (o instanceof PyIterator) return "iterator";
         if (o instanceof PyRange) return "range";
+        if (o instanceof PyBytes) return "bytes";
+        if (o instanceof PyByteArray) return "bytearray";
         if (o instanceof PyException e) return e.typeName();
         if (o instanceof PyCompiledCodeWrapper) return "code";
         if (o instanceof PyJavaClass jc) return "JavaClass(" + jc.clazz().getSimpleName() + ")";

@@ -323,6 +323,7 @@ expr
     | FLOAT                                                # Float
     | INT                                                  # Int
     | FSTRING                                              # FStr
+    | BSTRING                                              # BStr
     | RSTRING                                              # RStr
     | STRING                                               # Str
     | TRUE                                                 # TrueLit
@@ -483,6 +484,13 @@ INT    : '0' [xX] ('_'? [0-9a-fA-F])+
 FSTRING
     : [fF] '\'' ( ~['\\\r\n] | '\\' . )* '\''
     | [fF] '"'  ( ~["\\\r\n] | '\\' . )* '"'
+    ;
+
+BSTRING
+    : [bB] '\'\'\'' ( ~['\\] | '\\' . | '\'' ~['] | '\'\'' ~['] )* '\'\'\''
+    | [bB] '"""' ( ~["\\] | '\\' . | '"' ~["] | '""' ~["] )* '"""'
+    | [bB] '\'' (~['\\\r\n] | '\\' .)* '\''
+    | [bB] '"'  (~["\\\r\n] | '\\' .)* '"'
     ;
 
 RSTRING
