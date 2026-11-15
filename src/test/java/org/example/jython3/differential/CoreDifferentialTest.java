@@ -540,4 +540,31 @@ public class CoreDifferentialTest {
                 + "def flat():\n    yield from [1, 2]\n    yield from (i * 10 for i in range(2))\n"
                 + "print(list(flat()))");
     }
+
+    @Test
+    void testBytesRangeWalrusMroDunderAndStdlibDifferential() {
+        assertMatchesCPython("walrus_range_bytes",
+                "nums = [1_000, 0x10_00, 1.5e2]\n"
+                + "res = [y for x in range(1, 10, 2) if (y := x * 2) > 8]\n"
+                + "b = b'ab\\x00' + bytes([65, 66])\n"
+                + "ba = bytearray(b)\nba[0] = 90\n"
+                + "print(nums, res, len(range(10**18)), 10**17 in range(10**18), b.hex(), ba.decode('latin-1'))");
+        assertMatchesCPython("mro_descriptors_and_dunders",
+                "class A:\n    def f(self): return 'A'\n"
+                + "class B(A):\n    def f(self): return 'B>' + super().f()\n"
+                + "class C(A):\n    def f(self): return 'C>' + super().f()\n"
+                + "class D(B, C):\n    def f(self): return 'D>' + super().f()\n"
+                + "print(D().f())\n"
+                + "class Box:\n    def __init__(self, v): self._v = v\n"
+                + "    @property\n    def v(self): return self._v * 2\n"
+                + "    @v.setter\n    def v(self, x): self._v = x + 1\n"
+                + "    def __add__(self, o): return Box(self._v + o._v)\n"
+                + "    def __eq__(self, o): return self._v == o._v\n"
+                + "bx = Box(5)\nbx.v = 10\nprint(bx.v, (bx + Box(3)) == Box(14))");
+        assertMatchesCPython("itertools_math_datetime",
+                "import itertools, math, datetime\n"
+                + "print(list(itertools.islice(itertools.count(2, 3), 4)), math.gcd(24, 36), math.comb(5, 2))\n"
+                + "d = datetime.date(2026, 1, 10) + datetime.timedelta(days=5)\n"
+                + "print(d.isoformat(), f'{d.year:04d}-{d.month:02d}')");
+    }
 }

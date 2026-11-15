@@ -177,6 +177,9 @@ public final class PolicySanitizer {
             for (var entry : fn.closure().entrySet()) {
                 res.closure().put(entry.getKey(), sanitize(entry.getValue(), policy, targetSession, visited));
             }
+            for (var entry : fn.extraAttrs().entrySet()) {
+                res.setExtraAttr(entry.getKey(), sanitize(entry.getValue(), policy, targetSession, visited));
+            }
             return res;
         }
         if (val instanceof PyClass cls) {

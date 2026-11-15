@@ -114,7 +114,10 @@ public final class BuiltinFunctions {
             if (o instanceof PyDict d) return new PyInt(d.size());
             if (o instanceof org.example.jython3.runtime.PySet set) return new PyInt(set.size());
             if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new PyInt(fs.size());
-            if (o instanceof PyRange r) return PyInt.of(r.lenInt());
+            if (o instanceof PyRange r) {
+                java.math.BigInteger lb = r.lengthBig();
+                return lb.bitLength() < 32 ? PyInt.of(lb.intValue()) : new BigInt(lb);
+            }
             if (o instanceof PyBytes b) return PyInt.of(b.length());
             if (o instanceof PyByteArray ba) return PyInt.of(ba.length());
             if (o instanceof PyInstance inst) {

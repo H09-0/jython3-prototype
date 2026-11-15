@@ -327,6 +327,7 @@ public class Jython3Interpreter implements AutoCloseable {
     private Map<String, PyObject> currentGlobals;
     private FastStack stack;
     private Map<String, PyObject> currentLocals;
+    private Map<String, PyObject> closureCaptureLocals;
     private PyObject[] slotLocals;
     /** Set of variable names declared `global` in the current function frame. */
     private java.util.Set<String> globalCells;
@@ -1626,11 +1627,12 @@ public class Jython3Interpreter implements AutoCloseable {
                     else if (v instanceof Boolean b) stack.push(PyBool.of(b));
                     else if (v instanceof org.example.jython3.runtime.BigInt bi) stack.push(bi);
                     else if (v instanceof PyFunction f) {
+                        Map<String, PyObject> capSrc = closureCaptureLocals != null ? closureCaptureLocals : currentLocals;
                         if (("<lambda>".equals(f.name()) || "<genexpr>".equals(f.name()))
-                                && currentLocals != null && currentLocals != globals) {
+                                && capSrc != null && capSrc != globals) {
                             var refs = f.code() != null ? f.code().referencedNames() : java.util.Set.<String>of();
                             var captured = new HashMap<String, PyObject>(f.closure());
-                            for (Map.Entry<String, PyObject> e : currentLocals.entrySet()) {
+                            for (Map.Entry<String, PyObject> e : capSrc.entrySet()) {
                                 if (refs.contains(e.getKey())) {
                                     captured.put(e.getKey(), e.getValue());
                                 }
@@ -1749,6 +1751,8 @@ public class Jython3Interpreter implements AutoCloseable {
                         } else {
                             cls.setMember(attr, val);
                         }
+                    } else if (obj instanceof PyFunction fn) {
+                        fn.setExtraAttr(attr, val);
                     } else if (obj instanceof PyJavaObject jo) {
                         jo.setMember(attr, val);
                     } else if (obj instanceof PyJavaClass jc) {
@@ -2062,8 +2066,9 @@ public class Jython3Interpreter implements AutoCloseable {
                     if (fnObj instanceof PyFunction fn) {
                         var refs = fn.code() != null ? fn.code().referencedNames() : java.util.Set.<String>of();
                         // Capture only referenced enclosing locals (closure) except the function name itself
-                        if (currentLocals != null && currentLocals != globals) {
-                            for (Map.Entry<String, PyObject> e : currentLocals.entrySet()) {
+                        Map<String, PyObject> capSrc = closureCaptureLocals != null ? closureCaptureLocals : currentLocals;
+                        if (capSrc != null && capSrc != globals) {
+                            for (Map.Entry<String, PyObject> e : capSrc.entrySet()) {
                                 if (!e.getKey().equals(funcName) && refs.contains(e.getKey())) {
                                     fn.closure().putIfAbsent(e.getKey(), e.getValue());
                                 }
@@ -2105,11 +2110,14 @@ public class Jython3Interpreter implements AutoCloseable {
                     // belonging to the enclosing code must never be popped by the nested loop.
                     var classLocals = new HashMap<String, PyObject>();
                     var savedLocals = currentLocals;
+                    var savedCaptureLocals = closureCaptureLocals;
                     var savedSlots = slotLocals;
                     var savedStack = stack;
                     var savedExceptStack = exceptStack;
                     var savedActiveGen = activeGenerator;
                     try {
+                        closureCaptureLocals = (savedLocals != null && savedLocals != globals)
+                                ? savedLocals : savedCaptureLocals;
                         currentLocals = classLocals;
                         slotLocals = null;
                         stack = new FastStack();
@@ -2119,6 +2127,7 @@ public class Jython3Interpreter implements AutoCloseable {
                     } finally {
                         activeGenerator = savedActiveGen;
                         currentLocals = savedLocals;
+                        closureCaptureLocals = savedCaptureLocals;
                         slotLocals = savedSlots;
                         stack = savedStack;
                         exceptStack = savedExceptStack;
@@ -2993,7 +3002,11 @@ public class Jython3Interpreter implements AutoCloseable {
                     } else if (obj instanceof PyFunction fn) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(fn.name()));
                         else if ("__class__".equals(attr)) stack.push(BuiltinFunctions.FUNCTION_TYPE);
-                        else throw PyErrors.error("AttributeError", "'function' object has no attribute '" + attr + "'");
+                        else {
+                            PyObject extra = fn.getExtraAttr(attr);
+                            if (extra != null) stack.push(extra);
+                            else throw PyErrors.error("AttributeError", "'function' object has no attribute '" + attr + "'");
+                        }
                     } else if (obj instanceof PyBuiltinFunction bf) {
                         if ("__name__".equals(attr)) stack.push(new PyStr(bf.name()));
                         else if ("__class__".equals(attr)) stack.push(BuiltinFunctions.typeOf(bf, builtinTypes));
@@ -3430,7 +3443,7 @@ public class Jython3Interpreter implements AutoCloseable {
         if (obj instanceof PyFunction fn) {
             if ("__name__".equals(attr)) return new PyStr(fn.name());
             if ("__class__".equals(attr)) return BuiltinFunctions.FUNCTION_TYPE;
-            return null;
+            return fn.getExtraAttr(attr);
         }
         if (obj instanceof PyBuiltinFunction bf) {
             if ("__name__".equals(attr)) return new PyStr(bf.name());
@@ -3512,6 +3525,25 @@ public class Jython3Interpreter implements AutoCloseable {
         }
         if (callable instanceof PyJavaMethod jm) {
             return jm.invoke(posArgs);
+        }
+        if (callable instanceof PyClass cls) {
+            if (cls.isExceptionType()) {
+                return exceptionValue(cls, posArgs);
+            }
+            var inst = new PyInstance(cls);
+            PyObject initObj = cls.lookupMember("__init__");
+            if (initObj instanceof PyFunction initFn) {
+                var initArgs = new PyObject[posArgs.length + 1];
+                initArgs[0] = inst;
+                System.arraycopy(posArgs, 0, initArgs, 1, posArgs.length);
+                callPyCallableKw(initFn, initArgs, kwNames, kwValues);
+            } else if (initObj instanceof PyBuiltinFunction initBf) {
+                var initArgs = new PyObject[posArgs.length + 1];
+                initArgs[0] = inst;
+                System.arraycopy(posArgs, 0, initArgs, 1, posArgs.length);
+                callPyCallableKw(initBf, initArgs, kwNames, kwValues);
+            }
+            return inst;
         }
         if (callable instanceof PyInstance inst) {
             PyObject callMember = inst.pyClass().lookupMember("__call__");

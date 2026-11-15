@@ -40,6 +40,7 @@ public final class PyFunction implements PyObject {
     private final String kwargsParam;
     private final CompiledCode code;
     private final Map<String, PyObject> closure;
+    private Map<String, PyObject> attrs;
 
     /** Simple constructor — no defaults, no *args/**kwargs (backward-compat). */
     public PyFunction(String name, List<String> params, CompiledCode code) {
@@ -76,6 +77,19 @@ public final class PyFunction implements PyObject {
     public String kwargsParam()   { return kwargsParam; }
     public CompiledCode code()    { return code; }
     public Map<String, PyObject> closure() { return closure; }
+
+    public PyObject getExtraAttr(String key) {
+        return attrs != null ? attrs.get(key) : null;
+    }
+
+    public void setExtraAttr(String key, PyObject val) {
+        if (attrs == null) attrs = new HashMap<>(4);
+        attrs.put(key, val);
+    }
+
+    public Map<String, PyObject> extraAttrs() {
+        return attrs != null ? attrs : Collections.emptyMap();
+    }
 
     /** True if this function uses any advanced signature feature. */
     public boolean hasAdvancedSignature() {

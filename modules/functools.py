@@ -47,3 +47,27 @@ def lru_cache(maxsize=128):
 
         return wrapper
     return decorator
+
+
+def wraps(wrapped):
+    def decorator(wrapper):
+        try:
+            wrapper.__wrapped__ = wrapped
+        except Exception:
+            pass
+        return wrapper
+    return decorator
+
+
+def cmp_to_key(mycmp):
+    class K:
+        def __init__(self, obj):
+            self.obj = obj
+
+        def __lt__(self, other):
+            return mycmp(self.obj, other.obj) < 0
+
+        def __eq__(self, other):
+            return mycmp(self.obj, other.obj) == 0
+
+    return K
