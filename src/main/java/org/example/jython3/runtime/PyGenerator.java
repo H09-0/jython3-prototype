@@ -94,6 +94,10 @@ public final class PyGenerator implements PyObject {
      * allocates the initial frame stacks on first entry, and transitions to {@link State#RUNNING}.
      */
     public synchronized void beginStep(long interpreterId) {
+        beginSend(interpreterId, PyNull.INSTANCE);
+    }
+
+    public synchronized void beginSend(long interpreterId, PyObject sendVal) {
         if (ownerInterpreterId != -1L && ownerInterpreterId != interpreterId) {
             throw PyErrors.error("RuntimeError", "generator cannot be resumed on a different interpreter");
         }
@@ -101,6 +105,9 @@ public final class PyGenerator implements PyObject {
             case RUNNING -> throw PyErrors.error("ValueError", "generator already executing");
             case COMPLETED, FAILED -> throw PyErrors.error("StopIteration", "");
             case CREATED -> {
+                if (sendVal != null && !(sendVal instanceof PyNull)) {
+                    throw PyErrors.error("TypeError", "can't send non-None value to a just-started generator");
+                }
                 if (creationContext != null && creationContext.isCancelled()) {
                     fail();
                     throw PyErrors.error("KeyboardInterrupt", "Execution cancelled by host");
@@ -119,6 +126,56 @@ public final class PyGenerator implements PyObject {
                 state = State.RUNNING;
             }
         }
+    }
+
+    public synchronized State beginThrow(long interpreterId) {
+        if (ownerInterpreterId != -1L && ownerInterpreterId != interpreterId) {
+            throw PyErrors.error("RuntimeError", "generator cannot be resumed on a different interpreter");
+        }
+        switch (state) {
+            case RUNNING -> throw PyErrors.error("ValueError", "generator already executing");
+            case CREATED -> {
+                fail();
+                return State.CREATED;
+            }
+            case COMPLETED -> {
+                return State.COMPLETED;
+            }
+            case FAILED -> {
+                return State.FAILED;
+            }
+            case SUSPENDED -> {
+                if (creationContext != null && creationContext.isCancelled()) {
+                    fail();
+                    throw PyErrors.error("KeyboardInterrupt", "Execution cancelled by host");
+                }
+                state = State.RUNNING;
+                return State.SUSPENDED;
+            }
+        }
+        return state;
+    }
+
+    /** Returns {@code true} if the generator was {@code SUSPENDED} and needs {@code GeneratorExit} unwinding. */
+    public synchronized boolean beginClose(long interpreterId) {
+        if (ownerInterpreterId != -1L && ownerInterpreterId != interpreterId) {
+            throw PyErrors.error("RuntimeError", "generator cannot be resumed on a different interpreter");
+        }
+        switch (state) {
+            case RUNNING -> throw PyErrors.error("ValueError", "generator already executing");
+            case CREATED -> {
+                complete();
+                return false;
+            }
+            case COMPLETED, FAILED -> {
+                return false;
+            }
+            case SUSPENDED -> {
+                state = State.RUNNING;
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Saves suspended frame state at {@code YIELD_VALUE} and transitions to {@link State#SUSPENDED}. */
@@ -164,11 +221,34 @@ public final class PyGenerator implements PyObject {
 
     /** Advances this generator lazily to the next yielded value or raises {@code StopIteration}. */
     public PyObject next() {
+        return send(PyNull.INSTANCE);
+    }
+
+    /** Resumes this generator, sending {@code value} as the result of the suspended {@code yield}. */
+    public PyObject send(PyObject value) {
         PyCaller caller = PyCaller.CURRENT.get();
         if (caller == null) {
             throw PyErrors.error("RuntimeError", "cannot advance generator outside active interpreter");
         }
-        return caller.stepGenerator(this);
+        return caller.sendGenerator(this, value);
+    }
+
+    /** Injects an exception at the suspended {@code yield} point. */
+    public PyObject throwException(PyObject[] args) {
+        PyCaller caller = PyCaller.CURRENT.get();
+        if (caller == null) {
+            throw PyErrors.error("RuntimeError", "cannot throw into generator outside active interpreter");
+        }
+        return caller.throwGenerator(this, args);
+    }
+
+    /** Raises {@code GeneratorExit} at the suspended {@code yield} point and closes the generator. */
+    public PyObject close() {
+        PyCaller caller = PyCaller.CURRENT.get();
+        if (caller == null) {
+            throw PyErrors.error("RuntimeError", "cannot close generator outside active interpreter");
+        }
+        return caller.closeGenerator(this);
     }
 
     @Override

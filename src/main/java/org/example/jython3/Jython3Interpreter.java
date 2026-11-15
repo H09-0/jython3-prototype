@@ -377,7 +377,19 @@ public class Jython3Interpreter {
             }
 
             @Override public PyObject stepGenerator(PyGenerator gen) {
-                return Jython3Interpreter.this.stepGenerator(gen);
+                return Jython3Interpreter.this.sendGenerator(gen, PyNull.INSTANCE);
+            }
+
+            @Override public PyObject sendGenerator(PyGenerator gen, PyObject value) {
+                return Jython3Interpreter.this.sendGenerator(gen, value);
+            }
+
+            @Override public PyObject throwGenerator(PyGenerator gen, PyObject[] args) {
+                return Jython3Interpreter.this.throwGenerator(gen, args);
+            }
+
+            @Override public PyObject closeGenerator(PyGenerator gen) {
+                return Jython3Interpreter.this.closeGenerator(gen);
             }
 
             @Override public PyObject resolveZeroArgSuper() {
@@ -855,7 +867,115 @@ public class Jython3Interpreter {
      * next {@code YIELD_VALUE}, completion ({@code StopIteration}), or exception.
      */
     private PyObject stepGenerator(PyGenerator gen) {
-        gen.beginStep(interpreterId);
+        return sendGenerator(gen, PyNull.INSTANCE);
+    }
+
+    private PyObject sendGenerator(PyGenerator gen, PyObject sendValue) {
+        PyGenerator.State prevState = gen.state();
+        gen.beginSend(interpreterId, sendValue);
+        if (prevState == PyGenerator.State.SUSPENDED) {
+            gen.operandStack().push(sendValue != null ? sendValue : PyNull.INSTANCE);
+        }
+        return executeGeneratorStep(gen, gen.pc(), null);
+    }
+
+    private PyObject throwGenerator(PyGenerator gen, PyObject[] args) {
+        InterpreterException thrown = buildGeneratorThrowException(args);
+        return throwGeneratorException(gen, thrown);
+    }
+
+    private PyObject throwGeneratorException(PyGenerator gen, InterpreterException thrown) {
+        PyGenerator.State prevState = gen.beginThrow(interpreterId);
+        if (prevState != PyGenerator.State.SUSPENDED) {
+            throw thrown;
+        }
+        int[] gbc = gen.code().bytecode();
+        int gpc = gen.pc();
+        if (gpc < gbc.length && OP_VALUES[gbc[gpc] >>> 16] == OpCode.YIELD_FROM) {
+            PyObject sub = gen.operandStack().peek();
+            if (sub instanceof PyGenerator subGen) {
+                try {
+                    PyObject y = throwGeneratorException(subGen, thrown);
+                    gen.suspendAt(gpc, gen.operandStack(), gen.locals(), gen.exceptHandlers(),
+                            gen.activeExceptions(), gen.globalCells(), gen.moduleGlobals(), gen.line());
+                    return y;
+                } catch (InterpreterException subErr) {
+                    gen.operandStack().pop();
+                    if ("StopIteration".equals(subErr.typeName())) {
+                        PyObject retVal = (subErr.value() instanceof PyException pe && !pe.args().isEmpty())
+                                ? pe.args().get(0) : PyNull.INSTANCE;
+                        gen.operandStack().push(retVal);
+                        return executeGeneratorStep(gen, gbc[gpc] & 0xFFFF, null);
+                    }
+                    return executeGeneratorStep(gen, gpc, subErr);
+                }
+            }
+            gen.operandStack().pop();
+        }
+        return executeGeneratorStep(gen, gpc, thrown);
+    }
+
+    private PyObject closeGenerator(PyGenerator gen) {
+        if (!gen.beginClose(interpreterId)) {
+            return PyNull.INSTANCE;
+        }
+        InterpreterException genExit = PyErrors.errorValue(
+                new PyException(exceptionTypes.type("GeneratorExit"), List.of()));
+        int[] gbc = gen.code().bytecode();
+        int gpc = gen.pc();
+        InterpreterException toInject = genExit;
+        if (gpc < gbc.length && OP_VALUES[gbc[gpc] >>> 16] == OpCode.YIELD_FROM) {
+            PyObject sub = gen.operandStack().pop();
+            if (sub instanceof PyGenerator subGen) {
+                try {
+                    closeGenerator(subGen);
+                } catch (InterpreterException closeErr) {
+                    toInject = closeErr;
+                }
+            }
+        }
+        try {
+            executeGeneratorStep(gen, gpc, toInject);
+            gen.fail();
+            throw PyErrors.error("RuntimeError", "generator ignored GeneratorExit");
+        } catch (InterpreterException ie) {
+            if ("StopIteration".equals(ie.typeName()) || "GeneratorExit".equals(ie.typeName())) {
+                gen.complete();
+                return PyNull.INSTANCE;
+            }
+            gen.fail();
+            throw ie;
+        }
+    }
+
+    private InterpreterException buildGeneratorThrowException(PyObject[] args) {
+        if (args.length == 0 || args.length > 3) {
+            throw PyErrors.error("TypeError", "throw() takes 1 to 3 arguments");
+        }
+        PyObject typeOrExc = args[0];
+        PyObject valArg = args.length >= 2 ? args[1] : PyNull.INSTANCE;
+        if (typeOrExc instanceof PyException pe) {
+            if (!(valArg instanceof PyNull)) {
+                throw PyErrors.error("TypeError", "instance exception may not have a separate value");
+            }
+            return PyErrors.errorValue(pe);
+        }
+        if (typeOrExc instanceof PyClass cls && cls.isExceptionType()) {
+            if (valArg instanceof PyNull) {
+                return PyErrors.errorValue(new PyException(cls, List.of()));
+            }
+            if (valArg instanceof PyException pe && pe.type().isSubclassOf(cls)) {
+                return PyErrors.errorValue(pe);
+            }
+            if (valArg instanceof PyTuple tuple) {
+                return PyErrors.errorValue(new PyException(cls, tuple.items()));
+            }
+            return PyErrors.errorValue(new PyException(cls, List.of(valArg)));
+        }
+        throw PyErrors.error("TypeError", "exceptions must derive from BaseException");
+    }
+
+    private PyObject executeGeneratorStep(PyGenerator gen, int resumePc, InterpreterException pendingThrow) {
         if (callDepth() >= MAX_CALL_DEPTH) {
             gen.fail();
             throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -902,7 +1022,7 @@ public class Jython3Interpreter {
             currentFunc = gen.fn().name();
             currentFunction = gen.fn();
             activeGenerator = gen;
-            return runAt(gen.code(), gen.pc());
+            return runAt(gen.code(), resumePc, pendingThrow);
         } catch (StackOverflowError overflow) {
             if (gen.state() == PyGenerator.State.RUNNING) gen.fail();
             throw PyErrors.error("RecursionError", "maximum recursion depth exceeded (host stack exhausted)");
@@ -984,14 +1104,18 @@ public class Jython3Interpreter {
     // ─── Stack‑machine execution ──────────────────────────────────────────
 
     private void run(CompiledCode code) throws InterpreterException {
-        runAt(code, 0);
+        runAt(code, 0, null);
     }
 
-    private PyObject runAt(CompiledCode code, int initialPc) throws InterpreterException {
+    private PyObject runAt(CompiledCode code, int initialPc, InterpreterException pendingThrow) throws InterpreterException {
         int[] bc = code.bytecode();
         Object[] pool = code.constPool();
         PyObject[] pyPool = code.pyConstPool();
         int pc = initialPc;
+        if (pendingThrow != null && initialPc > 0) {
+            int errLine = code.lineAt(initialPc - 1);
+            if (errLine > 0) currentLine = errLine;
+        }
         // Frames below this depth belong to an enclosing run() invocation (re-entrant
         // calls from callPyCallableKw: __init__, __enter__/__exit__, builtins calling back
         // into Python). This loop must never return into, or unwind through, them.
@@ -1007,7 +1131,13 @@ public class Jython3Interpreter {
             int line = code.lineAt(pc);
             if (line > 0) currentLine = line;
 
-            try { switch (op) {
+            try {
+            if (pendingThrow != null) {
+                InterpreterException toThrow = pendingThrow;
+                pendingThrow = null;
+                throw toThrow;
+            }
+            switch (op) {
                 case LOAD_CONST -> {
                     if (ai == NO_ARG) { stack.push(PyNull.INSTANCE); break; }
                     PyObject preboxed = pyPool[ai];
@@ -1789,6 +1919,52 @@ public class Jython3Interpreter {
                     }
                     throw PyErrors.error("SyntaxError", "'yield' outside function");
                 }
+                case YIELD_FROM -> {
+                    if (activeGenerator == null || callStack.size() != baseDepth) {
+                        throw PyErrors.error("SyntaxError", "'yield' outside function");
+                    }
+                    PyObject sentVal = stack.pop();
+                    PyObject sub = stack.peek();
+                    if (sub instanceof PyGenerator subGen) {
+                        try {
+                            PyObject y = sendGenerator(subGen, sentVal);
+                            activeGenerator.suspendAt(pc, stack, currentLocals, exceptStack,
+                                    activeExceptions, globalCells, currentGlobals, currentLine);
+                            return y;
+                        } catch (InterpreterException ie) {
+                            stack.pop(); // pop exhausted or failed subGen
+                            if ("StopIteration".equals(ie.typeName())) {
+                                PyObject retVal = (ie.value() instanceof PyException pe && !pe.args().isEmpty())
+                                        ? pe.args().get(0) : PyNull.INSTANCE;
+                                stack.push(retVal);
+                                pc = ai;
+                                continue;
+                            }
+                            throw ie;
+                        }
+                    } else if (sub instanceof PyIterator subIter) {
+                        if (!(sentVal instanceof PyNull)) {
+                            throw PyErrors.error("TypeError", "can't send non-None value to a non-generator iterator");
+                        }
+                        try {
+                            if (subIter.hasNext()) {
+                                PyObject y = subIter.next();
+                                activeGenerator.suspendAt(pc, stack, currentLocals, exceptStack,
+                                        activeExceptions, globalCells, currentGlobals, currentLine);
+                                return y;
+                            }
+                        } catch (InterpreterException ie) {
+                            stack.pop();
+                            throw ie;
+                        }
+                        stack.pop(); // pop exhausted subIter
+                        stack.push(PyNull.INSTANCE);
+                        pc = ai;
+                        continue;
+                    } else {
+                        throw PyErrors.error("TypeError", "yield from requires an iterator");
+                    }
+                }
                 case RETURN_VALUE -> {
                     PyObject rv = stack.pop();
                     if (callStack.size() <= baseDepth) {
@@ -2121,9 +2297,10 @@ public class Jython3Interpreter {
                         stack.push(jp.getMember(attr));
                     } else if (obj instanceof PySuper sup) {
                         stack.push(sup.getMethod(attr));
-                    } else if (obj instanceof PyGenerator && ("send".equals(attr) || "throw".equals(attr) || "close".equals(attr))) {
-                        throw PyErrors.error("NotImplementedError",
-                                "generator." + attr + "() is not supported by eager generator implementation");
+                    } else if (obj instanceof PyGenerator gen) {
+                        stack.push("__class__".equals(attr)
+                                ? BuiltinFunctions.typeOf(gen, builtinTypes)
+                                : BuiltinMethodDispatcher.generatorMethod(gen, attr));
                     } else if ("__class__".equals(attr)) {
                         stack.push(BuiltinFunctions.typeOf(obj, builtinTypes));
                     } else {
@@ -2490,6 +2667,7 @@ public class Jython3Interpreter {
         if (obj instanceof PyList list) return BuiltinMethodDispatcher.listMethod(list, attr);
         if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy);
         if (obj instanceof PyFrozenSet fs) return BuiltinMethodDispatcher.frozenSetMethod(fs, attr, javaAccessPolicy);
+        if (obj instanceof PyGenerator gen) return BuiltinMethodDispatcher.generatorMethod(gen, attr);
         if (obj instanceof PyStr s)     return BuiltinMethodDispatcher.strMethod(s, attr);
         return null;
     }

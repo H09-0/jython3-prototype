@@ -96,14 +96,18 @@ class GeneratorAndFrameAuditTest {
     }
 
     @Test
-    @DisplayName("Generator send/throw/close are explicitly rejected with NotImplementedError")
-    void generatorSendThrowCloseRejected() {
+    @DisplayName("Generator send/throw/close work cleanly across suspended frames")
+    void generatorSendThrowCloseSupported() {
         var interp = Jython3Interpreter.trusted();
-        interp.eval("def g():\n    yield 1");
-        for (String call : new String[]{"g().send(1)", "g().throw(ValueError)", "g().close()"}) {
-            var e = assertThrows(InterpreterException.class, () -> interp.eval(call), call);
-            assertEquals("NotImplementedError", e.typeName(), call);
-        }
+        interp.eval("""
+            def echo():
+                v = yield 1
+                yield v + 10
+            g = echo()
+            assert next(g) == 1
+            assert g.send(5) == 15
+            g.close()
+            """);
     }
 
     @Test

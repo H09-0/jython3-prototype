@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **PEP 380 `yield from` & Generator `.send()` / `.throw()` / `.close()` (`OpCode.YIELD_FROM`, `Jython3.g4`, `PyGenerator`, `Jython3Interpreter`)**:
+  - Added `yield` expressions (`x = yield y`, `(yield y) + 1`) and `yield from expr` delegation across iterables and sub-generators (`YIELD_FROM`), forwarding `.send()`, `.throw()`, `.close()`, and capturing sub-generator `return` values.
+  - Implemented `generator.send(val)`, `generator.throw(exc_type[, val])`, and `generator.close()` (`GeneratorExit` unwinding + `RuntimeError: generator ignored GeneratorExit`), with full `BytecodeValidator` and CPython differential verification (`GeneratorControlAndYieldFromTest`).
 - **Set Bitwise Operators, Partial Ordering & `frozenset` (`PyFrozenSet`, `ArithmeticOps`, `PyOps`, `BuiltinMethodDispatcher`)**:
   - Added immutable, order-independently hashable `PyFrozenSet` and the `frozenset([iterable])` built-in type (usable as `dict` keys and `set` elements, `isinstance`/`type`/`len`/`iter`/`dir`).
   - Added binary `|`, `&`, `-`, `^` (preserving left operand's `set`/`frozenset` type), compound `|=`, `&=`, `-=`, `^=`, partial-order subset/superset comparisons (`<`, `<=`, `>`, `>=`), cross-type `{1, 2} == frozenset([1.0, 2])` equality, and `symmetric_difference`, `issubset`, `issuperset`, `isdisjoint` on both `set` and `frozenset` (`SetOperatorsAndFrozenSetTest`, CPython differential tests).

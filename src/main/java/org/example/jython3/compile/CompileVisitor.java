@@ -294,7 +294,11 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitAssign_stmt(Jython3Parser.Assign_stmtContext c) {
-        emitRhsTuple(c.rhs_tuple());
+        if (c.yield_expr() != null) {
+            visitYield_expr(c.yield_expr());
+        } else {
+            emitRhsTuple(c.rhs_tuple());
+        }
         var targetLists = c.target_list();
         for (int i = 0; i < targetLists.size(); i++) {
             if (i < targetLists.size() - 1) {
@@ -408,8 +412,23 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitYield_stmt(Jython3Parser.Yield_stmtContext c) {
+        visitYield_expr(c.yield_expr());
+        b.emit(OpCode.POP_TOP); // statement discards the sent/returned value
+        return null;
+    }
+
+    @Override public Void visitYield_expr(Jython3Parser.Yield_exprContext c) {
         if (!isFunctionScope) {
             throw new CompileError("'yield' outside function");
+        }
+        if (c.FROM() != null) {
+            visit(c.expr());
+            b.emit(OpCode.GET_ITER);
+            b.emit(OpCode.LOAD_CONST, null);
+            int yfIdx = b.size();
+            b.emitRaw(OpCode.YIELD_FROM, 0);
+            b.patch(yfIdx, b.size());
+            return null;
         }
         if (c.rhs_tuple() != null) {
             emitRhsTuple(c.rhs_tuple());
@@ -418,6 +437,10 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         }
         b.emit(OpCode.YIELD_VALUE);
         return null;
+    }
+
+    @Override public Void visitParenYieldExpr(Jython3Parser.ParenYieldExprContext c) {
+        return visitYield_expr(c.yield_expr());
     }
 
     @Override public Void visitDel_stmt(Jython3Parser.Del_stmtContext c) {
@@ -1448,6 +1471,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         } else {
             gv.visit(yieldExpr);
             gb.emit(OpCode.YIELD_VALUE);
+            gb.emit(OpCode.POP_TOP);
         }
 
         for (int fj : filterJumps) {

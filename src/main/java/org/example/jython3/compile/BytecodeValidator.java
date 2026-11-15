@@ -53,6 +53,9 @@ public final class BytecodeValidator {
             if (op == OpCode.YIELD_VALUE && !allowYield) {
                 throw new IllegalStateException(name + "@" + pc + ": YIELD_VALUE outside generator function");
             }
+            if (op == OpCode.YIELD_FROM && !allowYield) {
+                throw new IllegalStateException(name + "@" + pc + ": YIELD_FROM outside generator function");
+            }
             if (isJumpOp(op) && (ai < 0 || ai >= bc.length)) {
                 throw new IllegalStateException(name + "@" + pc + " (" + op + "): jump target " + ai + " out of bounds [0, " + bc.length + ")");
             }
@@ -108,6 +111,11 @@ public final class BytecodeValidator {
                 if (depth < 1) throw new IllegalStateException(name + "@" + pc + ": missing iterator on FOR_ITER");
                 enqueue(name, ai, depth - 1, knownDepth, worklist);   // exhausted: pops iterator
                 enqueueFallthrough(name, pc, bc.length, depth + 1, knownDepth, worklist); // next: pushes item
+                continue;
+            }
+            if (op == OpCode.YIELD_FROM) {
+                if (depth < 2) throw new IllegalStateException(name + "@" + pc + ": stack underflow on YIELD_FROM");
+                enqueue(name, ai, depth - 1, knownDepth, worklist);   // done: pops sub_iter+sent, pushes return value
                 continue;
             }
             if (op == OpCode.PUSH_EXCEPT_HANDLER) {
@@ -171,7 +179,7 @@ public final class BytecodeValidator {
     private static boolean isJumpOp(OpCode op) {
         return switch (op) {
             case JUMP, JUMP_IF_FALSE, JUMP_IF_TRUE_OR_POP, JUMP_IF_FALSE_OR_POP,
-                 FOR_ITER, PUSH_EXCEPT_HANDLER -> true;
+                 FOR_ITER, PUSH_EXCEPT_HANDLER, YIELD_FROM -> true;
             default -> false;
         };
     }
@@ -204,8 +212,7 @@ public final class BytecodeValidator {
             case DELETE_ATTR -> new int[]{1, -1};
             case DELETE_FAST, DELETE_NAME_SILENT, POP_EXCEPT_HANDLER, BEGIN_EXCEPT_HANDLER,
                  END_EXCEPT_HANDLER -> new int[]{0, 0};
-            case UNARY_MINUS, LOGICAL_NOT, BITWISE_INVERT, GET_ITER, LOAD_ATTR -> new int[]{1, 0};
-            case YIELD_VALUE -> new int[]{1, -1};
+            case UNARY_MINUS, LOGICAL_NOT, BITWISE_INVERT, GET_ITER, LOAD_ATTR, YIELD_VALUE -> new int[]{1, 0};
             case ADD, SUBTRACT, MULTIPLY, DIVIDE, FLOOR_DIVIDE, MODULO, POWER,
                  INPLACE_ADD, INPLACE_SUBTRACT, INPLACE_MULTIPLY,
                  INPLACE_AND, INPLACE_OR, INPLACE_XOR,

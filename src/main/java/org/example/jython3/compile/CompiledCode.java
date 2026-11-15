@@ -77,8 +77,10 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
     private static boolean scanYield(int[] bytecode) {
         if (bytecode == null) return false;
         int yieldOp = OpCode.YIELD_VALUE.code();
+        int yieldFromOp = OpCode.YIELD_FROM.code();
         for (int instr : bytecode) {
-            if ((instr >>> 16) == yieldOp) return true;
+            int op = instr >>> 16;
+            if (op == yieldOp || op == yieldFromOp) return true;
         }
         return false;
     }

@@ -520,4 +520,24 @@ public class CoreDifferentialTest {
                 + "print(repr(frozenset()), isinstance(f1, frozenset), isinstance(f1, set), f1.copy() is f1)\n"
                 + "print(sorted(frozenset(x * 2 for x in range(4))))");
     }
+
+    @Test
+    void testGeneratorSendThrowCloseAndYieldFromDifferential() {
+        assertMatchesCPython("generator_send_throw_close",
+                "def echo():\n    a = yield 'ready'\n    b = (yield a * 10) + 1\n    yield b\n"
+                + "g = echo()\nprint(g.send(None), g.send(3), g.send(5))\n"
+                + "log = []\n"
+                + "def managed():\n    try:\n        try:\n            yield 1\n        except ValueError as e:\n            log.append('v:' + str(e))\n            yield 2\n    finally:\n        log.append('fin')\n"
+                + "m = managed()\nprint(next(m), m.throw(ValueError, 'bad'))\nm.close()\nprint(log)");
+        assertMatchesCPython("yield_from_delegation",
+                "def sub():\n    x = yield 'a'\n    y = yield x + 1\n    return (x, y)\n"
+                + "def outer():\n    r = yield from sub()\n    yield ('res', r)\n"
+                + "o = outer()\nprint(next(o), o.send(10), o.send(20))\n"
+                + "clog = []\n"
+                + "def sc():\n    try:\n        yield 's'\n    finally:\n        clog.append('sc')\n"
+                + "def oc():\n    try:\n        yield from sc()\n    finally:\n        clog.append('oc')\n"
+                + "c = oc()\nprint(next(c))\nc.close()\nprint(clog)\n"
+                + "def flat():\n    yield from [1, 2]\n    yield from (i * 10 for i in range(2))\n"
+                + "print(list(flat()))");
+    }
 }

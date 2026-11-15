@@ -75,7 +75,9 @@ public enum OpCode {
     INPLACE_MULTIPLY(90),
     INPLACE_AND(91),
     INPLACE_OR(92),
-    INPLACE_XOR(93);
+    INPLACE_XOR(93),
+    // ── generator delegation
+    YIELD_FROM(94);         // arg: donePc; stack: [..., sub_iter, sentVal] -> suspends or jumps to donePc with [..., retVal]
 
     private final int code;
 

@@ -5,6 +5,7 @@ import org.example.jython3.runtime.PyBuiltinFunction;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyFrozenSet;
+import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyNull;
@@ -289,6 +290,26 @@ public final class BuiltinMethodDispatcher {
     private static PySet toSetView(PyObject obj, JavaAccessPolicy policy) {
         if (obj instanceof PySet s) return s;
         return new PySet(BuiltinFunctions.collectIterable(obj, policy));
+    }
+
+    public static PyObject generatorMethod(PyGenerator gen, String method) {
+        return switch (method) {
+            case "send" -> new PyBuiltinFunction("generator.send", args -> {
+                checkArgCount("generator.send", args, 1);
+                return gen.send(args[0]);
+            });
+            case "throw" -> new PyBuiltinFunction("generator.throw", args -> {
+                if (args.length < 1 || args.length > 3) {
+                    throw PyErrors.error("TypeError", "throw() takes 1 to 3 arguments (" + args.length + " given)");
+                }
+                return gen.throwException(args);
+            });
+            case "close" -> new PyBuiltinFunction("generator.close", args -> {
+                checkArgCount("generator.close", args, 0);
+                return gen.close();
+            });
+            default -> throw PyErrors.error("AttributeError", "'generator' object has no attribute '" + method + "'");
+        };
     }
 
     public static PyObject listMethod(PyList list, String method) {

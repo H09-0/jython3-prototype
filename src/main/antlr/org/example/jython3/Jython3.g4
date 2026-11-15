@@ -57,7 +57,7 @@ simple_stmt
 
 /** Unified assignment (simple, chained, attribute, subscript, and tuple unpacking) */
 assign_stmt
-    : (target_list ASSIGN)+ rhs_tuple
+    : (target_list ASSIGN)+ (yield_expr | rhs_tuple)
     ;
 
 /** Right-hand side that may itself be a tuple: 1, 2  or  (1, 2)  or  expr */
@@ -127,9 +127,14 @@ return_stmt
     : RETURN rhs_tuple?
     ;
 
-/** yield [rhs_tuple] */
+/** yield [from expr | rhs_tuple] */
 yield_stmt
-    : YIELD rhs_tuple?
+    : yield_expr
+    ;
+
+yield_expr
+    : YIELD FROM expr
+    | YIELD rhs_tuple?
     ;
 
 /** del target_list */
@@ -304,6 +309,7 @@ expr
     | expr OR expr                                         # OrExpr
     | expr IF expr ELSE expr                               # TernaryExpr
     | LAMBDA param_list? COLON expr                        # LambdaExpr
+    | LPAREN yield_expr RPAREN                             # ParenYieldExpr
     | LPAREN gen_expr RPAREN                               # GenExpr
     | LPAREN expr RPAREN                                   # Paren
     | LPAREN expr_list? RPAREN                             # TupleLiteral

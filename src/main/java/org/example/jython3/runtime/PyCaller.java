@@ -13,7 +13,19 @@ public interface PyCaller {
      * completion ({@code StopIteration}), or exception.
      */
     default PyObject stepGenerator(PyGenerator gen) {
-        throw new UnsupportedOperationException("generator stepping is not supported by this caller");
+        return sendGenerator(gen, PyNull.INSTANCE);
+    }
+
+    default PyObject sendGenerator(PyGenerator gen, PyObject value) {
+        throw new UnsupportedOperationException("generator.send() is not supported by this caller");
+    }
+
+    default PyObject throwGenerator(PyGenerator gen, PyObject[] args) {
+        throw new UnsupportedOperationException("generator.throw() is not supported by this caller");
+    }
+
+    default PyObject closeGenerator(PyGenerator gen) {
+        throw new UnsupportedOperationException("generator.close() is not supported by this caller");
     }
 
     /**

@@ -613,6 +613,9 @@ public final class BuiltinFunctions {
             if (args[0] instanceof PyFunction || args[0] instanceof PyBuiltinFunction || args[0] instanceof PyBoundMethod) {
                 return PyBool.of("__name__".equals(name));
             }
+            if (args[0] instanceof PyGenerator) {
+                return PyBool.of("send".equals(name) || "throw".equals(name) || "close".equals(name));
+            }
             return PyBool.FALSE;
         }));
 
@@ -655,6 +658,12 @@ public final class BuiltinFunctions {
                 return new PyStr(bf.name());
             } else if (args[0] instanceof PyBoundMethod bm && "__name__".equals(name)) {
                 return new PyStr(bm.fn().name());
+            } else if (args[0] instanceof PyGenerator gen) {
+                try {
+                    return BuiltinMethodDispatcher.generatorMethod(gen, name);
+                } catch (InterpreterException ie) {
+                    if (!"AttributeError".equals(ie.typeName())) throw ie;
+                }
             } else if (args[0] instanceof PyJavaObject jo) {
                 try {
                     return jo.getMember(name);
@@ -915,6 +924,8 @@ public final class BuiltinFunctions {
         } else if (o instanceof org.example.jython3.runtime.PyFrozenSet) {
             Collections.addAll(names, "copy", "difference", "intersection", "isdisjoint",
                     "issubset", "issuperset", "symmetric_difference", "union");
+        } else if (o instanceof PyGenerator) {
+            Collections.addAll(names, "close", "send", "throw");
         } else if (o instanceof PyStr) {
             Collections.addAll(names, "count", "endswith", "find", "isalnum", "isalpha", "isdigit", "join", "lower", "replace", "split", "startswith", "strip", "upper");
         } else if (o instanceof PyFunction || o instanceof PyBuiltinFunction || o instanceof PyBoundMethod) {

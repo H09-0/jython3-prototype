@@ -267,14 +267,26 @@ class GeneratorSecurityTest {
     }
 
     @Test
-    @DisplayName("Generator send/throw/close raise explicit NotImplementedError and leave ThreadLocals clean")
-    void sendThrowCloseRejectedAndThreadLocalsClean() {
+    @DisplayName("Generator send/throw/close clean up frames and leave ThreadLocals clean")
+    void sendThrowCloseAndThreadLocalsClean() {
         var interp = Jython3Interpreter.trusted();
-        interp.eval("g = (x for x in [1, 2])");
-        for (String expr : List.of("g.send(1)", "g.throw(ValueError)", "g.close()")) {
-            var e = assertThrows(InterpreterException.class, () -> interp.eval(expr), expr);
-            assertEquals("NotImplementedError", e.typeName(), expr);
-        }
+        interp.eval("""
+            closed_log = []
+            def tracked():
+                try:
+                    yield 1
+                    yield 2
+                finally:
+                    closed_log.append("closed")
+            g = tracked()
+            assert next(g) == 1
+            g.close()
+            assert closed_log == ["closed"]
+            """);
+        var g = (PyGenerator) interp.getGlobal("g");
+        assertEquals(PyGenerator.State.COMPLETED, g.state());
+        assertNull(g.operandStack());
+        assertNull(g.locals());
         assertNull(PyCaller.current());
         assertTrue(ExceptionTypeRegistry.current() != interp.exceptionTypes());
     }
