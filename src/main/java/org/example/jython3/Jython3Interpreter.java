@@ -3803,7 +3803,13 @@ public class Jython3Interpreter implements AutoCloseable {
 
         PyModule builtin = resolveBuiltinModule(pkg);
         if (builtin != null) {
-            bindImportedName(alias, builtin);
+            if (!hasAlias && pkg.contains(".")) {
+                String topName = pkg.substring(0, pkg.indexOf('.'));
+                PyModule top = resolveBuiltinModule(topName);
+                bindImportedName(topName, top != null ? top : builtin);
+            } else {
+                bindImportedName(alias, builtin);
+            }
             return;
         }
 
@@ -3887,6 +3893,12 @@ public class Jython3Interpreter implements AutoCloseable {
             case "itertools" -> BuiltinModules.itertools();
             case "queue" -> BuiltinModules.queue(hostSession);
             case "datetime" -> BuiltinModules.datetime();
+            case "concurrent" -> BuiltinModules.concurrentPkg(hostSession, this::spawnVirtualThread);
+            case "concurrent.futures" -> {
+                PyModule pkg = resolveBuiltinModule("concurrent");
+                yield pkg != null ? (PyModule) pkg.attrs().get("futures")
+                        : BuiltinModules.concurrentFutures(hostSession, this::spawnVirtualThread);
+            }
             default     -> null;
         };
         if (mod != null) {

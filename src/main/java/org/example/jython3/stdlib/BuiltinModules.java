@@ -6,6 +6,7 @@ import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
 import org.example.jython3.security.HostAccessPolicy;
+import org.example.jython3.stdlib.modules.ConcurrentFuturesModule;
 import org.example.jython3.stdlib.modules.ControlModule;
 import org.example.jython3.stdlib.modules.DatetimeModule;
 import org.example.jython3.stdlib.modules.IoModule;
@@ -55,4 +56,10 @@ public final class BuiltinModules {
     public static PyModule itertools() { return ItertoolsModule.create(); }
     public static PyModule queue(HostSession session) { return QueueModule.create(session); }
     public static PyModule datetime() { return DatetimeModule.create(); }
+    public static PyModule concurrentPkg(HostSession session, ThreadingModule.ThreadSpawner spawner) {
+        return ConcurrentFuturesModule.createPackage(session, spawner);
+    }
+    public static PyModule concurrentFutures(HostSession session, ThreadingModule.ThreadSpawner spawner) {
+        return ConcurrentFuturesModule.createFutures(session, spawner);
+    }
 }
