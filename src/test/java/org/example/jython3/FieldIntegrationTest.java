@@ -159,4 +159,64 @@ public class FieldIntegrationTest {
         assertEquals(PyBool.TRUE, interp.getGlobal("caught_pat"));
         assertEquals(PyBool.TRUE, interp.getGlobal("caught_type"));
     }
+
+    @Test
+    @DisplayName("json.dumps serializes BigInt as unquoted JSON number and round-trips via json.loads")
+    void testJsonDumpsBigInt() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            import json
+            big = 10 ** 30
+            dumped = json.dumps(big)
+            loaded = json.loads(dumped)
+            nested_dumped = json.dumps({"big": big, "tuple": (1, 2)})
+            nested_loaded = json.loads(nested_dumped)
+            """);
+        assertEquals(new PyStr("1000000000000000000000000000000"), interp.getGlobal("dumped"));
+        assertEquals(new org.example.jython3.runtime.BigInt(new java.math.BigInteger("1000000000000000000000000000000")),
+                interp.getGlobal("loaded"));
+        assertEquals(new PyStr("{\"big\":1000000000000000000000000000000,\"tuple\":[1,2]}"),
+                interp.getGlobal("nested_dumped"));
+    }
+
+    @Test
+    @DisplayName("math functions accept bool and BigInt arguments and raise OverflowError on huge BigInt")
+    void testMathBoolAndBigIntSupport() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            import math
+            s_true  = math.sqrt(True)
+            s_false = math.sqrt(False)
+            s_big   = math.sqrt(10 ** 30)
+            a_big   = math.abs(-(10 ** 30))
+
+            overflow_caught = False
+            try:
+                math.sqrt(10 ** 400)
+            except OverflowError:
+                overflow_caught = True
+            """);
+        assertEquals(1.0, ((org.example.jython3.runtime.PyFloat) interp.getGlobal("s_true")).value(), 1e-9);
+        assertEquals(0.0, ((org.example.jython3.runtime.PyFloat) interp.getGlobal("s_false")).value(), 1e-9);
+        assertEquals(1e15, ((org.example.jython3.runtime.PyFloat) interp.getGlobal("s_big")).value(), 1e2);
+        assertEquals(new org.example.jython3.runtime.BigInt(new java.math.BigInteger("1000000000000000000000000000000")),
+                interp.getGlobal("a_big"));
+        assertEquals(PyBool.TRUE, interp.getGlobal("overflow_caught"));
+    }
+
+    @Test
+    @DisplayName("All modular FieldScenario workloads execute and verify in JUnit")
+    void testAllModularFieldScenarios() {
+        var scenarios = java.util.List.of(
+                new org.example.jython3.field.AnalyticsScenario(),
+                new org.example.jython3.field.OopScenario(),
+                new org.example.jython3.field.RegexScenario(),
+                new org.example.jython3.field.JavaBridgeScenario()
+        );
+        for (var sc : scenarios) {
+            var interp = Jython3Interpreter.trusted();
+            interp.eval(sc.pythonCode(), "<" + sc.name() + ">");
+            sc.verify(interp);
+        }
+    }
 }

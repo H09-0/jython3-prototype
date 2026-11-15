@@ -60,12 +60,11 @@ public final class PolicySanitizer {
             return res;
         }
         if (val instanceof PyDict dict) {
-            var sanitizedMap = new LinkedHashMap<PyObject, PyObject>();
-            var res = new PyDict(sanitizedMap);
+            var res = new PyDict();
             visited.put(val, res);
             for (var entry : dict.map().entrySet()) {
-                sanitizedMap.put(sanitize(entry.getKey(), policy, visited),
-                                 sanitize(entry.getValue(), policy, visited));
+                res.put(sanitize(entry.getKey(), policy, visited),
+                        sanitize(entry.getValue(), policy, visited));
             }
             return res;
         }
@@ -79,11 +78,11 @@ public final class PolicySanitizer {
             return res;
         }
         if (val instanceof PyFunction fn) {
-            var sanitizedClosure = new HashMap<String, PyObject>();
-            var res = new PyFunction(fn.name(), fn.params(), fn.code(), sanitizedClosure);
+            var res = new PyFunction(fn.name(), fn.params(), fn.defaults(),
+                    fn.argsParam(), fn.kwargsParam(), fn.code(), new HashMap<>());
             visited.put(val, res);
             for (var entry : fn.closure().entrySet()) {
-                sanitizedClosure.put(entry.getKey(), sanitize(entry.getValue(), policy, visited));
+                res.closure().put(entry.getKey(), sanitize(entry.getValue(), policy, visited));
             }
             return res;
         }

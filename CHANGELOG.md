@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **`PolicySanitizer` & `BigInt` Conformance Suite (`PolicySanitizerTest`)**: Added tests for circular `PyList`/`PyDict` sanitization, nested Java object retargeting, `PyFunction` closure sanitization, `PyClass` inheritance sanitization, `json.dumps(10 ** 30)` / tuple serialization, and `math.sqrt(True)` / `math.sqrt(10 ** 30)` (387 total tests passing green).
 - **Documentation Consolidation (`docs/STATUS.md`)**: Established `docs/STATUS.md` as the single source of truth for current live capabilities and runtime concept glossary (`PyNull` vs Java `null` vs Python `None`, `PyCaller`, `PyCell`, `PyCompiledCodeWrapper`, `ExecutionContext`); aligned `README.md`, `COMPATIBILITY.md`, `ROADMAP.md`, `ARCHITECTURE.md`, and `PROJECT_STRUCTURE.md`.
 - **Modular Stdlib & VM Package Extraction**: Split `BuiltinModules` into per-module classes under `stdlib.modules.*`, extracted `BuiltinMethodDispatcher`, `ArithmeticOps`, and `PolicySanitizer` from `Jython3Interpreter`, and split `FieldTestRunner` into modular `org.example.jython3.field.*` scenarios and `ResourceProfiler`.
 - **Strict `re.error` Validation**: Replaced silent error swallowing in `ReModule` (`re.search`, `re.findall`) with `PatternError` (`re.error`) on malformed patterns and `TypeError` on invalid arguments (379 total tests passing green).
@@ -43,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **`json.dumps(BigInt)` & `StdlibSupport.toDouble(bool/BigInt)`**: Fixed `JsonModule` to serialize `BigInt` as unquoted JSON numbers and `PyTuple` as JSON arrays; extended `StdlibSupport.toDouble` and `MathModule.abs` to accept `PyBool` and `BigInt` (raising `OverflowError` when `BigInt` overflows 64-bit `double`).
+- **`PolicySanitizer` `PyDict` & `PyFunction` Mutation**: Fixed `PolicySanitizer.sanitize()` to populate `PyDict` via `res.put(...)` and `PyFunction` closure via `res.closure().put(...)` (preserving `defaults`, `argsParam`, and `kwargsParam`) after defensive constructor copying.
 - **Strict RFC 8259 `json.loads()` & `JSONDecodeError`**: Replaced the permissive JSON fallback parser with a strict recursive-descent `JsonParser` enforcing RFC 8259 syntax and raising `json.JSONDecodeError` (registered as a `ValueError` subclass) on malformed inputs like `"{bad json}"`, `"[1,]"`, `"unknown"`, leading-zero numbers, trailing commas, and unquoted keys (378 total tests passing).
 - **Recursive `json.loads()` Parsing**: Fixed `jsonParseValue()` in `BuiltinModules` to recursively parse nested JSON objects `{...}`, nested arrays `[...]`, escape sequences, colons inside quoted keys/values, and `BigInt` numbers.
 - **Builtins Iterable Consumption (`list`, `sum`, `sorted`, `reversed`)**: Unified iterable collection via `collectIterable()` so generators, iterators, sets, and Java `Iterable`s work across all core built-in functions.

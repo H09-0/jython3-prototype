@@ -116,6 +116,7 @@ jython3-prototype/
             ├── Jython3InterpreterTest.java     # Core end-to-end integration tests
             ├── Milestone1ConformanceTest.java  # Milestone 1 runtime semantic conformance tests
             ├── NonlocalAndBuiltinFixesTest.java # Closure/nonlocal and print/int kwargs tests
+            ├── PolicySanitizerTest.java        # Graph-aware PolicySanitizer tests (cycles, closures, inheritance)
             ├── differential/                   # Differential testing against host CPython 3
             │   ├── CoreDifferentialTest.java
             │   └── DifferentialHarness.java

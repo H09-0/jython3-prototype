@@ -28,6 +28,7 @@ public final class MathModule {
         attrs.put("abs",   fn("abs",   args -> {
             var a = args[0];
             if (a instanceof PyInt i) return PyInt.of(Math.abs(i.value()));
+            if (a instanceof org.example.jython3.runtime.BigInt bi) return new org.example.jython3.runtime.BigInt(bi.value().abs());
             return new PyFloat(Math.abs(toDouble(a)));
         }));
         attrs.put("pow",   fn("pow",   args -> new PyFloat(Math.pow(toDouble(args[0]), toDouble(args[1])))));

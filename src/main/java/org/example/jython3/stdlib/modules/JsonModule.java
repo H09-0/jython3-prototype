@@ -48,6 +48,7 @@ public final class JsonModule {
         if (o instanceof PyNull) return "null";
         if (o instanceof PyBool b) return b.value() ? "true" : "false";
         if (o instanceof PyInt i) return String.valueOf(i.value());
+        if (o instanceof BigInt bi) return bi.value().toString();
         if (o instanceof PyFloat f) return String.valueOf(f.value());
         if (o instanceof PyStr s) return "\"" + s.value().replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         if (o instanceof PyList list) {
@@ -55,6 +56,15 @@ public final class JsonModule {
             for (int i = 0; i < list.items().size(); i++) {
                 if (i > 0) sb.append(",");
                 sb.append(simpleJsonDumps(list.items().get(i)));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        if (o instanceof org.example.jython3.runtime.PyTuple tuple) {
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < tuple.items().size(); i++) {
+                if (i > 0) sb.append(",");
+                sb.append(simpleJsonDumps(tuple.items().get(i)));
             }
             sb.append("]");
             return sb.toString();
