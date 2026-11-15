@@ -224,7 +224,7 @@ public final class BytecodeValidator {
             case CALL_FUNCTION -> new int[]{1 + ai, -ai};
             case CALL_FUNCTION_KW -> {
                 KwCallInfo info = (KwCallInfo) pool[ai];
-                int nArgs = info.nPos() + info.nKw();
+                int nArgs = info.nPos() + info.kwNames().length;
                 yield new int[]{1 + nArgs, -nArgs};
             }
             case CALL_FUNCTION_EX -> {
