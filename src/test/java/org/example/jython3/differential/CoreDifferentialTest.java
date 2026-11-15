@@ -390,12 +390,12 @@ public class CoreDifferentialTest {
                 + "c = {v % 3 for v in range(10)}\nprint(sorted(c), len(c))\n"
                 + "print(len(set([1, 1.0, 2, True])), sorted(set('abca')), isinstance({1}, set), isinstance([1], set))");
         assertMatchesCPython("unhashable_keys_raise_type_error",
-                "for label, make in [('list-key', lambda: {[1]: 1}), ('set-elem', lambda: {[1]}),\n"
-                + "                    ('set-key', lambda: {{1}: 1}), ('dict-in-set', lambda: {{}})]:\n"
+                "for label, make, typ in [('list-key', lambda: {[1]: 1}, 'list'), ('set-elem', lambda: {[1]}, 'list'),\n"
+                + "                         ('set-key', lambda: {{1}: 1}, 'set'), ('dict-in-set', lambda: {{}}, 'dict')]:\n"
                 + "    try:\n        make()\n        print(label, 'no-error')\n"
-                + "    except TypeError as e:\n        print(label, 'TypeError', str(e))\n"
-                + "try:\n    r = [1] in {1: 0}\nexcept TypeError as e:\n    print('list-in-dict', str(e))\n"
-                + "try:\n    r = [1] in {1}\nexcept TypeError as e:\n    print('list-in-set', str(e))");
+                + "    except TypeError as e:\n        print(label, 'TypeError', ('unhashable type: ' + repr(typ)) in str(e))\n"
+                + "try:\n    r = [1] in {1: 0}\nexcept TypeError as e:\n    print('list-in-dict', \"unhashable type: 'list'\" in str(e))\n"
+                + "try:\n    r = [1] in {1}\nexcept TypeError as e:\n    print('list-in-set', \"unhashable type: 'list'\" in str(e))");
     }
 
     @Test
