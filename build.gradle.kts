@@ -73,3 +73,11 @@ tasks.compileJava {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.register<Sync>("installLocal") {
+    group = "distribution"
+    description = "Build distribution and update ~/.local/share/jython3 on the local system"
+    dependsOn(tasks.installDist)
+    from("${layout.buildDirectory.get()}/install/${project.name}")
+    into("${System.getProperty("user.home")}/.local/share/jython3")
+}
