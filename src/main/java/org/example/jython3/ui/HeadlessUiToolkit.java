@@ -9,59 +9,158 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Pure-Java, display-free {@link UiToolkit} for CI, server-side scripting, and
  * deterministic event-ordering tests.
  *
- * <p>Enforces UI-thread affinity via {@link #dispatcher()}, resource caps
- * ({@code maxWindows}, {@code maxTimers}, {@code maxListenersPerNode}),
- * capability checks, and complete cleanup when {@link HostSession#close()} or
- * {@link HostSession#reset()} runs.
+ * <p>Thread ownership of {@link HeadlessDispatcher} is immutable once created:
+ * {@code runLater}/{@code runAndWait} never transfer UI-thread ownership to arbitrary
+ * caller threads.
  */
-public final class HeadlessUiToolkit implements UiToolkit {
+public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
+
+    public static final class HeadlessDispatcher implements UiDispatcher, AutoCloseable {
+        private final Thread uiThread;
+        private final ExecutorService dedicatedExecutor;
+        private final ConcurrentLinkedQueue<Runnable> pendingTasks = new ConcurrentLinkedQueue<>();
+
+        /** Binds UI-thread ownership immutably to the constructing thread; off-thread posts queue for {@link #pumpEvents()}. */
+        public HeadlessDispatcher() {
+            this.uiThread = Thread.currentThread();
+            this.dedicatedExecutor = null;
+        }
+
+        private HeadlessDispatcher(ExecutorService executor, Thread dedicatedThread) {
+            this.dedicatedExecutor = Objects.requireNonNull(executor);
+            this.uiThread = Objects.requireNonNull(dedicatedThread);
+        }
+
+        /** Creates a dispatcher backed by a dedicated, single-threaded UI executor. */
+        public static HeadlessDispatcher dedicatedThread() {
+            ExecutorService exec = Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "jython3-headless-ui");
+                t.setDaemon(true);
+                return t;
+            });
+            var threadRef = new AtomicReference<Thread>();
+            try {
+                exec.submit(() -> threadRef.set(Thread.currentThread())).get();
+            } catch (Exception e) {
+                exec.shutdownNow();
+                throw new IllegalStateException("Failed to initialize headless UI thread", e);
+            }
+            return new HeadlessDispatcher(exec, threadRef.get());
+        }
+
+        @Override public boolean isUiThread() { return Thread.currentThread() == uiThread; }
+
+        @Override public void runLater(Runnable task) {
+            Objects.requireNonNull(task, "task");
+            if (dedicatedExecutor != null) {
+                dedicatedExecutor.execute(task);
+            } else {
+                pendingTasks.add(task);
+            }
+        }
+
+        @Override public void runAndWait(Runnable task) {
+            Objects.requireNonNull(task, "task");
+            if (isUiThread()) {
+                task.run();
+                return;
+            }
+            if (dedicatedExecutor == null) {
+                throw PyErrors.error("RuntimeError",
+                        "cannot runAndWait synchronously onto creator-owned HeadlessDispatcher from non-UI thread '"
+                                + Thread.currentThread().getName() + "'; use dedicatedThread() or pumpEvents()");
+            }
+            var latch = new CountDownLatch(1);
+            var err = new AtomicReference<RuntimeException>();
+            dedicatedExecutor.execute(() -> {
+                try {
+                    task.run();
+                } catch (RuntimeException re) {
+                    err.set(re);
+                } finally {
+                    latch.countDown();
+                }
+            });
+            try {
+                if (!latch.await(5, TimeUnit.SECONDS)) {
+                    throw PyErrors.error("TimeoutError", "timed out waiting for headless UI thread");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw PyErrors.error("KeyboardInterrupt", "Interrupted waiting for headless UI thread");
+            }
+            if (err.get() != null) throw err.get();
+        }
+
+        /** Drains queued {@link #runLater(Runnable)} tasks on the owning UI thread. */
+        public int pumpEvents() {
+            assertUiThread("pumpEvents");
+            int count = 0;
+            Runnable next;
+            while ((next = pendingTasks.poll()) != null) {
+                next.run();
+                count++;
+            }
+            return count;
+        }
+
+        @Override public void close() {
+            pendingTasks.clear();
+            if (dedicatedExecutor != null) {
+                dedicatedExecutor.shutdownNow();
+            }
+        }
+    }
 
     private final AtomicLong idSeq = new AtomicLong(1);
     private final AtomicInteger openWindows = new AtomicInteger(0);
     private final AtomicInteger activeTimers = new AtomicInteger(0);
     private final AtomicInteger liveTimers = new AtomicInteger(0);
     private final List<UiEvent> eventHistory = Collections.synchronizedList(new ArrayList<>());
-    private final HeadlessDispatcher dispatcher = new HeadlessDispatcher();
+    private final UiDispatcher dispatcher;
 
-    public static final class HeadlessDispatcher implements UiDispatcher {
-        private volatile Thread uiThread;
-
-        public HeadlessDispatcher() {
-            this.uiThread = Thread.currentThread();
-        }
-
-        public void setUiThread(Thread t) { this.uiThread = Objects.requireNonNull(t); }
-
-        @Override public boolean isUiThread() { return Thread.currentThread() == uiThread; }
-
-        @Override public void runLater(Runnable task) {
-            Thread prev = uiThread;
-            uiThread = Thread.currentThread();
-            try {
-                task.run();
-            } finally {
-                uiThread = prev;
-            }
-        }
-
-        @Override public void runAndWait(Runnable task) {
-            runLater(task);
-        }
+    public HeadlessUiToolkit() {
+        this(new HeadlessDispatcher());
     }
 
-    @Override public HeadlessDispatcher dispatcher() { return dispatcher; }
+    public HeadlessUiToolkit(UiDispatcher dispatcher) {
+        this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
+    }
+
+    public static HeadlessUiToolkit withDedicatedThread() {
+        return new HeadlessUiToolkit(HeadlessDispatcher.dedicatedThread());
+    }
+
+    @Override public UiDispatcher dispatcher() { return dispatcher; }
+
+    public int pumpEvents() {
+        if (dispatcher instanceof HeadlessDispatcher hd) {
+            return hd.pumpEvents();
+        }
+        return 0;
+    }
+
+    @Override public void close() {
+        if (dispatcher instanceof AutoCloseable ac) {
+            try { ac.close(); } catch (Exception ignored) {}
+        }
+    }
 
     public List<UiEvent> eventHistory() {
         synchronized (eventHistory) {
@@ -361,7 +460,7 @@ public final class HeadlessUiToolkit implements UiToolkit {
                     stop();
                     return;
                 }
-                dispatcher.runAndWait(() -> {
+                dispatcher.runLater(() -> {
                     if (running && !session.isClosed()) {
                         try {
                             session.invokeCallback(callback);

@@ -172,7 +172,7 @@ class HeadlessUiTest {
                     fxExec::execute,
                     () -> Thread.currentThread() == fxThreadRef.get(),
                     Duration.ofSeconds(2));
-            var baseToolkit = new HeadlessUiToolkit();
+            var baseToolkit = new HeadlessUiToolkit(fxDispatcher);
             var fxToolkit = new JavaFxUiAdapter(fxDispatcher, baseToolkit);
 
             var caps = CapabilitySet.of(HostCapability.UI, HostCapability.EVENTS, HostCapability.INPUT);
@@ -186,7 +186,6 @@ class HeadlessUiTest {
 
                 // Dispatching onto FX thread succeeds
                 fxDispatcher.runAndWait(() -> {
-                    baseToolkit.dispatcher().setUiThread(Thread.currentThread());
                     interp.eval("""
                         import ui
                         w = ui.Window("FX")
@@ -214,21 +213,37 @@ class HeadlessUiTest {
     @DisplayName("Timers fire callbacks and stop cleanly on interpreter reset/close; unauthorized UI actions denied")
     void timersAndPolicyDenials() throws Exception {
         var timerCaps = CapabilitySet.of(HostCapability.TIMER);
-        var toolkit = new HeadlessUiToolkit();
-        try (var interp = uiInterp(timerCaps, ExecutionLimits.SANDBOXED)) {
+        try (var toolkit = HeadlessUiToolkit.withDedicatedThread();
+             var interp = uiInterp(timerCaps, ExecutionLimits.SANDBOXED)) {
             interp.setUiToolkit(toolkit);
             interp.eval("""
                 import ui
-                ticks = [0]
-                t = ui.Timer(15, lambda: ticks.__setitem__(0, ticks[0] + 1) if False else ticks.append(1))
+                ticks = []
+                t = ui.Timer(15, lambda: ticks.append(1))
                 t.start()
                 """);
-            Thread.sleep(80);
-            assertTrue(toolkit.activeTimerCount() == 1);
+            Thread.sleep(90);
+            assertEquals(1, toolkit.activeTimerCount());
+            assertTrue(interp.getGlobal("ticks").toString().contains("1"), "timer must tick on dedicated UI thread");
             interp.resetExecutionState();
             assertEquals(0, toolkit.activeTimerCount());
-            assertTrue(((org.example.jython3.runtime.PyList) interp.getGlobal("ticks") == null));
+            assertNull(interp.getGlobal("ticks"));
         }
+
+        // Creator-owned HeadlessDispatcher cannot have its thread ownership hijacked from another thread
+        var creatorToolkit = new HeadlessUiToolkit();
+        AtomicReference<Throwable> crossRunErr = new AtomicReference<>();
+        Thread intruder = new Thread(() -> {
+            try {
+                creatorToolkit.dispatcher().runAndWait(() -> {});
+            } catch (Throwable t) {
+                crossRunErr.set(t);
+            }
+        });
+        intruder.start();
+        intruder.join(5_000);
+        assertEquals("RuntimeError",
+                org.junit.jupiter.api.Assertions.assertInstanceOf(InterpreterException.class, crossRunErr.get()).typeName());
 
         // Denied without UI / EVENTS / INPUT / TIMER
         try (var denied = uiInterp(CapabilitySet.none(), ExecutionLimits.SANDBOXED)) {
