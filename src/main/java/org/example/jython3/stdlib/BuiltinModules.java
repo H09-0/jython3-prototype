@@ -187,13 +187,17 @@ public class BuiltinModules {
 
     public static PyModule json() {
         Map<String, PyObject> attrs = new HashMap<>();
+        attrs.put("JSONDecodeError", org.example.jython3.runtime.ExceptionTypeRegistry.current().type("JSONDecodeError"));
         attrs.put("dumps", fn("dumps", args -> {
-            if (args.length == 0) return new PyStr("null");
+            if (args.length == 0) throw PyErrors.error("TypeError", "dumps() missing 1 required positional argument: 'obj'");
             return new PyStr(simpleJsonDumps(args[0]));
         }));
         attrs.put("loads", fn("loads", args -> {
-            if (args.length == 0) return new PyNull();
-            return jsonParseValue(args[0].toString());
+            if (args.length == 0) throw PyErrors.error("TypeError", "loads() missing 1 required positional argument: 's'");
+            if (!(args[0] instanceof PyStr str)) {
+                throw PyErrors.error("TypeError", "the JSON object must be str, not '" + org.example.jython3.runtime.PyOps.typeName(args[0]) + "'");
+            }
+            return new JsonParser(str.value()).parse();
         }));
         return new PyModule("json", attrs);
     }
@@ -386,131 +390,228 @@ public class BuiltinModules {
         return "\"" + o.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
-    private static boolean isQuoteUnescaped(String s, int quoteIdx) {
-        int backslashes = 0;
-        for (int j = quoteIdx - 1; j >= 0 && s.charAt(j) == '\\'; j--) {
-            backslashes++;
-        }
-        return (backslashes & 1) == 0;
-    }
+    /** Strict RFC 8259 recursive-descent JSON parser raising JSONDecodeError on malformed input. */
+    private static final class JsonParser {
+        private static final int MAX_DEPTH = 512;
+        private final String src;
+        private final int len;
+        private int pos = 0;
 
-    private static java.util.List<String> splitJsonArray(String inner) {
-        var list = new java.util.ArrayList<String>();
-        StringBuilder cur = new StringBuilder();
-        int depth = 0;
-        boolean inStr = false;
-        char strChar = 0;
-        for (int i = 0; i < inner.length(); i++) {
-            char c = inner.charAt(i);
-            if ((c == '"' || c == '\'') && isQuoteUnescaped(inner, i)) {
-                if (!inStr) { inStr = true; strChar = c; }
-                else if (strChar == c) { inStr = false; }
-                cur.append(c);
-                continue;
+        JsonParser(String src) {
+            this.src = src;
+            this.len = src.length();
+        }
+
+        PyObject parse() {
+            skipWhitespace();
+            if (pos >= len) {
+                throw decodeError("Expecting value", pos);
             }
-            if (inStr) { cur.append(c); continue; }
-            if (c == '[' || c == '{') depth++;
-            else if (c == ']' || c == '}') depth--;
-            if (c == ',' && depth == 0) { list.add(cur.toString()); cur.setLength(0); continue; }
-            cur.append(c);
-        }
-        if (cur.length() > 0) list.add(cur.toString());
-        return list;
-    }
-
-    private static java.util.List<String> splitJsonObject(String inner) {
-        return splitJsonArray(inner);
-    }
-
-    private static int findColonOutsideQuotes(String pair) {
-        boolean inStr = false;
-        char strChar = 0;
-        for (int i = 0; i < pair.length(); i++) {
-            char c = pair.charAt(i);
-            if ((c == '"' || c == '\'') && isQuoteUnescaped(pair, i)) {
-                if (!inStr) { inStr = true; strChar = c; }
-                else if (strChar == c) { inStr = false; }
-            } else if (!inStr && c == ':') {
-                return i;
+            PyObject result = parseValue(0);
+            skipWhitespace();
+            if (pos < len) {
+                throw decodeError("Extra data", pos);
             }
+            return result;
         }
-        return -1;
-    }
 
-    private static String unescapeJsonString(String raw) {
-        StringBuilder sb = new StringBuilder(raw.length());
-        for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            if (c == '\\' && i + 1 < raw.length()) {
-                char next = raw.charAt(++i);
-                switch (next) {
-                    case '"' -> sb.append('"');
-                    case '\\' -> sb.append('\\');
-                    case '/' -> sb.append('/');
-                    case 'b' -> sb.append('\b');
-                    case 'f' -> sb.append('\f');
-                    case 'n' -> sb.append('\n');
-                    case 'r' -> sb.append('\r');
-                    case 't' -> sb.append('\t');
-                    case 'u' -> {
-                        if (i + 4 < raw.length()) {
-                            sb.append((char) Integer.parseInt(raw.substring(i + 1, i + 5), 16));
-                            i += 4;
-                        }
+        private PyObject parseValue(int depth) {
+            if (depth > MAX_DEPTH) {
+                throw decodeError("Maximum JSON nesting depth exceeded", pos);
+            }
+            skipWhitespace();
+            if (pos >= len) {
+                throw decodeError("Expecting value", pos);
+            }
+            char c = src.charAt(pos);
+            return switch (c) {
+                case '{' -> parseObject(depth + 1);
+                case '[' -> parseArray(depth + 1);
+                case '"' -> new PyStr(parseString());
+                case 't' -> parseLiteral("true", PyBool.TRUE);
+                case 'f' -> parseLiteral("false", PyBool.FALSE);
+                case 'n' -> parseLiteral("null", new PyNull());
+                default -> {
+                    if (c == '-' || (c >= '0' && c <= '9')) {
+                        yield parseNumber();
                     }
-                    default -> sb.append(next);
+                    throw decodeError("Expecting value", pos);
                 }
-            } else {
-                sb.append(c);
-            }
+            };
         }
-        return sb.toString();
-    }
 
-    private static PyObject jsonParseValue(String s) {
-        String t = s.trim();
-        if (t.equals("null")) return new PyNull();
-        if (t.equals("true")) return PyBool.TRUE;
-        if (t.equals("false")) return PyBool.FALSE;
-        if (t.startsWith("\"") && t.endsWith("\"") && t.length() >= 2) {
-            return new PyStr(unescapeJsonString(t.substring(1, t.length() - 1)));
-        }
-        if (t.startsWith("[") && t.endsWith("]")) {
-            var list = new java.util.ArrayList<PyObject>();
-            String inner = t.substring(1, t.length() - 1).trim();
-            if (!inner.isEmpty()) {
-                for (String part : splitJsonArray(inner)) {
-                    list.add(jsonParseValue(part));
-                }
-            }
-            return new PyList(list);
-        }
-        if (t.startsWith("{") && t.endsWith("}")) {
+        private PyObject parseObject(int depth) {
+            pos++; // consume '{'
+            skipWhitespace();
             var map = new java.util.LinkedHashMap<PyObject, PyObject>();
-            String inner = t.substring(1, t.length() - 1).trim();
-            if (!inner.isEmpty()) {
-                for (String pair : splitJsonObject(inner)) {
-                    int colon = findColonOutsideQuotes(pair);
-                    if (colon >= 0) {
-                        PyObject key = jsonParseValue(pair.substring(0, colon));
-                        PyObject val = jsonParseValue(pair.substring(colon + 1));
-                        map.put(key, val);
+            if (pos < len && src.charAt(pos) == '}') {
+                pos++;
+                return new PyDict(map);
+            }
+            while (true) {
+                skipWhitespace();
+                if (pos >= len || src.charAt(pos) != '"') {
+                    throw decodeError("Expecting property name enclosed in double quotes", pos);
+                }
+                String key = parseString();
+                skipWhitespace();
+                if (pos >= len || src.charAt(pos) != ':') {
+                    throw decodeError("Expecting ':' delimiter", pos);
+                }
+                pos++; // consume ':'
+                PyObject val = parseValue(depth);
+                map.put(new PyStr(key), val);
+                skipWhitespace();
+                if (pos >= len) {
+                    throw decodeError("Expecting ',' or '}' delimiter", pos);
+                }
+                char sep = src.charAt(pos);
+                if (sep == '}') {
+                    pos++;
+                    return new PyDict(map);
+                }
+                if (sep != ',') {
+                    throw decodeError("Expecting ',' delimiter", pos);
+                }
+                pos++; // consume ','
+            }
+        }
+
+        private PyObject parseArray(int depth) {
+            pos++; // consume '['
+            skipWhitespace();
+            var list = new java.util.ArrayList<PyObject>();
+            if (pos < len && src.charAt(pos) == ']') {
+                pos++;
+                return new PyList(list);
+            }
+            while (true) {
+                list.add(parseValue(depth));
+                skipWhitespace();
+                if (pos >= len) {
+                    throw decodeError("Expecting ',' or ']' delimiter", pos);
+                }
+                char sep = src.charAt(pos);
+                if (sep == ']') {
+                    pos++;
+                    return new PyList(list);
+                }
+                if (sep != ',') {
+                    throw decodeError("Expecting ',' delimiter", pos);
+                }
+                pos++; // consume ','
+            }
+        }
+
+        private String parseString() {
+            pos++; // consume opening '"'
+            StringBuilder sb = new StringBuilder();
+            while (pos < len) {
+                char c = src.charAt(pos++);
+                if (c == '"') {
+                    return sb.toString();
+                }
+                if (c < 0x20) {
+                    throw decodeError("Invalid control character in string", pos - 1);
+                }
+                if (c == '\\') {
+                    if (pos >= len) {
+                        throw decodeError("Unterminated string escape", pos);
                     }
+                    char esc = src.charAt(pos++);
+                    switch (esc) {
+                        case '"' -> sb.append('"');
+                        case '\\' -> sb.append('\\');
+                        case '/' -> sb.append('/');
+                        case 'b' -> sb.append('\b');
+                        case 'f' -> sb.append('\f');
+                        case 'n' -> sb.append('\n');
+                        case 'r' -> sb.append('\r');
+                        case 't' -> sb.append('\t');
+                        case 'u' -> {
+                            if (pos + 4 > len) {
+                                throw decodeError("Invalid \\uXXXX escape", pos);
+                            }
+                            String hex = src.substring(pos, pos + 4);
+                            try {
+                                sb.append((char) Integer.parseInt(hex, 16));
+                            } catch (NumberFormatException nfe) {
+                                throw decodeError("Invalid \\uXXXX escape", pos);
+                            }
+                            pos += 4;
+                        }
+                        default -> throw decodeError("Invalid \\escape: \\" + esc, pos - 1);
+                    }
+                } else {
+                    sb.append(c);
                 }
             }
-            return new PyDict(map);
+            throw decodeError("Unterminated string starting", pos);
         }
-        try {
-            if (t.contains(".") || t.contains("e") || t.contains("E")) {
-                return new PyFloat(Double.parseDouble(t));
+
+        private PyObject parseLiteral(String expected, PyObject value) {
+            if (!src.startsWith(expected, pos)) {
+                throw decodeError("Expecting value", pos);
+            }
+            pos += expected.length();
+            return value;
+        }
+
+        private PyObject parseNumber() {
+            int start = pos;
+            if (src.charAt(pos) == '-') pos++;
+            if (pos >= len) throw decodeError("Expecting number", start);
+            if (src.charAt(pos) == '0') {
+                pos++;
+                if (pos < len && Character.isDigit(src.charAt(pos))) {
+                    throw decodeError("Leading zeros are not permitted in JSON numbers", start);
+                }
+            } else if (src.charAt(pos) >= '1' && src.charAt(pos) <= '9') {
+                while (pos < len && Character.isDigit(src.charAt(pos))) pos++;
+            } else {
+                throw decodeError("Expecting digit", start);
+            }
+
+            boolean isFloat = false;
+            if (pos < len && src.charAt(pos) == '.') {
+                isFloat = true;
+                pos++;
+                if (pos >= len || !Character.isDigit(src.charAt(pos))) {
+                    throw decodeError("Expecting digit after decimal point", pos);
+                }
+                while (pos < len && Character.isDigit(src.charAt(pos))) pos++;
+            }
+            if (pos < len && (src.charAt(pos) == 'e' || src.charAt(pos) == 'E')) {
+                isFloat = true;
+                pos++;
+                if (pos < len && (src.charAt(pos) == '+' || src.charAt(pos) == '-')) pos++;
+                if (pos >= len || !Character.isDigit(src.charAt(pos))) {
+                    throw decodeError("Expecting exponent digit", pos);
+                }
+                while (pos < len && Character.isDigit(src.charAt(pos))) pos++;
+            }
+
+            String numStr = src.substring(start, pos);
+            if (isFloat) {
+                return new PyFloat(Double.parseDouble(numStr));
             }
             try {
-                return PyInt.of(Integer.parseInt(t));
+                return PyInt.of(Integer.parseInt(numStr));
             } catch (NumberFormatException nfe) {
-                return new org.example.jython3.runtime.BigInt(new java.math.BigInteger(t));
+                return new org.example.jython3.runtime.BigInt(new java.math.BigInteger(numStr));
             }
-        } catch (Exception e) {
-            return new PyStr(t);
+        }
+
+        private void skipWhitespace() {
+            while (pos < len) {
+                char c = src.charAt(pos);
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') pos++;
+                else break;
+            }
+        }
+
+        private org.example.jython3.runtime.InterpreterException decodeError(String msg, int charPos) {
+            return PyErrors.error("JSONDecodeError", msg + ": char " + charPos);
         }
     }
 }

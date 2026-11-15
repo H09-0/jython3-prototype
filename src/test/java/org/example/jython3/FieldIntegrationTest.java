@@ -40,6 +40,29 @@ public class FieldIntegrationTest {
     }
 
     @Test
+    @DisplayName("json.loads rejects malformed JSON with JSONDecodeError (subclass of ValueError)")
+    void testInvalidJsonRaisesJSONDecodeError() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            import json
+            bad_inputs = ["{bad json}", "[1,]", "unknown", "", "   ", '{"a": 1,}', '{"a" 1}', '{"a": }', "123 extra", "01"]
+            caught_decode_err = 0
+            caught_value_err = 0
+            for s in bad_inputs:
+                try:
+                    json.loads(s)
+                except json.JSONDecodeError:
+                    caught_decode_err = caught_decode_err + 1
+                try:
+                    json.loads(s)
+                except ValueError:
+                    caught_value_err = caught_value_err + 1
+            """);
+        assertEquals(new PyInt(10), interp.getGlobal("caught_decode_err"));
+        assertEquals(new PyInt(10), interp.getGlobal("caught_value_err"));
+    }
+
+    @Test
     @DisplayName("Zero-arg super() resolves parent methods across multi-level inheritance")
     void testZeroArgSuperInheritance() {
         var interp = Jython3Interpreter.trusted();

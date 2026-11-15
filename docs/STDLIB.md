@@ -88,7 +88,9 @@ print(parsed["name"])  # 'Alice'
 
 - **Functions**:
   - `dumps(obj)`: Serializes Python `dict`, `list`, `str`, `int`, `float`, `bool`, and `None` into JSON string.
-  - `loads(json_str)`: Deserializes valid JSON strings into corresponding Python data structures.
+  - `loads(json_str)`: Strictly deserializes valid RFC 8259 JSON strings (including nested objects, arrays, escapes, and `BigInt`s) into Python data structures; raises `json.JSONDecodeError` (subclass of `ValueError`) on malformed input.
+- **Exceptions**:
+  - `JSONDecodeError`: Raised on invalid JSON syntax (inherits from `ValueError`).
 
 ---
 

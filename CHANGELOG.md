@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **Strict RFC 8259 `json.loads()` & `JSONDecodeError`**: Replaced the permissive JSON fallback parser with a strict recursive-descent `JsonParser` enforcing RFC 8259 syntax and raising `json.JSONDecodeError` (registered as a `ValueError` subclass) on malformed inputs like `"{bad json}"`, `"[1,]"`, `"unknown"`, leading-zero numbers, trailing commas, and unquoted keys (378 total tests passing).
 - **Recursive `json.loads()` Parsing**: Fixed `jsonParseValue()` in `BuiltinModules` to recursively parse nested JSON objects `{...}`, nested arrays `[...]`, escape sequences, colons inside quoted keys/values, and `BigInt` numbers.
 - **Builtins Iterable Consumption (`list`, `sum`, `sorted`, `reversed`)**: Unified iterable collection via `collectIterable()` so generators, iterators, sets, and Java `Iterable`s work across all core built-in functions.
 - **Fluent Chaining on `StringBuilder` / `StringBuffer`**: Preserved `PyJavaObject` wrapping for mutable `StringBuilder`/`StringBuffer` return values in `JavaBridge.toPyObject()` so chained calls like `sb.append(a).append(b)` succeed while maintaining `CharSequence` policy gating.

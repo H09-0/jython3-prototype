@@ -74,6 +74,7 @@ public final class ExceptionTypeRegistry {
         var unicodeError = define("UnicodeError", valueError);
         define("UnicodeDecodeError", unicodeError);
         define("UnicodeEncodeError", unicodeError);
+        define("JSONDecodeError", valueError);
         define("DeprecationWarning", warning);
         define("UserWarning", warning);
         define("RuntimeWarning", warning);
