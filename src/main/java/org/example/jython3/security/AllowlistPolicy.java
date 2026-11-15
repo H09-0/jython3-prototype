@@ -197,6 +197,8 @@ public final class AllowlistPolicy implements JavaAccessPolicy {
 
     @Override
     public boolean canWriteField(String owner, String fieldName) {
-        return canAccessClass(owner) && !"class".equals(fieldName);
+        if (!canAccessClass(owner)) return false;
+        if ("class".equals(fieldName) || RESTRICTED_MEMBERS.contains(fieldName)) return false;
+        return !owner.startsWith("java.") && !owner.startsWith("javax.");
     }
 }

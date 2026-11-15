@@ -24,6 +24,7 @@
 | `FILESYSTEM` | **Denied** | `HostCapability.FILESYSTEM` + explicit `HostAccessPolicy` or `ScopedWorkspaceAdapter` | Yes | `ScopedWorkspaceAdapter` requires `CONTROL` + device/command allowlist, uses POSIX `SecureDirectoryStream` + `LinkOption.NOFOLLOW_LINKS` (`O_NOFOLLOW`) with canonical fallback on non-POSIX filesystems, normalizes backslashes, and blocks drive/UNC paths, symlinks, `maxBytes`, and `readOnly` writes. |
 | `PROCESS` | **Denied** | `HostCapability.PROCESS` (reserved) | Yes | No subprocess spawning API is exposed to Python. `OsModule.getpid()` is gated behind `HostAccessPolicy.canReadEnvironment()`. |
 | `NETWORK` | **Denied** | `HostCapability.NETWORK` (reserved) | Yes | No socket/HTTP module is exposed by default. |
+| `THREADS` | **Denied** | `HostCapability.THREADS` + `maxThreads`, `maxThreadPools`, `maxQueuedTasks`, `executorShutdownTimeout` | Yes | Requires **Java 21+** (`Thread.ofVirtual()`). Enforces cancellation-aware bounded shutdown/locking/futures (`ConcurrentFuturesHardeningTest`). |
 
 ---
 

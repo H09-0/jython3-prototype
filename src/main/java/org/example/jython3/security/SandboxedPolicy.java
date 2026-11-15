@@ -75,6 +75,6 @@ public final class SandboxedPolicy implements JavaAccessPolicy {
 
     @Override
     public boolean canWriteField(String owner, String fieldName) {
-        return canAccessClass(owner) && !"class".equals(fieldName);
+        return false;
     }
 }

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.13.1-beta] - 2026-11-15
+### Security & Hardening
+- **Virtual Threads & `concurrent.futures` Hardening (`ConcurrentFuturesModule`, `ThreadingModule`, `CapabilitySet`, `HostSession`)**:
+  - Replaced `as_completed()` order-preserving list iterator with a true completion-ordered queue (`as_completed(..., timeout=None)`), added `Future.cancel()` / `cancelled()` / `running()` / `exception(timeout=...)`, and switched `FUTURE_STATES` to `WeakHashMap` to prevent retained Future leaks (`ConcurrentFuturesHardeningTest`).
+  - Added `maxThreadPools` (default 8), `maxQueuedTasks` (default 1024), `executorShutdownTimeout` (default 2s), bounded cancellation-aware `shutdown(wait=True, cancel_futures=...)` / `__exit__`, bounded streaming `map(..., timeout=..., chunksize=...)`, and cancellation-polling `Semaphore`/`Lock` acquires.
+- **OOP, Import, I/O, and Java Bridge Policy Hardening (`PyClass`, `ModuleLoader`, `IoModule`, `PyJavaClass`, `SandboxedPolicy`, `AllowlistPolicy`)**:
+  - Made `PyClass.getBases()` return an immutable copy and synchronized/volatile-hardened concurrent MRO + `memberCache` invalidation (`ConcurrentOopBasesRaceTest`).
+  - Audited `.sikuli` bundle canonical root containment, module byte size limit, `importlib.reload` symlink safety, and `io.open()` closed-file `ValueError`, symlink rejection, cumulative write/read size caps, and thread-safe file locks (`ImportSikuliAndIoSecurityTest`).
+  - Denied all Java field writes in `SandboxedPolicy`, blocked `java.*`/`javax.*` & `RESTRICTED_MEMBERS` field writes in `AllowlistPolicy`, and enforced field-type & `PyHostHandle` checks in `PyJavaClass.setMember` (`JavaStaticFieldSecurityTest`; 563 total tests passing green).
+
 ## [v0.13.0-beta] - 2026-11-15
 ### Added & Improved
 - **Tier-1 VM Optimization (`CompiledCode`, `Jython3Interpreter`, `Frame`)**:

@@ -73,17 +73,24 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
         if (name == null || name.isEmpty()) {
             throw PyErrors.error("AttributeError", "cannot set empty attribute on Java class");
         }
+        if (!policy.canWriteField(clazz.getName(), name)) {
+            throw JavaBridge.denied("field '" + name + "'");
+        }
+        if (val instanceof PyHostHandle) {
+            throw PyErrors.error("SecurityError", "cannot assign host capability handle to Java static field");
+        }
         try {
             Field f = clazz.getField(name);
             if (Modifier.isStatic(f.getModifiers()) && Modifier.isPublic(f.getModifiers()) && !f.isSynthetic()) {
-                if (!policy.canWriteField(clazz.getName(), name)) {
-                    throw JavaBridge.denied("field '" + name + "'");
-                }
                 if (Modifier.isFinal(f.getModifiers())) {
                     throw PyErrors.error("AttributeError",
                             "cannot set final static field '" + name + "' on Java class '" + clazz.getName() + "'");
                 }
-                Object javaVal = JavaBridge.toJavaObject(val, f.getType(), policy);
+                Class<?> ft = f.getType();
+                if (!ft.isPrimitive() && !ft.isArray() && !policy.canAccessClass(ft.getName())) {
+                    throw JavaBridge.denied(ft.getName());
+                }
+                Object javaVal = JavaBridge.toJavaObject(val, ft, policy);
                 f.set(null, javaVal);
                 return;
             }
