@@ -46,6 +46,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         final Jython3Parser.SuiteContext finallySuite;
         final int loopDepth;
         final boolean isWithScope;
+        final String asyncExitVar;
         boolean handlerActive = true;
         boolean insideFinally = false;
         /** True while compiling an {@code except} suite or exceptional {@code finally} of this statement. */
@@ -53,13 +54,18 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         String boundVar = null;
 
         TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth) {
-            this(finallySuite, loopDepth, false);
+            this(finallySuite, loopDepth, false, null);
         }
 
         TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth, boolean isWithScope) {
+            this(finallySuite, loopDepth, isWithScope, null);
+        }
+
+        TryScope(Jython3Parser.SuiteContext finallySuite, int loopDepth, boolean isWithScope, String asyncExitVar) {
             this.finallySuite = finallySuite;
             this.loopDepth = loopDepth;
             this.isWithScope = isWithScope;
+            this.asyncExitVar = asyncExitVar;
         }
     }
     private final java.util.Deque<TryScope> tryStack = new java.util.ArrayDeque<>();
@@ -109,6 +115,19 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             }
             if (scope.isWithScope && !scope.insideFinally) {
                 b.emit(OpCode.END_WITH);
+            }
+            if (scope.asyncExitVar != null && !scope.insideFinally) {
+                b.emit(OpCode.LOAD_FAST, scope.asyncExitVar);
+                b.emit(OpCode.LOAD_CONST, null);
+                b.emit(OpCode.LOAD_CONST, null);
+                b.emit(OpCode.LOAD_CONST, null);
+                b.emitRaw(OpCode.CALL_FUNCTION, 3);
+                b.emit(OpCode.GET_AWAITABLE);
+                b.emit(OpCode.LOAD_CONST, null);
+                int exitAw = b.size();
+                b.emitRaw(OpCode.AWAIT_FROM, 0);
+                b.patch(exitAw, b.size());
+                b.emit(OpCode.POP_TOP);
             }
             if (scope.finallySuite != null && !scope.insideFinally) {
                 boolean prevInside = scope.insideFinally;
@@ -694,10 +713,11 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             return;
         }
         var item = items.get(idx);
+        String aexitVar = "$aexit_" + (compCounter++);
         visit(item.expr());
         b.emit(OpCode.DUP_TOP);
         b.emit(OpCode.LOAD_ATTR, "__aexit__");
-        b.emit(OpCode.ROT_TWO);
+        b.emit(OpCode.STORE_FAST, aexitVar);
         b.emit(OpCode.LOAD_ATTR, "__aenter__");
         b.emitRaw(OpCode.CALL_FUNCTION, 0);
         b.emit(OpCode.GET_AWAITABLE);
@@ -712,12 +732,17 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             b.emit(OpCode.POP_TOP);
         }
 
+        var asyncWithScope = new TryScope(null, loopStack.size(), false, aexitVar);
+        tryStack.push(asyncWithScope);
         int pushH = b.size();
         b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
         compileAsyncWithItems(items, idx + 1, body);
         b.emit(OpCode.POP_EXCEPT_HANDLER);
+        asyncWithScope.handlerActive = false;
+        tryStack.pop();
 
         // Normal exit: await __aexit__(None, None, None)
+        b.emit(OpCode.LOAD_FAST, aexitVar);
         b.emit(OpCode.LOAD_CONST, null);
         b.emit(OpCode.LOAD_CONST, null);
         b.emit(OpCode.LOAD_CONST, null);
@@ -728,13 +753,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         b.emitRaw(OpCode.AWAIT_FROM, 0);
         b.patch(exitAw, b.size());
         b.emit(OpCode.POP_TOP);
+        b.emit(OpCode.DELETE_NAME_SILENT, aexitVar);
         int jumpAfter = b.size();
         b.emitRaw(OpCode.JUMP, 0);
 
-        // Exception path: stack has [aexit, exc]
+        // Exception path: stack has [exc]
         b.patch(pushH, b.size());
         String excTmp = "$aexc_" + (compCounter++);
         b.emit(OpCode.STORE_FAST, excTmp);
+        b.emit(OpCode.LOAD_FAST, aexitVar);
         b.emit(OpCode.LOAD_FAST, excTmp);
         b.emit(OpCode.LOAD_ATTR, "__class__");
         b.emit(OpCode.LOAD_FAST, excTmp);
@@ -746,6 +773,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         int excExitAw = b.size();
         b.emitRaw(OpCode.AWAIT_FROM, 0);
         b.patch(excExitAw, b.size());
+        b.emit(OpCode.DELETE_NAME_SILENT, aexitVar);
         int notSupp = b.size();
         b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
         b.emit(OpCode.DELETE_NAME_SILENT, excTmp);

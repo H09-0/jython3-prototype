@@ -154,3 +154,33 @@ emoji = random.choice("😀😃😄")               # Codepoint-safe choice from
   - `randint(a, b)`: Returns random integer in `[a, b]` using unbiased rejection sampling over arbitrary-precision integers.
   - `choice(sequence)`: Returns a random element from a non-empty sequence (Unicode-safe).
   - `seed(n=None)`: Seeds the local PRNG instance.
+
+---
+
+## 9. `itertools`
+Provides lazy, `ExecutionLimits`-checked iterator combinators (`count`, `cycle`, `repeat`, `chain`, `islice`, `takewhile`, `dropwhile`, `compress`, `accumulate`, `zip_longest`, `product`, `permutations`, `combinations`).
+
+---
+
+## 10. `datetime`
+Provides calendar date, time, timestamp, and duration arithmetic (`date`, `time`, `datetime`, `timedelta`).
+
+---
+
+## 11. `queue`
+Provides thread-safe FIFO, LIFO, and priority queues (`Queue`, `LifoQueue`, `PriorityQueue`, `Empty`, `Full`).
+
+---
+
+## 12. `threading` & `concurrent.futures`
+Capability-gated (`HostCapability.THREADS`) Java 21 Virtual Thread concurrency:
+- `threading`: `Thread`, `Lock`, `RLock`, `Event`, `Semaphore`, `current_thread`, `active_count`.
+- `concurrent.futures`: `ThreadPoolExecutor`, `Future` (`result`, `exception`, `cancel`, `cancelled`, `running`, `done`), `as_completed`.
+
+---
+
+## 13. `asyncio`
+Cooperative single-threaded event loop bounded by `ExecutionLimits` and a `4096`-task ceiling:
+- **Runner & Tasks**: `run(coro)`, `create_task(coro, name=...)`, `sleep(delay, result=None)`, `gather(*aws, return_exceptions=False)`, `wait_for(aw, timeout)`, `current_task()`, `all_tasks()`, `iscoroutine(obj)`, `iscoroutinefunction(obj)`.
+- **`Task` Methods**: `.done()`, `.cancelled()`, `.cancel()`, `.result()`, `.exception()`, `.get_name()`, `.add_done_callback(fn)`, `.remove_done_callback(fn)`.
+- **Synchronization & Exceptions**: `Queue`, `Event`, `Lock`, `CancelledError` (`BaseException` subclass), `InvalidStateError`, `TimeoutError`.

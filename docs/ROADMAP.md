@@ -27,7 +27,7 @@ For completed historical releases, see [CHANGELOG.md](../CHANGELOG.md).
 - [x] PEP 3110 exception-target deletion on `raise` exit paths inside `except ... as e:` without `finally`.
 - [x] Dynamic 3-argument `type(name, bases, dict)`, C3 MRO, dynamic `__bases__` mutation, and `@property`/`@staticmethod`/`@classmethod`.
 - [x] Numeric underscore literals (`1_000_000`), walrus `:=`, `bytes`/`bytearray`, lazy O(1) `range`, and full dunder operator overloading.
-- [ ] `async def` / `await` coroutine syntax.
+- [x] `async def` / `await` coroutine syntax (PEP 492), PEP 479 generator/coroutine `StopIteration`, Execution Model §4.2.2 `UnboundLocalError`, and cooperative `asyncio`.
 
 ### Virtual Threads & Concurrency
 - [x] Native support for Java 21+ Virtual Threads (`HostCapability.THREADS` + `threading` module).

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.14.0-beta] - 2026-11-15
+### Added & Improved
+- **Python Execution Model §4.2.2 & PEP 479 (`CompiledCode`, `Jython3Interpreter`, `Pep479AndExecutionModelTest`)**:
+  - Added static `CompiledCode.localNames` classification and enforced `UnboundLocalError` for read-before-assignment and post-`del` function locals without falling back to globals or closures (`74116bc`).
+  - Implemented PEP 479 (`InterpreterException.generatorReturn`) converting uncaught `StopIteration` inside generators/coroutines into `RuntimeError` with `__cause__` preserved (`74116bc`).
+- **PEP 492 Native Coroutines (`PyCoroutine`, `Jython3.g4`, `OpCode`, `CompileVisitor`, `Jython3Interpreter`, `AsyncAwaitCoroutinesTest`)**:
+  - Added distinct `PyCoroutine` runtime type, `async def`, `await`, `async for` (`__aiter__`/`__anext__`/`StopAsyncIteration`), `async with` (`__aenter__`/`__aexit__` including clean unwinding on `return`/`break`/`continue`), `GET_AWAITABLE`, `AWAIT_FROM`, `GET_AITER`, and static `SyntaxError` checks (`305fd0e`).
+  - Fixed `nonlocal` promotion and lookup inside suspended generators/coroutines (`MAKE_FUNCTION` & `LOAD_CONST @nonlocal:`).
+- **Cooperative `asyncio` Event Loop & Fast `PyRange` Iteration (`AsyncioModule`, `PyIterator`, `PyRange`, `AsyncioConformanceAndSecurityTest`)**:
+  - Implemented cooperative single-threaded `asyncio` (`run`, `sleep`, `gather`, `create_task`, `wait_for`, `Task` with `add_done_callback`/`remove_done_callback`, `Queue`, `Event`, `Lock`, `current_task`, `all_tasks`, `iscoroutine`, `iscoroutinefunction`, `CancelledError`, `InvalidStateError`) with zero-spin parking, `ExecutionLimits` enforcement, deadlock detection, and `MAX_TASKS = 4096` DoS cap.
+  - Added `PyIterator.ofIntRange` / `fastNext()` fast path for `FOR_ITER` over 32-bit `PyRange` loops (`570` total tests passing green).
+
 ## [v0.13.1-beta] - 2026-11-15
 ### Security & Hardening
 - **Virtual Threads & `concurrent.futures` Hardening (`ConcurrentFuturesModule`, `ThreadingModule`, `CapabilitySet`, `HostSession`)**:

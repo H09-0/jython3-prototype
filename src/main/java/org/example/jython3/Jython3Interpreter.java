@@ -1598,7 +1598,8 @@ public class Jython3Interpreter implements AutoCloseable {
                             break; // no stack push — declaration only
                         } else if (s.startsWith("@nonlocal:")) {
                             String nlName = s.substring(10);
-                            if (callStack.isEmpty() || currentLocals == null || currentLocals == globals) {
+                            if ((callStack.isEmpty() && activeGenerator == null)
+                                    || currentLocals == null || currentLocals == globals || currentLocals == currentGlobals) {
                                 throw PyErrors.error("SyntaxError", "nonlocal declaration not allowed at module level");
                             }
                             PyCell targetCell = null;
@@ -2111,6 +2112,19 @@ public class Jython3Interpreter implements AutoCloseable {
                         // Capture only referenced free (non-local) enclosing bindings
                         Map<String, PyObject> capSrc = closureCaptureLocals != null ? closureCaptureLocals : currentLocals;
                         if (capSrc != null && capSrc != globals) {
+                            if (fn.code() != null && fn.code().constPool() != null) {
+                                for (Object cpObj : fn.code().constPool()) {
+                                    if (cpObj instanceof String cs && cs.startsWith("@nonlocal:")) {
+                                        String nlName = cs.substring(10);
+                                        if (capSrc.containsKey(nlName)) {
+                                            PyObject curVal = capSrc.get(nlName);
+                                            if (!(curVal instanceof PyCell)) {
+                                                capSrc.put(nlName, new PyCell(curVal));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             for (Map.Entry<String, PyObject> e : capSrc.entrySet()) {
                                 if (!e.getKey().equals(funcName)
                                         && refs.contains(e.getKey())
@@ -2735,6 +2749,13 @@ public class Jython3Interpreter implements AutoCloseable {
                             }
                         } catch (InterpreterException ie) {
                             stack.pop();
+                            if ("StopIteration".equals(ie.typeName())) {
+                                PyObject retVal = (ie.value() instanceof PyException pe && !pe.args().isEmpty())
+                                        ? pe.args().get(0) : PyNull.INSTANCE;
+                                stack.push(retVal);
+                                pc = ai;
+                                continue;
+                            }
                             throw ie;
                         }
                         stack.pop();
@@ -3028,7 +3049,8 @@ public class Jython3Interpreter implements AutoCloseable {
                 case FOR_ITER -> {
                     PyObject top = stack.peek();
                     if (top instanceof PyIterator iter) {
-                        if (iter.hasNext()) stack.push(iter.next());
+                        PyObject nextVal = iter.fastNext();
+                        if (nextVal != null) stack.push(nextVal);
                         else { stack.pop(); pc = ai; continue; }
                     } else if (top instanceof PyGenerator gen) {
                         try {
@@ -4073,6 +4095,7 @@ public class Jython3Interpreter implements AutoCloseable {
             case "itertools" -> BuiltinModules.itertools();
             case "queue" -> BuiltinModules.queue(hostSession);
             case "datetime" -> BuiltinModules.datetime();
+            case "asyncio" -> BuiltinModules.asyncio();
             case "concurrent" -> BuiltinModules.concurrentPkg(hostSession, this::spawnVirtualThread);
             case "concurrent.futures" -> {
                 PyModule pkg = resolveBuiltinModule("concurrent");
@@ -4098,7 +4121,7 @@ public class Jython3Interpreter implements AutoCloseable {
     private static boolean isBuiltinModuleName(String name) {
         return switch (name) {
             case "math", "sys", "os", "io", "json", "re", "time", "random", "importlib",
-                 "ui", "control", "threading", "itertools", "queue", "datetime",
+                 "ui", "control", "threading", "itertools", "queue", "datetime", "asyncio",
                  "concurrent", "concurrent.futures" -> true;
             default -> false;
         };

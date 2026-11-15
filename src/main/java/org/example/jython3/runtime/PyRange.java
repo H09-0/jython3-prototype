@@ -97,10 +97,19 @@ public final class PyRange implements PyObject {
     }
 
     public PyIterator iterator() {
+        if (length.signum() == 0) {
+            return PyIterator.ofIntRange(0L, 1L, 0L);
+        }
         if (length.bitLength() < 63) {
             final long curStart = start.longValue();
             final long curStep = step.longValue();
             final long count = length.longValue();
+            if (start.bitLength() < 32 && step.bitLength() < 32) {
+                BigInteger last = start.add(step.multiply(length.subtract(BigInteger.ONE)));
+                if (last.bitLength() < 32) {
+                    return PyIterator.ofIntRange(curStart, curStep, count);
+                }
+            }
             return new PyIterator(new Iterator<PyObject>() {
                 private long idx = 0;
                 private long val = curStart;
