@@ -33,6 +33,11 @@ public interface PyCaller {
         throw PyErrors.error("RuntimeError", "super(): no arguments");
     }
 
+    /** Returns the active frame's local scope (or globals at module level) if available. */
+    default Map<String, PyObject> currentScope() {
+        return null;
+    }
+
     ThreadLocal<PyCaller> CURRENT = new ThreadLocal<>();
 
     static PyCaller current() {

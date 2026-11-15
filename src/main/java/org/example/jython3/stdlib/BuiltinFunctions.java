@@ -291,18 +291,28 @@ public final class BuiltinFunctions {
             return m;
         }));
 
-        // sum(iterable)
-        define.accept("sum", new PyBuiltinFunction("sum", args -> {
-            checkArgCount("sum", args, 1);
-            List<PyObject> items = collectIterable(args[0], javaPolicy);
-            double total = 0;
-            boolean hasFloat = false;
-            for (PyObject item : items) {
-                if (item instanceof PyInt i) total += i.value();
-                else if (item instanceof PyFloat f) { total += f.value(); hasFloat = true; }
-                else throw PyErrors.error("TypeError", "unsupported operand type for sum()");
+        // sum(iterable, start=0)
+        define.accept("sum", new PyBuiltinFunction("sum", (args, kwargs) -> {
+            if (args.length < 1 || args.length > 2) {
+                throw PyErrors.error("TypeError", "sum() takes at most 2 arguments (" + args.length + " given)");
             }
-            return hasFloat ? new PyFloat(total) : PyInt.of((int) total);
+            if (args.length == 2 && kwargs.containsKey("start")) {
+                throw PyErrors.error("TypeError", "sum() got multiple values for argument 'start'");
+            }
+            for (String k : kwargs.keySet()) {
+                if (!"start".equals(k)) {
+                    throw PyErrors.error("TypeError", "sum() got an unexpected keyword argument '" + k + "'");
+                }
+            }
+            PyObject total = args.length == 2 ? args[1] : (kwargs.containsKey("start") ? kwargs.get("start") : PyInt.of(0));
+            if (total instanceof PyStr) {
+                throw PyErrors.error("TypeError", "sum() can't sum strings [use ''.join(seq) instead]");
+            }
+            PyIterator it = toIterator(args[0], javaPolicy);
+            while (it.hasNext()) {
+                total = org.example.jython3.runtime.ArithmeticOps.add(total, it.next());
+            }
+            return total;
         }));
 
         // list(iterable?)
@@ -417,41 +427,87 @@ public final class BuiltinFunctions {
             }
         }));
 
-        // enumerate(iterable)
-        define.accept("enumerate", new PyBuiltinFunction("enumerate", args -> {
-            checkArgCount("enumerate", args, 1);
-            if (!(args[0] instanceof PyList list)) throw PyErrors.error("TypeError", "enumerate() argument must be iterable");
-            var items = new ArrayList<PyObject>();
-            for (int i = 0; i < list.items().size(); i++) {
-                items.add(new PyList(List.of(new PyInt(i), list.items().get(i))));
+        // enumerate(iterable, start=0)
+        define.accept("enumerate", new PyBuiltinFunction("enumerate", (args, kwargs) -> {
+            if (args.length < 1 || args.length > 2) {
+                throw PyErrors.error("TypeError", "enumerate() takes 1 or 2 arguments (" + args.length + " given)");
+            }
+            if (args.length == 2 && kwargs.containsKey("start")) {
+                throw PyErrors.error("TypeError", "enumerate() got multiple values for argument 'start'");
+            }
+            for (String k : kwargs.keySet()) {
+                if (!"start".equals(k)) {
+                    throw PyErrors.error("TypeError", "enumerate() got an unexpected keyword argument '" + k + "'");
+                }
+            }
+            int start = 0;
+            if (args.length == 2) start = toInt(args[1]);
+            else if (kwargs.containsKey("start")) start = toInt(kwargs.get("start"));
+            List<PyObject> src = collectIterable(args[0], javaPolicy);
+            var items = new ArrayList<PyObject>(src.size());
+            for (int i = 0; i < src.size(); i++) {
+                items.add(new PyTuple(List.of(PyInt.of(start + i), src.get(i))));
             }
             return new PyList(items);
         }));
 
-        // zip(a, b, ...)
+        // zip(*iterables)
         define.accept("zip", new PyBuiltinFunction("zip", args -> {
-            if (args.length < 2) throw PyErrors.error("TypeError", "zip() requires at least 2 arguments");
-            List<List<PyObject>> lists = new ArrayList<>();
+            if (args.length == 0) return new PyList(new ArrayList<>());
+            List<List<PyObject>> seqs = new ArrayList<>(args.length);
             int minLen = Integer.MAX_VALUE;
             for (PyObject a : args) {
-                if (!(a instanceof PyList l)) throw PyErrors.error("TypeError", "zip() argument must be iterable");
-                lists.add(l.items());
-                minLen = Math.min(minLen, l.items().size());
+                List<PyObject> items = collectIterable(a, javaPolicy);
+                seqs.add(items);
+                minLen = Math.min(minLen, items.size());
             }
-            var result = new ArrayList<PyObject>();
+            var result = new ArrayList<PyObject>(minLen);
             for (int i = 0; i < minLen; i++) {
-                var tuple = new ArrayList<PyObject>();
-                for (var l : lists) tuple.add(l.get(i));
-                result.add(new PyList(tuple));
+                var tupleItems = new ArrayList<PyObject>(seqs.size());
+                for (var s : seqs) tupleItems.add(s.get(i));
+                result.add(new PyTuple(tupleItems));
             }
             return new PyList(result);
         }));
 
         // map(func, iterable)
-        define.accept("map", new PyBuiltinFunction("map", args -> map(caller, args)));
+        define.accept("map", new PyBuiltinFunction("map", args -> map(caller, javaPolicy, args)));
 
         // filter(func, iterable)
-        define.accept("filter", new PyBuiltinFunction("filter", args -> filter(caller, args)));
+        define.accept("filter", new PyBuiltinFunction("filter", args -> filter(caller, javaPolicy, args)));
+
+        // all(iterable)
+        define.accept("all", new PyBuiltinFunction("all", args -> {
+            checkArgCount("all", args, 1);
+            PyIterator it = toIterator(args[0], javaPolicy);
+            while (it.hasNext()) {
+                if (!isTruthy(it.next())) return PyBool.FALSE;
+            }
+            return PyBool.TRUE;
+        }));
+
+        // any(iterable)
+        define.accept("any", new PyBuiltinFunction("any", args -> {
+            checkArgCount("any", args, 1);
+            PyIterator it = toIterator(args[0], javaPolicy);
+            while (it.hasNext()) {
+                if (isTruthy(it.next())) return PyBool.TRUE;
+            }
+            return PyBool.FALSE;
+        }));
+
+        // callable(obj)
+        define.accept("callable", new PyBuiltinFunction("callable", args -> {
+            checkArgCount("callable", args, 1);
+            PyObject o = args[0];
+            boolean ok = o instanceof PyFunction
+                    || o instanceof PyBuiltinFunction
+                    || o instanceof PyBoundMethod
+                    || o instanceof PyClass
+                    || o instanceof PyJavaClass
+                    || o instanceof PyJavaMethod;
+            return PyBool.of(ok);
+        }));
 
         // tuple([iterable])
         defineType.accept("tuple", PyBuiltinFunction.builtinType("tuple", args -> {
@@ -480,9 +536,7 @@ public final class BuiltinFunctions {
         // repr(obj)
         define.accept("repr", new PyBuiltinFunction("repr", args -> {
             checkArgCount("repr", args, 1);
-            PyObject o = args[0];
-            if (o instanceof PyStr s) return new PyStr("'" + s.value() + "'");
-            return new PyStr(o.toString());
+            return new PyStr(pyRepr(args[0]));
         }));
 
         // hash(obj)
@@ -618,7 +672,72 @@ public final class BuiltinFunctions {
             throw PyErrors.error("AttributeError", "cannot set attribute on '" + typeName(args[0]) + "'");
         }));
 
-        // input(prompt?)
+        // delattr(obj, name)
+        define.accept("delattr", new PyBuiltinFunction("delattr", args -> {
+            checkArgCount("delattr", args, 2);
+            if (!(args[1] instanceof PyStr s)) throw PyErrors.error("TypeError", "attribute name must be string");
+            String name = s.value();
+            if (args[0] instanceof PyInstance inst) {
+                if (!inst.deleteField(name)) {
+                    throw PyErrors.error("AttributeError", "'" + inst.pyClass().name() + "' object has no attribute '" + name + "'");
+                }
+                return new PyNull();
+            }
+            if (args[0] instanceof PyClass cls) {
+                if (cls.removeMember(name) == null) {
+                    throw PyErrors.error("AttributeError", "type object '" + cls.name() + "' has no attribute '" + name + "'");
+                }
+                return new PyNull();
+            }
+            if (args[0] instanceof PyModule mod) {
+                if (mod.attrs().remove(name) == null) {
+                    throw PyErrors.error("AttributeError", "module '" + mod.name() + "' has no attribute '" + name + "'");
+                }
+                return new PyNull();
+            }
+            throw PyErrors.error("AttributeError", "'" + typeName(args[0]) + "' object has no attribute '" + name + "'");
+        }));
+
+        // vars([obj])
+        define.accept("vars", new PyBuiltinFunction("vars", args -> {
+            if (args.length > 1) {
+                throw PyErrors.error("TypeError", "vars expected at most 1 argument, got " + args.length);
+            }
+            if (args.length == 0) {
+                Map<String, PyObject> scope = caller.currentScope();
+                if (scope == null) {
+                    throw PyErrors.error("RuntimeError", "vars() without arguments is not available here");
+                }
+                return scopeToDict(scope);
+            }
+            PyObject o = args[0];
+            if (o instanceof PyInstance inst) return stringMapToDict(inst.fields());
+            if (o instanceof PyModule mod) return stringMapToDict(mod.attrs());
+            if (o instanceof PyClass cls) return stringMapToDict(cls.members());
+            throw PyErrors.error("TypeError", "vars() argument must have __dict__ attribute");
+        }));
+
+        // dir([obj])
+        define.accept("dir", new PyBuiltinFunction("dir", args -> {
+            if (args.length > 1) {
+                throw PyErrors.error("TypeError", "dir expected at most 1 argument, got " + args.length);
+            }
+            if (args.length == 0) {
+                Map<String, PyObject> scope = caller.currentScope();
+                if (scope == null) {
+                    throw PyErrors.error("RuntimeError", "dir() without arguments is not available here");
+                }
+                var names = new ArrayList<String>();
+                for (String k : scope.keySet()) {
+                    if (!org.example.jython3.compile.CompiledCode.isSyntheticName(k)) names.add(k);
+                }
+                Collections.sort(names);
+                var res = new ArrayList<PyObject>(names.size());
+                for (String n : names) res.add(new PyStr(n));
+                return new PyList(res);
+            }
+            return dirObject(args[0]);
+        }));
         define.accept("input", new PyBuiltinFunction("input", args -> {
             if (args.length > 0 && args[0] instanceof PyStr s) System.out.print(s.value());
             try {
@@ -665,25 +784,128 @@ public final class BuiltinFunctions {
         throw PyErrors.error("TypeError", "'" + typeName(o) + "' object is not iterable");
     }
 
-    private static PyObject map(PyCaller caller, PyObject[] args) {
+    private static PyObject map(PyCaller caller, org.example.jython3.security.JavaAccessPolicy policy, PyObject[] args) {
         if (args.length != 2) throw PyErrors.error("TypeError", "map() requires exactly 2 arguments");
-        if (!(args[1] instanceof PyList list)) throw PyErrors.error("TypeError", "map() argument 2 must be iterable");
-        var result = new ArrayList<PyObject>();
-        for (var item : list.items()) {
+        List<PyObject> items = collectIterable(args[1], policy);
+        var result = new ArrayList<PyObject>(items.size());
+        for (var item : items) {
             result.add(caller.call(args[0], new PyObject[]{item}));
         }
         return new PyList(result);
     }
 
-    private static PyObject filter(PyCaller caller, PyObject[] args) {
+    private static PyObject filter(PyCaller caller, org.example.jython3.security.JavaAccessPolicy policy, PyObject[] args) {
         if (args.length != 2) throw PyErrors.error("TypeError", "filter() requires exactly 2 arguments");
-        if (!(args[1] instanceof PyList list)) throw PyErrors.error("TypeError", "filter() argument 2 must be iterable");
+        List<PyObject> items = collectIterable(args[1], policy);
         var result = new ArrayList<PyObject>();
-        for (var item : list.items()) {
-            PyObject val = caller.call(args[0], new PyObject[]{item});
-            if (isTruthy(val)) result.add(item);
+        boolean identity = args[0] instanceof PyNull;
+        for (var item : items) {
+            boolean keep = identity ? isTruthy(item) : isTruthy(caller.call(args[0], new PyObject[]{item}));
+            if (keep) result.add(item);
         }
         return new PyList(result);
+    }
+
+    private static String pyRepr(PyObject o) {
+        if (o instanceof PyStr s) {
+            String raw = s.value();
+            char quote = (raw.indexOf('\'') >= 0 && raw.indexOf('"') < 0) ? '"' : '\'';
+            var sb = new StringBuilder();
+            sb.append(quote);
+            for (int i = 0; i < raw.length(); i++) {
+                char ch = raw.charAt(i);
+                switch (ch) {
+                    case '\\' -> sb.append("\\\\");
+                    case '\n' -> sb.append("\\n");
+                    case '\r' -> sb.append("\\r");
+                    case '\t' -> sb.append("\\t");
+                    default -> {
+                        if (ch == quote) sb.append('\\').append(quote);
+                        else sb.append(ch);
+                    }
+                }
+            }
+            return sb.append(quote).toString();
+        }
+        if (o instanceof PyException pe) {
+            var sb = new StringBuilder(pe.typeName()).append('(');
+            for (int i = 0; i < pe.args().size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(pyRepr(pe.args().get(i)));
+            }
+            return sb.append(')').toString();
+        }
+        return String.valueOf(o);
+    }
+
+    private static PyDict scopeToDict(Map<String, PyObject> scope) {
+        var d = new PyDict();
+        for (var entry : scope.entrySet()) {
+            String k = entry.getKey();
+            if (org.example.jython3.compile.CompiledCode.isSyntheticName(k)) continue;
+            PyObject v = entry.getValue();
+            if (v instanceof org.example.jython3.runtime.PyCell cell) {
+                if (!cell.isBound()) continue;
+                v = cell.get();
+            }
+            if (v != null) d.put(new PyStr(k), v);
+        }
+        return d;
+    }
+
+    private static PyDict stringMapToDict(Map<String, PyObject> map) {
+        var d = new PyDict();
+        for (var entry : map.entrySet()) {
+            d.put(new PyStr(entry.getKey()), entry.getValue());
+        }
+        return d;
+    }
+
+    private static PyList dirObject(PyObject o) {
+        var names = new java.util.TreeSet<String>();
+        names.add("__class__");
+        if (o instanceof PyInstance inst) {
+            names.addAll(inst.fields().keySet());
+            collectClassMembers(inst.pyClass(), names);
+        } else if (o instanceof PyClass cls) {
+            names.add("__name__");
+            collectClassMembers(cls, names);
+        } else if (o instanceof PyModule mod) {
+            names.addAll(mod.attrs().keySet());
+        } else if (o instanceof PyException) {
+            Collections.addAll(names, "__cause__", "__context__", "__suppress_context__", "__traceback__", "args");
+        } else if (o instanceof PyTraceback) {
+            Collections.addAll(names, "tb_frame", "tb_lasti", "tb_lineno", "tb_next");
+        } else if (o instanceof PyFrameInfo) {
+            Collections.addAll(names, "f_code", "f_lineno");
+        } else if (o instanceof PyCodeInfo) {
+            Collections.addAll(names, "co_filename", "co_name");
+        } else if (o instanceof PyDict) {
+            Collections.addAll(names, "clear", "copy", "get", "items", "keys", "pop", "update", "values");
+        } else if (o instanceof PyList) {
+            Collections.addAll(names, "append", "clear", "copy", "count", "extend", "index", "insert", "pop", "remove", "reverse", "sort");
+        } else if (o instanceof org.example.jython3.runtime.PySet) {
+            Collections.addAll(names, "add", "clear", "copy", "difference", "discard", "intersection", "pop", "remove", "union", "update");
+        } else if (o instanceof PyStr) {
+            Collections.addAll(names, "count", "endswith", "find", "isalnum", "isalpha", "isdigit", "join", "lower", "replace", "split", "startswith", "strip", "upper");
+        } else if (o instanceof PyFunction || o instanceof PyBuiltinFunction || o instanceof PyBoundMethod) {
+            names.add("__name__");
+        }
+        var res = new ArrayList<PyObject>(names.size());
+        for (String n : names) res.add(new PyStr(n));
+        return new PyList(res);
+    }
+
+    private static void collectClassMembers(PyClass cls, java.util.Set<String> out) {
+        var seen = Collections.newSetFromMap(new java.util.IdentityHashMap<PyClass, Boolean>());
+        var q = new java.util.ArrayDeque<PyClass>();
+        q.add(cls);
+        while (!q.isEmpty()) {
+            PyClass cur = q.removeFirst();
+            if (!seen.add(cur)) continue;
+            out.addAll(cur.members().keySet());
+            q.addAll(cur.getBases());
+        }
     }
 
     /**

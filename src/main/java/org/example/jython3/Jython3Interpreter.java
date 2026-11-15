@@ -342,6 +342,10 @@ public class Jython3Interpreter {
                 PyClass owner = findDefiningClass(inst.pyClass(), currentFunction);
                 return new PySuper(owner != null ? owner : inst.pyClass(), inst);
             }
+
+            @Override public java.util.Map<String, PyObject> currentScope() {
+                return currentLocals != null ? currentLocals : globals;
+            }
         };
         registerBuiltins();
     }

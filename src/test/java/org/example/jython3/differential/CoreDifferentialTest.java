@@ -438,5 +438,16 @@ public class CoreDifferentialTest {
                 + "with_fn()\n"
                 + "def helper():\n    return 1 / 0\n"
                 + "try:\n    try:\n        raise KeyError('k')\n    except KeyError:\n        helper()\nexcept ZeroDivisionError as z:\n    print('helper_ctx:', z.__context__.__class__.__name__)");
+        assertMatchesCPython("core_builtins",
+                "def g():\n    yield 0\n    yield 1\n    yield 2\n"
+                + "print(all([1, True, 'a']), all([1, 0]), any([0, '', 2]), any([0, False]))\n"
+                + "print(callable(g), callable(len), callable(int), callable(123))\n"
+                + "print(repr('a'), repr(\"it's\"), repr('a\\nb'), repr(ValueError('msg')))\n"
+                + "print(list(enumerate('ab', start=3)), list(zip([1, 2], ('x', 'y'))))\n"
+                + "print(list(map(lambda x: x + 1, g())), list(filter(None, [0, 1, '', 'ok'])))\n"
+                + "print(sum(g(), start=10))\n"
+                + "class K:\n    def __init__(self):\n        self.a = 1\n"
+                + "k = K()\nsetattr(k, 'b', 2)\nprint(vars(k) == {'a': 1, 'b': 2}, hasattr(k, 'b'))\n"
+                + "delattr(k, 'b')\nprint(hasattr(k, 'b'), getattr(k, 'b', 99), 'a' in dir(k))");
     }
 }
