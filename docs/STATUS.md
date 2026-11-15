@@ -55,7 +55,7 @@
 - **Reflection-free opaque handles (`PyHostHandle`)**: Exposes only whitelisted properties and methods to Python; never exposes raw JVM objects, `Class.forName`, or reflection; operations on stale handles after reset/close raise `RuntimeError`.
 - **UI & Event Dispatch (`org.example.jython3.ui`)**: `UiToolkit` and `UiDispatcher` abstractions (`Window`, `Button`, `Label`, `TextField`, `Panel`, `Timer`, `Event`) with `HeadlessUiToolkit` (immutable thread ownership, CI-safe), `SwingUiToolkit` (EDT-safe), and `JavaFxUiAdapter` (`FxDispatcher` for JavaFX Application Thread dispatch with bounded sync timeout and off-thread mutation rejection). Async/timer callback failures stop the timer, record into `HostAuditLog`, and notify `HostSession` error handlers.
 - **Simulated Control (`org.example.jython3.control`)**: `ControlRegistry`, `ControlDevice`, `SimulatedDevice`, and `control` module (`Controller`, `Command`, live `State` view + `.snapshot()`, `Event`, `Timer`) with audit logging.
-- **Host Embedding Bridge (`HostAppBridge`)**: Safe model data conversion + `PyHostHandle` binding, mid-event script cancellation, and clean interpreter restarts (475 tests passing green).
+- **Host Embedding Bridge (`HostAppBridge`)**: Safe model data conversion + `PyHostHandle` binding, mid-event script cancellation, and clean interpreter restarts (486 tests passing green).
 
 ### Performance & Java Bridge
 - Array-backed `FastStack` + pooled frame stacks/handler deques, pre-boxed immutable `CompiledCode.pyConstPool`, small-int caching, zero-overhead positional `bindArgs` fast path, precomputed `hasYield` flag.
