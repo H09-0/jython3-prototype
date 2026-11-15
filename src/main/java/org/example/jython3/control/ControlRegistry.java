@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Per-interpreter registry of simulated, host-bridged, or hardware {@link ControlDevice}s.
@@ -29,6 +30,16 @@ public final class ControlRegistry {
     public record Registration(ControlDevice device, AttestedTier tier, String origin, String attestor) {}
 
     private final Map<String, Registration> registrations = new ConcurrentHashMap<>();
+    private final AtomicBoolean sealed = new AtomicBoolean(false);
+
+    /** Seals the registry so no further devices can be added during script execution. */
+    public void seal() {
+        sealed.set(true);
+    }
+
+    public boolean isSealed() {
+        return sealed.get();
+    }
 
     /**
      * Registers a built-in simulated/host adapter, or records any custom external
@@ -62,6 +73,9 @@ public final class ControlRegistry {
     }
 
     private void putUnique(String id, Registration reg) {
+        if (sealed.get()) {
+            throw new IllegalStateException("ControlRegistry is sealed; cannot register device '" + id + "'");
+        }
         Objects.requireNonNull(id, "device.id()");
         if (registrations.putIfAbsent(id, reg) != null) {
             throw new IllegalStateException("control device '" + id + "' is already registered");

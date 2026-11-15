@@ -58,6 +58,10 @@ public final class HostAppBridge implements AutoCloseable {
         interpreter.controlRegistry().registerAttested(device, attestation);
     }
 
+    public void lockDeviceRegistrations() {
+        interpreter.controlRegistry().seal();
+    }
+
     /**
      * Binds plain host data (primitives, Strings, Lists, Maps) as native Python
      * values without wrapping raw Java objects.

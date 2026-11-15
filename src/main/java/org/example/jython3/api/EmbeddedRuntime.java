@@ -84,6 +84,10 @@ public final class EmbeddedRuntime implements AutoCloseable {
         bridge.registerAttestedDevice(device, attestation);
     }
 
+    public void lockDeviceRegistrations() {
+        bridge.lockDeviceRegistrations();
+    }
+
     public void bindModelData(String name, Object plainData) {
         bridge.bindModelData(name, plainData);
     }

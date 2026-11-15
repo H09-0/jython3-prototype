@@ -114,12 +114,28 @@ public final class ControlModule {
             throw PyErrors.error("SecurityError",
                     "control adapter '" + deviceId + "' is untrusted and lacks host attestation");
         }
-        if (reg.tier() == ControlRegistry.AttestedTier.HARDWARE
-                && !session.capabilities().allowHardwareAdapters()) {
+        if (reg.tier() == ControlRegistry.AttestedTier.HARDWARE) {
+            if (!session.capabilities().allowHardwareAdapters()) {
+                session.auditLog().recordDenied(HostCapability.CONTROL, action, deviceId,
+                        "hardware adapter denied without explicit allowHardwareAdapters(true)");
+                throw PyErrors.error("SecurityError",
+                        "hardware adapter '" + deviceId + "' requires explicit trusted hardware authorization");
+            }
+            if (!session.capabilities().isAdapterOriginAllowed(reg.origin())) {
+                session.auditLog().recordDenied(HostCapability.CONTROL, action, deviceId,
+                        "hardware adapter origin '" + reg.origin() + "' is not allowlisted");
+                throw PyErrors.error("SecurityError",
+                        "hardware adapter origin '" + reg.origin() + "' is not authorized");
+            }
+            session.auditLog().recordAllowed(HostCapability.CONTROL, "attested_hardware_" + action,
+                    deviceId, "origin=" + reg.origin() + ",attestor=" + reg.attestor());
+        } else if (reg.tier() == ControlRegistry.AttestedTier.TRUSTED_HOST
+                && !"builtin:host-adapter".equals(reg.origin())
+                && !session.capabilities().isAdapterOriginAllowed(reg.origin())) {
             session.auditLog().recordDenied(HostCapability.CONTROL, action, deviceId,
-                    "hardware adapter denied without explicit allowHardwareAdapters(true)");
+                    "host adapter origin '" + reg.origin() + "' is not allowlisted");
             throw PyErrors.error("SecurityError",
-                    "hardware adapter '" + deviceId + "' requires explicit trusted hardware authorization");
+                    "host adapter origin '" + reg.origin() + "' is not authorized");
         }
     }
 
