@@ -51,10 +51,16 @@ public final class BuiltinMethodDispatcher {
             case "join" -> new PyBuiltinFunction("str.join", args -> {
                 checkArgCount("str.join", args, 1);
                 if (!(args[0] instanceof PyList list)) throw PyErrors.error("TypeError", "join() argument must be iterable");
+                var ctx = org.example.jython3.security.ExecutionContext.current();
+                int maxStr = ctx != null ? ctx.limits().maxStringLength() : Integer.MAX_VALUE;
                 var sb = new StringBuilder();
                 for (int i = 0; i < list.items().size(); i++) {
                     if (i > 0) sb.append(s.value());
-                    sb.append(list.items().get(i).toString());
+                    String piece = list.items().get(i).toString();
+                    if ((long) sb.length() + piece.length() > maxStr) {
+                        throw PyErrors.error("MemoryError", "joined string exceeds maximum allowed length: " + maxStr);
+                    }
+                    sb.append(piece);
                 }
                 return new PyStr(sb.toString());
             });
@@ -62,6 +68,26 @@ public final class BuiltinMethodDispatcher {
                 if (args.length < 2) throw PyErrors.error("TypeError", "replace() takes at least 2 arguments");
                 if (!(args[0] instanceof PyStr old) || !(args[1] instanceof PyStr rep))
                     throw PyErrors.error("TypeError", "replace() arguments must be strings");
+                var ctx = org.example.jython3.security.ExecutionContext.current();
+                int maxStr = ctx != null ? ctx.limits().maxStringLength() : Integer.MAX_VALUE;
+                if (rep.value().length() > old.value().length()) {
+                    String src = s.value();
+                    int occurrences;
+                    if (old.value().isEmpty()) {
+                        occurrences = src.length() + 1;
+                    } else {
+                        occurrences = 0;
+                        int pos = 0;
+                        while ((pos = src.indexOf(old.value(), pos)) >= 0) {
+                            occurrences++;
+                            pos += old.value().length();
+                        }
+                    }
+                    long estLen = (long) src.length() + (long) occurrences * (rep.value().length() - old.value().length());
+                    if (estLen > maxStr) {
+                        throw PyErrors.error("MemoryError", "replaced string exceeds maximum allowed length: " + maxStr);
+                    }
+                }
                 return new PyStr(s.value().replace(old.value(), rep.value()));
             });
             case "startswith" -> new PyBuiltinFunction("str.startswith", args -> {

@@ -403,6 +403,7 @@ public final class PyOps {
                 i++; // skip '%'
 
                 // Optional flags / width / precision: [0-9.+-]
+                int widthDigitsStart = i;
                 while (i < n && (Character.isDigit(fmt.charAt(i)) || fmt.charAt(i) == '.' || fmt.charAt(i) == '-' || fmt.charAt(i) == '+')) {
                     i++;
                 }
@@ -410,6 +411,9 @@ public final class PyOps {
                 if (i >= n) {
                     throw PyErrors.error("ValueError", "incomplete format");
                 }
+                // Guard against %999999999f OOM allocation attacks
+                String rawModifier = fmt.substring(widthDigitsStart, i);
+                validatePercentFormatModifier(rawModifier);
 
                 char conv = fmt.charAt(i);
                 i++; // consume conversion char
@@ -451,5 +455,32 @@ public final class PyOps {
         }
 
         return sb.toString();
+    }
+
+    private static void validatePercentFormatModifier(String raw) {
+        if (raw.isEmpty()) return;
+        int dot = raw.indexOf('.');
+        String widthPart = (dot >= 0 ? raw.substring(0, dot) : raw).replace("+", "").replace("-", "");
+        if (!widthPart.isEmpty()) {
+            try {
+                if (Integer.parseInt(widthPart) > 10_000) {
+                    throw PyErrors.error("MemoryError", "format width exceeds safety limit (10000)");
+                }
+            } catch (NumberFormatException nfe) {
+                throw PyErrors.error("MemoryError", "format width exceeds safety limit (10000)");
+            }
+        }
+        if (dot >= 0) {
+            String precPart = raw.substring(dot + 1);
+            if (!precPart.isEmpty()) {
+                try {
+                    if (Integer.parseInt(precPart) > 1_000) {
+                        throw PyErrors.error("ValueError", "format precision exceeds safety limit (1000)");
+                    }
+                } catch (NumberFormatException nfe) {
+                    throw PyErrors.error("ValueError", "format precision exceeds safety limit (1000)");
+                }
+            }
+        }
     }
 }

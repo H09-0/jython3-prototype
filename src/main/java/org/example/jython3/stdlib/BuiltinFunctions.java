@@ -235,11 +235,16 @@ public final class BuiltinFunctions {
             if (o instanceof PyFloat f && base == 10) return new PyInt((int) f.value());
             if (o instanceof PyBool b && base == 10) return new PyInt(b.value() ? 1 : 0);
             if (o instanceof PyStr s) {
+                String stripped = s.value().strip();
+                if (stripped.length() > 10_000) {
+                    throw PyErrors.error("ValueError",
+                            "Exceeds the limit (10000 digits) for integer string conversion");
+                }
                 try {
-                    return new PyInt(Integer.parseInt(s.value().strip(), base));
+                    return new PyInt(Integer.parseInt(stripped, base));
                 } catch (NumberFormatException e) {
                     try {
-                        return new BigInt(new java.math.BigInteger(s.value().strip(), base));
+                        return new BigInt(new java.math.BigInteger(stripped, base));
                     } catch (Exception ex) {
                         throw PyErrors.error("ValueError", "invalid literal for int() with base " + base + ": '" + s.value() + "'");
                     }
@@ -503,11 +508,22 @@ public final class BuiltinFunctions {
                 throw PyErrors.error("TypeError", "range expected at most 3 arguments, got " + args.length);
             }
             if (step == 0) throw PyErrors.error("ValueError", "range() arg 3 must not be zero");
-            var items = new ArrayList<PyObject>();
+            long count = 0;
+            if (step > 0 && stop > start) {
+                count = ((long) stop - (long) start - 1L) / (long) step + 1L;
+            } else if (step < 0 && start > stop) {
+                count = ((long) start - (long) stop - 1L) / (-(long) step) + 1L;
+            }
+            int maxColl = caller.executionLimits().maxCollectionSize();
+            if (count > maxColl) {
+                throw PyErrors.error("MemoryError",
+                        "range() length (" + count + ") exceeds maximum collection limit (" + maxColl + ")");
+            }
+            var items = new ArrayList<PyObject>((int) count);
             if (step > 0) {
-                for (int i = start; i < stop; i += step) items.add(PyInt.of(i));
+                for (long i = start; i < stop; i += step) items.add(PyInt.of((int) i));
             } else {
-                for (int i = start; i > stop; i += step) items.add(PyInt.of(i));
+                for (long i = start; i > stop; i += step) items.add(PyInt.of((int) i));
             }
             return new PyList(items);
         }));
