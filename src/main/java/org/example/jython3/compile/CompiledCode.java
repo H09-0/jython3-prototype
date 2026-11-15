@@ -1,6 +1,14 @@
 package org.example.jython3.compile;
 
+import org.example.jython3.runtime.BigInt;
+import org.example.jython3.runtime.PyBool;
+import org.example.jython3.runtime.PyCompiledCodeWrapper;
+import org.example.jython3.runtime.PyFloat;
 import org.example.jython3.runtime.PyFunction;
+import org.example.jython3.runtime.PyInt;
+import org.example.jython3.runtime.PyNull;
+import org.example.jython3.runtime.PyObject;
+import org.example.jython3.runtime.PyStr;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -14,19 +22,56 @@ import java.util.Set;
  * {@code attrCache} provides per-instruction monomorphic inline caching for attribute lookups.
  * {@code referencedNames} tracks variable names actually loaded/stored in bytecode (or nested functions)
  * so closures only capture referenced outer bindings and never confuse string literals with variable names.
+ * {@code pyConstPool} pre-boxes immutable literal constants once at compile time so
+ * {@code LOAD_CONST} avoids per-instruction type dispatch and wrapper allocation.
  */
 public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
-                           boolean hasYield, Object[] attrCache, Set<String> referencedNames) {
+                           boolean hasYield, Object[] attrCache, Set<String> referencedNames,
+                           PyObject[] pyConstPool) {
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines) {
         this(bytecode, constPool, lines,
              scanYield(bytecode),
              new Object[bytecode != null ? bytecode.length : 0],
-             collectReferencedNames(bytecode, constPool));
+             collectReferencedNames(bytecode, constPool),
+             buildPyConstPool(constPool));
     }
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines, boolean hasYield, Object[] attrCache) {
-        this(bytecode, constPool, lines, hasYield, attrCache, collectReferencedNames(bytecode, constPool));
+        this(bytecode, constPool, lines, hasYield, attrCache,
+             collectReferencedNames(bytecode, constPool),
+             buildPyConstPool(constPool));
+    }
+
+    public CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
+                        boolean hasYield, Object[] attrCache, Set<String> referencedNames) {
+        this(bytecode, constPool, lines, hasYield, attrCache, referencedNames,
+             buildPyConstPool(constPool));
+    }
+
+    private static PyObject[] buildPyConstPool(Object[] constPool) {
+        if (constPool == null || constPool.length == 0) return new PyObject[0];
+        PyObject[] py = new PyObject[constPool.length];
+        for (int i = 0; i < constPool.length; i++) {
+            Object v = constPool[i];
+            if (v == null) {
+                py[i] = PyNull.INSTANCE;
+            } else if (v instanceof Integer iv) {
+                py[i] = PyInt.of(iv);
+            } else if (v instanceof Double dv) {
+                py[i] = new PyFloat(dv);
+            } else if (v instanceof Boolean bv) {
+                py[i] = PyBool.of(bv);
+            } else if (v instanceof BigInt bi) {
+                py[i] = bi;
+            } else if (v instanceof String s && !s.startsWith("@global:") && !s.startsWith("@nonlocal:")) {
+                py[i] = new PyStr(s);
+            } else if (v instanceof CompiledCode cc) {
+                py[i] = new PyCompiledCodeWrapper(cc);
+            }
+            // PyFunction (lambdas need closure check) and @global:/@nonlocal: markers stay null
+        }
+        return py;
     }
 
     private static boolean scanYield(int[] bytecode) {

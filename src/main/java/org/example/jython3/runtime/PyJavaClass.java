@@ -22,10 +22,13 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
         }
         try {
             Object[] javaArgs = JavaBridge.convertArgs(args, match, policy);
-            Object instance = match.constructor().newInstance(javaArgs);
+            var invoker = match.invoker();
+            Object instance = invoker != null
+                    ? (Object) invoker.invokeExact(javaArgs)
+                    : match.constructor().newInstance(javaArgs);
             return new PyJavaObject(instance, policy);
-        } catch (Exception e) {
-            throw PyErrors.fromJava(e);
+        } catch (Throwable t) {
+            throw PyErrors.fromJava(t);
         }
     }
 

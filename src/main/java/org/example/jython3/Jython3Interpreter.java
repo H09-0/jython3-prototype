@@ -243,6 +243,43 @@ public class Jython3Interpreter {
     /** Set of variable names declared `global` in the current function frame. */
     private java.util.Set<String> globalCells;
     private final Deque<Frame> callStack = new ArrayDeque<>();
+    private final Deque<FastStack> freeStacks = new ArrayDeque<>();
+    private final Deque<Deque<ExceptHandler>> freeExceptStacks = new ArrayDeque<>();
+    private final Deque<Deque<PyObject>> freeActiveExceptions = new ArrayDeque<>();
+    private static final int MAX_FRAME_POOL = 64;
+
+    private FastStack borrowStack() {
+        return freeStacks.isEmpty() ? new FastStack() : freeStacks.pop();
+    }
+
+    private void recycleStack(FastStack s) {
+        if (s != null && freeStacks.size() < MAX_FRAME_POOL) {
+            s.clear();
+            freeStacks.push(s);
+        }
+    }
+
+    private Deque<ExceptHandler> borrowExceptStack() {
+        return freeExceptStacks.isEmpty() ? new ArrayDeque<>(4) : freeExceptStacks.pop();
+    }
+
+    private void recycleExceptStack(Deque<ExceptHandler> d) {
+        if (d != null && freeExceptStacks.size() < MAX_FRAME_POOL) {
+            d.clear();
+            freeExceptStacks.push(d);
+        }
+    }
+
+    private Deque<PyObject> borrowActiveExceptions() {
+        return freeActiveExceptions.isEmpty() ? new ArrayDeque<>(2) : freeActiveExceptions.pop();
+    }
+
+    private void recycleActiveExceptions(Deque<PyObject> d) {
+        if (d != null && freeActiveExceptions.size() < MAX_FRAME_POOL) {
+            d.clear();
+            freeActiveExceptions.push(d);
+        }
+    }
     /** Per-frame exception handler stack — saved/restored on function call boundaries. */
     private Deque<ExceptHandler> exceptStack = new ArrayDeque<>();
     /**
@@ -738,6 +775,9 @@ public class Jython3Interpreter {
         outerActiveContexts.clear();
         exceptStack.clear();
         activeExceptions.clear();
+        freeStacks.clear();
+        freeExceptStacks.clear();
+        freeActiveExceptions.clear();
         yieldCollector = null;
         globalCells = null;
         currentFunc = "<module>";
@@ -905,6 +945,7 @@ public class Jython3Interpreter {
     private void run(CompiledCode code) throws InterpreterException {
         int[] bc = code.bytecode();
         Object[] pool = code.constPool();
+        PyObject[] pyPool = code.pyConstPool();
         int pc = 0;
         // Frames below this depth belong to an enclosing run() invocation (re-entrant
         // calls from callPyCallableKw: __init__, __enter__/__exit__, builtins calling back
@@ -923,9 +964,11 @@ public class Jython3Interpreter {
 
             try { switch (op) {
                 case LOAD_CONST -> {
-                    if (ai == NO_ARG) { stack.push(new PyNull()); break; }
+                    if (ai == NO_ARG) { stack.push(PyNull.INSTANCE); break; }
+                    PyObject preboxed = pyPool[ai];
+                    if (preboxed != null) { stack.push(preboxed); break; }
                     Object v = pool[ai];
-                    if (v == null) stack.push(new PyNull());
+                    if (v == null) stack.push(PyNull.INSTANCE);
                     else if (v instanceof String s) {
                         // global/nonlocal declarations are encoded as special markers
                         if (s.startsWith("@global:")) {
@@ -1461,14 +1504,15 @@ public class Jython3Interpreter {
                                     activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                             globalCells = null;
                             currentLocals = bindArgs(fn, callArgs, kwNames, kwValues);
-                            stack = new FastStack();
-                            exceptStack = new ArrayDeque<>();
-                            activeExceptions = new ArrayDeque<>();
+                            stack = borrowStack();
+                            exceptStack = borrowExceptStack();
+                            activeExceptions = borrowActiveExceptions();
                             currentFunc = fn.name();
                             currentFunction = fn;
                             code = fn.code();
                             bc = code.bytecode();
                             pool = code.constPool();
+                            pyPool = code.pyConstPool();
                             pc = 0;
                             continue outer;
                         }
@@ -1498,14 +1542,15 @@ public class Jython3Interpreter {
                                 activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                         globalCells = null; // new frame starts with no global declarations
                         currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-                        stack = new FastStack();
-                        exceptStack = new ArrayDeque<>();
-                        activeExceptions = new ArrayDeque<>();
+                        stack = borrowStack();
+                        exceptStack = borrowExceptStack();
+                        activeExceptions = borrowActiveExceptions();
                         currentFunc = fn.name();
                         currentFunction = fn;
                         code = fn.code();
                         bc = code.bytecode();
                         pool = code.constPool();
+                        pyPool = code.pyConstPool();
                         pc = 0;
                         continue outer;
                     } else {
@@ -1591,14 +1636,15 @@ public class Jython3Interpreter {
                                     activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                             globalCells = null;
                             currentLocals = bindArgs(fn, callArgs, null, null);
-                            stack = new FastStack();
-                            exceptStack = new ArrayDeque<>();
-                            activeExceptions = new ArrayDeque<>();
+                            stack = borrowStack();
+                            exceptStack = borrowExceptStack();
+                            activeExceptions = borrowActiveExceptions();
                             currentFunc = fn.name();
                             currentFunction = fn;
                             code = fn.code();
                             bc = code.bytecode();
                             pool = code.constPool();
+                            pyPool = code.pyConstPool();
                             pc = 0;
                             continue outer;
                         }
@@ -1634,14 +1680,15 @@ public class Jython3Interpreter {
                                     activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
                             globalCells = null; // new frame starts with no global declarations
                             currentLocals = bindArgs(fn, args, null, null);
-                            stack = new FastStack();
-                            exceptStack = new ArrayDeque<>();
-                            activeExceptions = new ArrayDeque<>();
+                            stack = borrowStack();
+                            exceptStack = borrowExceptStack();
+                            activeExceptions = borrowActiveExceptions();
                             currentFunc = fn.name();
                             currentFunction = fn;
                             code = fn.code();
                             bc = code.bytecode();
                             pool = code.constPool();
+                            pyPool = code.pyConstPool();
                             pc = 0;
                             continue outer;
                         }
@@ -1666,9 +1713,13 @@ public class Jython3Interpreter {
                     } else {
                         // For generator-like behavior in simple cases, treat yield similar to return value
                         Frame cf = callStack.pop();
+                        recycleStack(stack);
+                        recycleExceptStack(exceptStack);
+                        recycleActiveExceptions(activeExceptions);
                         code = cf.code();
                         bc = code.bytecode();
                         pool = code.constPool();
+                        pyPool = code.pyConstPool();
                         pc = cf.returnPc();
                         currentLocals = cf.locals();
                         stack = cf.stack();
@@ -1686,9 +1737,13 @@ public class Jython3Interpreter {
                     PyObject rv = stack.pop();
                     if (callStack.size() <= baseDepth) { stack.push(rv); return; }
                     Frame cf = callStack.pop();
+                    recycleStack(stack);
+                    recycleExceptStack(exceptStack);
+                    recycleActiveExceptions(activeExceptions);
                     code = cf.code();
                     bc = code.bytecode();
                     pool = code.constPool();
+                    pyPool = code.pyConstPool();
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
                     if (cf.globals() != null) currentGlobals = cf.globals();
@@ -2227,9 +2282,13 @@ public class Jython3Interpreter {
                 }
                 while (callStack.size() > baseDepth) {
                     Frame cf = callStack.pop();
+                    recycleStack(stack);
+                    recycleExceptStack(exceptStack);
+                    recycleActiveExceptions(activeExceptions);
                     code = cf.code();
                     bc = code.bytecode();
                     pool = code.constPool();
+                    pyPool = code.pyConstPool();
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
                     if (cf.globals() != null) currentGlobals = cf.globals();
@@ -2395,11 +2454,14 @@ public class Jython3Interpreter {
             PyException outerCtx = currentContextException();
             if (outerCtx != null) outerActiveContexts.addLast(outerCtx);
 
+            FastStack borrowedStack = null;
+            Deque<ExceptHandler> borrowedExcept = null;
+            Deque<PyObject> borrowedActive = null;
             try {
                 currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-                stack = new FastStack();
-                exceptStack = new ArrayDeque<>();
-                activeExceptions = new ArrayDeque<>();
+                stack = borrowedStack = borrowStack();
+                exceptStack = borrowedExcept = borrowExceptStack();
+                activeExceptions = borrowedActive = borrowActiveExceptions();
                 globalCells = null;
                 currentFunc = fn.name();
                 currentFunction = fn;
@@ -2407,6 +2469,9 @@ public class Jython3Interpreter {
                 return stack.isEmpty() ? new PyNull() : stack.pop();
             } finally {
                 if (outerCtx != null) outerActiveContexts.removeLast();
+                recycleStack(borrowedStack);
+                recycleExceptStack(borrowedExcept);
+                recycleActiveExceptions(borrowedActive);
                 // Always restore the caller's frame state, including when the callee raises.
                 stack = savedStack;
                 currentLocals = savedLocals;

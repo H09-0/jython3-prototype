@@ -13,7 +13,7 @@ public final class FastStack {
     private int sp;
 
     public FastStack() {
-        this(64);
+        this(16);
     }
 
     public FastStack(int initialCapacity) {

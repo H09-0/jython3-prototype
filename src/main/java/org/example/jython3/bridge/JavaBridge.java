@@ -1,5 +1,8 @@
 package org.example.jython3.bridge;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -708,21 +711,57 @@ public class JavaBridge {
         return convs;
     }
 
-    public record MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters, boolean varArgs) {
-        public MethodMatch(Method method, Class<?>[] paramTypes) {
-            this(method, paramTypes, buildConverters(paramTypes), false);
-        }
-        public MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters) {
-            this(method, paramTypes, converters, false);
+    private static final MethodHandles.Lookup PUBLIC_LOOKUP = MethodHandles.publicLookup();
+
+    private static MethodHandle compileMethodInvoker(Method m) {
+        try {
+            MethodHandle mh = PUBLIC_LOOKUP.unreflect(m).asFixedArity();
+            mh = mh.asSpreader(Object[].class, m.getParameterCount());
+            if (Modifier.isStatic(m.getModifiers())) {
+                return mh.asType(MethodType.methodType(Object.class, Object[].class));
+            }
+            return mh.asType(MethodType.methodType(Object.class, Object.class, Object[].class));
+        } catch (IllegalAccessException e) {
+            return null;
         }
     }
 
-    public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters, boolean varArgs) {
+    private static MethodHandle compileConstructorInvoker(Constructor<?> c) {
+        try {
+            MethodHandle ch = PUBLIC_LOOKUP.unreflectConstructor(c).asFixedArity();
+            ch = ch.asSpreader(Object[].class, c.getParameterCount());
+            return ch.asType(MethodType.methodType(Object.class, Object[].class));
+        } catch (IllegalAccessException e) {
+            return null;
+        }
+    }
+
+    public record MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters,
+                              boolean varArgs, MethodHandle invoker, boolean isStatic) {
+        public MethodMatch(Method method, Class<?>[] paramTypes) {
+            this(method, paramTypes, buildConverters(paramTypes), false,
+                    compileMethodInvoker(method), Modifier.isStatic(method.getModifiers()));
+        }
+        public MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters) {
+            this(method, paramTypes, converters, false,
+                    compileMethodInvoker(method), Modifier.isStatic(method.getModifiers()));
+        }
+        public MethodMatch(Method method, Class<?>[] paramTypes, TypeConverter[] converters, boolean varArgs) {
+            this(method, paramTypes, converters, varArgs,
+                    compileMethodInvoker(method), Modifier.isStatic(method.getModifiers()));
+        }
+    }
+
+    public record ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters,
+                                   boolean varArgs, MethodHandle invoker) {
         public ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes) {
-            this(constructor, paramTypes, buildConverters(paramTypes), false);
+            this(constructor, paramTypes, buildConverters(paramTypes), false, compileConstructorInvoker(constructor));
         }
         public ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters) {
-            this(constructor, paramTypes, converters, false);
+            this(constructor, paramTypes, converters, false, compileConstructorInvoker(constructor));
+        }
+        public ConstructorMatch(Constructor<?> constructor, Class<?>[] paramTypes, TypeConverter[] converters, boolean varArgs) {
+            this(constructor, paramTypes, converters, varArgs, compileConstructorInvoker(constructor));
         }
     }
 

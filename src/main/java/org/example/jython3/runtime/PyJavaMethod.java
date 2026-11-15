@@ -20,10 +20,18 @@ public record PyJavaMethod(Object target, Class<?> clazz, String name, List<Meth
         }
         try {
             Object[] javaArgs = JavaBridge.convertArgs(args, match, policy);
-            Object result = match.method().invoke(target, javaArgs);
+            Object result;
+            var invoker = match.invoker();
+            if (invoker != null) {
+                result = match.isStatic()
+                        ? (Object) invoker.invokeExact(javaArgs)
+                        : (Object) invoker.invokeExact(target, javaArgs);
+            } else {
+                result = match.method().invoke(target, javaArgs);
+            }
             return JavaBridge.toPyObject(result, policy);
-        } catch (Exception e) {
-            throw PyErrors.fromJava(e);
+        } catch (Throwable t) {
+            throw PyErrors.fromJava(t);
         }
     }
 
