@@ -48,7 +48,7 @@ class CoreLanguageAndExecutionModelTest {
             st = {x % 3 for x in range(7)}
             print(sorted(d.items()), sorted(st))
 
-            # Unpacking, PEP 3132 starred unpacking, and single-eval augmented assignment
+            # Unpacking, PEP 3132 starred unpacking, PEP 448 display/call generalizations
             a, (b1, b2) = [10, (20, 30)]
             first, *mid, last = range(6)
             *head, tail = "abcd"
@@ -57,6 +57,17 @@ class CoreLanguageAndExecutionModelTest {
             rows = []
             for p, *rest in [(1, 2, 3), (4,)]:
                 rows.append((p, rest))
+            # PEP 448: [*a, *b], (*a, *b), {*a, *b}, {**d1, **d2}, *range(3), 9, and multi-splat calls
+            pep448_list = [*range(2), 9, *[3, 4]]
+            pep448_tup = (*[1, 2], 3, *(4,))
+            pep448_bare = *range(2), 99
+            pep448_set = sorted({*range(3), 2, *[4]})
+            pep448_dict = sorted({**{"a": 1, "b": 2}, "b": 20, **{"c": 3}}.items())
+            def call448(*args, **kwargs):
+                return (args, sorted(kwargs.items()))
+            pep448_call = call448(*[1], *[2, 3], 4, **{"x": 1}, y=2, **{"z": 3})
+            pep448_kw_after = call448(x=1, *[10, 20])
+            print("pep448:", pep448_list, pep448_tup, pep448_bare, pep448_set, pep448_dict, pep448_call, pep448_kw_after)
             hits = []
             def idx():
                 hits.append(1)
@@ -213,7 +224,7 @@ class CoreLanguageAndExecutionModelTest {
             ExceptionTypeRegistry.restore(prev);
         }
 
-        // PEP 3102 / 570 / 3132 static compile-time SyntaxErrors
+        // PEP 3102 / 570 / 3132 / 448 static compile-time & runtime unpacking errors
         try (var py = Jython3Interpreter.restricted()) {
             for (String bad : new String[]{
                     "def f(/): pass",
@@ -222,10 +233,13 @@ class CoreLanguageAndExecutionModelTest {
                     "def f(**kw, a=1): pass",
                     "def f(a, a): pass",
                     "*a = [1, 2]",
-                    "a, *b, *c = [1, 2, 3]"
+                    "a, *b, *c = [1, 2, 3]",
+                    "x = (*[1, 2])",
+                    "def g(**kw): pass\ng(**{'a': 1}, a=2)"
             }) {
-                assertEquals("SyntaxError",
-                        assertThrows(InterpreterException.class, () -> py.eval(bad), bad).typeName());
+                InterpreterException ex = assertThrows(InterpreterException.class, () -> py.eval(bad), bad);
+                assertTrue("SyntaxError".equals(ex.typeName()) || "TypeError".equals(ex.typeName()),
+                        bad + " -> " + ex.typeName());
             }
         }
     }

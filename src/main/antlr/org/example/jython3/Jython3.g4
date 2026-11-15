@@ -60,10 +60,11 @@ assign_stmt
     : (target_list ASSIGN)+ (yield_expr | rhs_tuple)
     ;
 
-/** Right-hand side that may itself be a tuple: 1, 2  or  (1, 2)  or  expr */
+/** Right-hand side that may itself be a tuple: 1, 2  or  *a, b  or  expr */
 rhs_tuple
-    : expr (COMMA expr)+ COMMA?   # RhsTupleMany
-    | expr                          # RhsSingle
+    : star_expr (COMMA star_expr)+ COMMA?   # RhsTupleMany
+    | star_expr COMMA                       # RhsTupleSingleComma
+    | expr                                  # RhsSingle
     ;
 
 /** Augmented assignment: x += expr, obj.attr += expr, items[0] += expr, matrix[0][1] *= expr */
@@ -369,17 +370,22 @@ slice_item
     | expr COLON                                      # SliceStartOnly
     | expr                                            # SliceSingleIndex
     ;
+star_expr
+    : MUL expr # StarItem
+    | expr     # PlainItem
+    ;
 expr_list
-    : expr (COMMA expr)* COMMA?
+    : star_expr (COMMA star_expr)* COMMA?
     ;
 
-/** Comma-separated key:value pairs for dict literals. */
+/** Comma-separated key:value or **mapping pairs for dict literals. */
 dict_entries
     : dict_entry (COMMA dict_entry)* COMMA?
     ;
 
 dict_entry
-    : expr COLON expr
+    : POWER expr      # DictUnpackEntry
+    | expr COLON expr # DictKvEntry
     ;
 
 /** Lazy generator expression: expr (for target in iter [if cond]*)+ */

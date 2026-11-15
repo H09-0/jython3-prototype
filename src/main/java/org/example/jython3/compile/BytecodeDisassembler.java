@@ -83,7 +83,7 @@ public final class BytecodeDisassembler {
             case YIELD_VALUE -> "(suspend, resume -> " + (pc + 1) + ")";
             case CALL_FUNCTION, CALL_FUNCTION_EX, BUILD_LIST, BUILD_DICT, BUILD_TUPLE,
                  BUILD_SET, BUILD_SLICE, UNPACK_SEQUENCE, MAKE_FUNCTION_DEFAULTS,
-                 ASSERT, RERAISE, LOAD_SLOT, STORE_SLOT -> String.valueOf(ai);
+                 ASSERT, RERAISE, LOAD_SLOT, STORE_SLOT, DICT_MERGE -> String.valueOf(ai);
             default -> "";
         };
     }

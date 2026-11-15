@@ -122,6 +122,8 @@ class ResourceExhaustionAndDosSecurityTest {
             assertEquals("MemoryError",
                     assertThrows(InterpreterException.class, () -> rt.eval("a, *b = range(0, 2_000_000_000)")).typeName());
             assertEquals("MemoryError",
+                    assertThrows(InterpreterException.class, () -> rt.eval("[*range(0, 2_000_000_000)]")).typeName());
+            assertEquals("MemoryError",
                     assertThrows(InterpreterException.class, () -> rt.eval("import itertools\nlist(itertools.count())")).typeName());
             assertEquals("MemoryError",
                     assertThrows(InterpreterException.class, () -> rt.eval("zip(range(1000), range(1000))")).typeName());

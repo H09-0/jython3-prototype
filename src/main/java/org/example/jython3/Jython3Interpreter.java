@@ -2321,21 +2321,37 @@ public class Jython3Interpreter implements AutoCloseable {
                 case LIST_EXTEND -> {
                     PyObject iterObj = stack.pop();
                     if (stack.peek() instanceof PyList targetList) {
-                        targetList.items().addAll(BuiltinFunctions.collectIterable(iterObj, javaAccessPolicy));
+                        var extra = BuiltinFunctions.collectIterable(iterObj, javaAccessPolicy);
+                        if ((long) targetList.items().size() + extra.size() > executionLimits.maxCollectionSize()) {
+                            throw PyErrors.error("OverflowError",
+                                    "List size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
+                        }
+                        targetList.items().addAll(extra);
                     }
+                }
+                case LIST_TO_TUPLE -> {
+                    PyList lst = (PyList) stack.pop();
+                    stack.push(new PyTuple(lst.items()));
+                }
+                case LIST_TO_SET -> {
+                    PyList lst = (PyList) stack.pop();
+                    stack.push(new PySet(lst.items()));
                 }
                 case DICT_MERGE -> {
                     PyObject mapObj = stack.pop();
                     if (!(mapObj instanceof PyDict src)) {
                         throw PyErrors.error("TypeError", "argument after ** must be a mapping, not " + typeName(mapObj));
                     }
+                    boolean allowOverwrite = (ai == 1);
                     if (stack.peek() instanceof PyDict target) {
                         for (PyObject k : src.keys()) {
-                            if (!(k instanceof PyStr)) {
-                                throw PyErrors.error("TypeError", "keywords must be strings");
-                            }
-                            if (target.containsKey(k)) {
-                                throw PyErrors.error("TypeError", "got multiple values for keyword argument '" + k + "'");
+                            if (!allowOverwrite) {
+                                if (!(k instanceof PyStr)) {
+                                    throw PyErrors.error("TypeError", "keywords must be strings");
+                                }
+                                if (target.containsKey(k)) {
+                                    throw PyErrors.error("TypeError", "got multiple values for keyword argument '" + k + "'");
+                                }
                             }
                             target.put(k, src.get(k));
                         }

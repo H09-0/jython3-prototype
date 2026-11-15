@@ -235,11 +235,45 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     // ── Unified LValue assignment, unpacking, augmented assignment & del ──────
 
+    private void emitStarItemsAsList(List<Jython3Parser.Star_exprContext> items) {
+        b.emitRaw(OpCode.BUILD_LIST, 0);
+        for (var se : items) {
+            if (se instanceof Jython3Parser.StarItemContext si) {
+                visit(si.expr());
+                b.emit(OpCode.LIST_EXTEND);
+            } else {
+                visit(((Jython3Parser.PlainItemContext) se).expr());
+                b.emit(OpCode.LIST_COMP_APPEND);
+            }
+        }
+    }
+
+    private static boolean hasStarItem(List<Jython3Parser.Star_exprContext> items) {
+        for (var se : items) {
+            if (se instanceof Jython3Parser.StarItemContext) return true;
+        }
+        return false;
+    }
+
     private void emitRhsTuple(Jython3Parser.Rhs_tupleContext rhs) {
         if (rhs instanceof Jython3Parser.RhsTupleManyContext many) {
-            int n = many.expr().size();
-            for (var e : many.expr()) visit(e);
-            b.emitRaw(OpCode.BUILD_TUPLE, n);
+            var items = many.star_expr();
+            if (hasStarItem(items)) {
+                emitStarItemsAsList(items);
+                b.emit(OpCode.LIST_TO_TUPLE);
+            } else {
+                for (var se : items) visit(((Jython3Parser.PlainItemContext) se).expr());
+                b.emitRaw(OpCode.BUILD_TUPLE, items.size());
+            }
+        } else if (rhs instanceof Jython3Parser.RhsTupleSingleCommaContext singleComma) {
+            var items = List.of(singleComma.star_expr());
+            if (hasStarItem(items)) {
+                emitStarItemsAsList(items);
+                b.emit(OpCode.LIST_TO_TUPLE);
+            } else {
+                visit(((Jython3Parser.PlainItemContext) singleComma.star_expr()).expr());
+                b.emitRaw(OpCode.BUILD_TUPLE, 1);
+            }
         } else {
             visit(((Jython3Parser.RhsSingleContext) rhs).expr());
         }
@@ -1528,20 +1562,32 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     private void emitSplatCall(Jython3Parser.Arg_listContext argList) {
         boolean hasKw = false;
-        boolean seenKw = false;
+        boolean seenKwArg = false;
+        boolean seenKwUnpack = false;
+        var seenKwNames = new java.util.HashSet<String>();
         b.emitRaw(OpCode.BUILD_LIST, 0);
         for (var item : argList.arg_item()) {
             if (item instanceof Jython3Parser.PositionalArgContext pa) {
-                if (seenKw) throw new CompileError("positional argument follows keyword argument");
+                if (seenKwArg || seenKwUnpack) {
+                    throw new CompileError("positional argument follows keyword argument");
+                }
                 visit(pa.expr());
                 b.emit(OpCode.LIST_COMP_APPEND);
             } else if (item instanceof Jython3Parser.SplatArgContext sa) {
-                if (seenKw) throw new CompileError("iterable argument unpacking follows keyword argument unpacking");
+                if (seenKwUnpack) {
+                    throw new CompileError("iterable argument unpacking follows keyword argument unpacking");
+                }
                 visit(sa.expr());
                 b.emit(OpCode.LIST_EXTEND);
+            } else if (item instanceof Jython3Parser.KeywordArgContext ka) {
+                if (!seenKwNames.add(ka.ID().getText())) {
+                    throw new CompileError("keyword argument repeated: " + ka.ID().getText());
+                }
+                hasKw = true;
+                seenKwArg = true;
             } else {
                 hasKw = true;
-                seenKw = true;
+                seenKwUnpack = true;
             }
         }
         if (!hasKw) {
@@ -1555,9 +1601,12 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
                 b.emit(OpCode.LOAD_CONST, ka.ID().getText());
                 visit(ka.expr());
                 b.emit(OpCode.STORE_SUBSCR);
-            } else if (item instanceof Jython3Parser.SplatKwArgContext sk) {
+            }
+        }
+        for (var item : argList.arg_item()) {
+            if (item instanceof Jython3Parser.SplatKwArgContext sk) {
                 visit(sk.expr());
-                b.emit(OpCode.DICT_MERGE);
+                b.emitRaw(OpCode.DICT_MERGE, 0);
             }
         }
         b.emitRaw(OpCode.CALL_FUNCTION_EX, 1);
@@ -1570,33 +1619,74 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitListLiteral(Jython3Parser.ListLiteralContext c) {
-        int n = 0;
-        if (c.expr_list() != null) {
-            for (var e : c.expr_list().expr()) { visit(e); n++; }
+        if (c.expr_list() == null) {
+            b.emitRaw(OpCode.BUILD_LIST, 0);
+            return null;
         }
-        b.emitRaw(OpCode.BUILD_LIST, n);
+        var items = c.expr_list().star_expr();
+        if (hasStarItem(items)) {
+            emitStarItemsAsList(items);
+        } else {
+            for (var se : items) visit(((Jython3Parser.PlainItemContext) se).expr());
+            b.emitRaw(OpCode.BUILD_LIST, items.size());
+        }
         return null;
     }
 
     @Override public Void visitTupleLiteral(Jython3Parser.TupleLiteralContext c) {
-        int n = 0;
-        if (c.expr_list() != null) {
-            for (var e : c.expr_list().expr()) { visit(e); n++; }
+        if (c.expr_list() == null) {
+            b.emitRaw(OpCode.BUILD_TUPLE, 0);
+            return null;
         }
-        b.emitRaw(OpCode.BUILD_TUPLE, n);
+        var items = c.expr_list().star_expr();
+        if (items.size() == 1 && c.expr_list().COMMA().isEmpty()) {
+            throw new CompileError("cannot use starred expression here");
+        }
+        if (hasStarItem(items)) {
+            emitStarItemsAsList(items);
+            b.emit(OpCode.LIST_TO_TUPLE);
+        } else {
+            for (var se : items) visit(((Jython3Parser.PlainItemContext) se).expr());
+            b.emitRaw(OpCode.BUILD_TUPLE, items.size());
+        }
         return null;
     }
 
     @Override public Void visitDictLiteral(Jython3Parser.DictLiteralContext c) {
-        int n = 0;
-        if (c.dict_entries() != null) {
-            for (var entry : c.dict_entries().dict_entry()) {
-                visit(entry.expr(0)); // key
-                visit(entry.expr(1)); // value
-                n++;
+        if (c.dict_entries() == null) {
+            b.emitRaw(OpCode.BUILD_DICT, 0);
+            return null;
+        }
+        var entries = c.dict_entries().dict_entry();
+        boolean hasUnpack = false;
+        for (var entry : entries) {
+            if (entry instanceof Jython3Parser.DictUnpackEntryContext) {
+                hasUnpack = true;
+                break;
             }
         }
-        b.emitRaw(OpCode.BUILD_DICT, n);
+        if (!hasUnpack) {
+            for (var entry : entries) {
+                var kv = (Jython3Parser.DictKvEntryContext) entry;
+                visit(kv.expr(0));
+                visit(kv.expr(1));
+            }
+            b.emitRaw(OpCode.BUILD_DICT, entries.size());
+        } else {
+            b.emitRaw(OpCode.BUILD_DICT, 0);
+            for (var entry : entries) {
+                if (entry instanceof Jython3Parser.DictKvEntryContext kv) {
+                    b.emit(OpCode.DUP_TOP);
+                    visit(kv.expr(0));
+                    visit(kv.expr(1));
+                    b.emit(OpCode.STORE_SUBSCR);
+                } else {
+                    var du = (Jython3Parser.DictUnpackEntryContext) entry;
+                    visit(du.expr());
+                    b.emitRaw(OpCode.DICT_MERGE, 1);
+                }
+            }
+        }
         return null;
     }
 
@@ -2179,9 +2269,14 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     /** Set literal: {expr, expr, ...} */
     @Override public Void visitSetLiteral(Jython3Parser.SetLiteralContext c) {
-        int n = 0;
-        for (var e : c.expr_list().expr()) { visit(e); n++; }
-        b.emitRaw(OpCode.BUILD_SET, n);
+        var items = c.expr_list().star_expr();
+        if (hasStarItem(items)) {
+            emitStarItemsAsList(items);
+            b.emit(OpCode.LIST_TO_SET);
+        } else {
+            for (var se : items) visit(((Jython3Parser.PlainItemContext) se).expr());
+            b.emitRaw(OpCode.BUILD_SET, items.size());
+        }
         return null;
     }
 }

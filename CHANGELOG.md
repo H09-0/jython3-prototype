@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.14.3-beta] - 2026-11-15
+### Added
+- **PEP 448 Additional Unpacking Generalizations (`Jython3.g4`, `OpCode`, `BytecodeValidator`, `BytecodeDisassembler`, `CompileVisitor`, `Jython3Interpreter`)**:
+  - Added `*expr` unpacking inside list, tuple (both `(*a, b)` and bare `*a, b`), and set displays (`[*a, 1, *b]`, `(*a, *b)`, `{*a, *b}`), and `**mapping` unpacking inside dict displays (`{**d1, 'k': 1, **d2}` with right-to-left override).
+  - Enabled PEP 448 `*expr` after keyword arguments in function calls (`f(x=1, *args)`), compile-time duplicate keyword detection (`SyntaxError`), runtime duplicate keyword detection across `**` and explicit kwargs (`TypeError`), and `ExecutionLimits.maxCollectionSize` enforcement in `LIST_EXTEND`.
+
 ## [v0.14.2-beta] - 2026-11-15
 ### Added
 - **PEP 3102 Keyword-Only Arguments, PEP 570 Positional-Only Parameters, and PEP 3132 Starred Unpacking (`Jython3.g4`, `OpCode`, `LValue`, `CompileVisitor`, `PyFunction`, `CompiledCode`, `PolicySanitizer`, `Jython3Interpreter`)**:

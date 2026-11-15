@@ -213,7 +213,7 @@ public final class BytecodeValidator {
             case DELETE_FAST, DELETE_NAME_SILENT, POP_EXCEPT_HANDLER, BEGIN_EXCEPT_HANDLER,
                  END_EXCEPT_HANDLER -> new int[]{0, 0};
             case UNARY_MINUS, LOGICAL_NOT, BITWISE_INVERT, GET_ITER, LOAD_ATTR, YIELD_VALUE,
-                 GET_AWAITABLE, GET_AITER -> new int[]{1, 0};
+                 GET_AWAITABLE, GET_AITER, LIST_TO_TUPLE, LIST_TO_SET -> new int[]{1, 0};
             case ADD, SUBTRACT, MULTIPLY, DIVIDE, FLOOR_DIVIDE, MODULO, POWER,
                  INPLACE_ADD, INPLACE_SUBTRACT, INPLACE_MULTIPLY,
                  INPLACE_AND, INPLACE_OR, INPLACE_XOR,

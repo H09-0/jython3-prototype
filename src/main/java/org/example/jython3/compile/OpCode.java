@@ -86,7 +86,10 @@ public enum OpCode {
     AWAIT_FROM(98),         // arg: donePc; like YIELD_FROM but accepts PyCoroutine + iterators
     GET_AITER(99),          // pops obj, calls __aiter__(), pushes async iterator
     // ── PEP 3132 extended unpacking
-    UNPACK_EX(100);         // arg: (after << 8) | before; pops iterable, pushes before + list + after
+    UNPACK_EX(100),         // arg: (after << 8) | before; pops iterable, pushes before + list + after
+    // ── PEP 448 container literal conversions
+    LIST_TO_TUPLE(101),     // pops PyList, pushes PyTuple
+    LIST_TO_SET(102);       // pops PyList, pushes PySet
 
     private final int code;
 
