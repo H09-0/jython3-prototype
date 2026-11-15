@@ -120,7 +120,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         List<SecureDirectoryStream<Path>> opened = new ArrayList<>();
         try {
             SecureDirectoryStream<Path> dir = traverseExisting(root, segments.subList(0, segments.size() - 1), opened, "read_text", rel);
-            Path leaf = Path.of(segments.get(segments.size() - 1));
+            Path leaf = canonicalRoot.getFileSystem().getPath(segments.get(segments.size() - 1));
             var view = dir.getFileAttributeView(leaf, java.nio.file.attribute.BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
             BasicFileAttributes attrs = view.readAttributes();
             if (attrs.isSymbolicLink()) {
@@ -156,13 +156,30 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
             if (Files.size(real) > maxBytes) {
                 throw PyErrors.error("ValueError", "file exceeds maxBytes limit (" + maxBytes + ")");
             }
-            try (SeekableByteChannel ch = Files.newByteChannel(real, READ_NOFOLLOW)) {
+            try (SeekableByteChannel ch = openReadChannel(real)) {
                 return readChannelUtf8(ch, maxBytes);
             }
         } catch (NoSuchFileException e) {
             throw PyErrors.error("FileNotFoundError", "Path not found: " + rel);
         } catch (IOException e) {
             throw mapIoError("read_text", rel, e);
+        }
+    }
+
+    private static SeekableByteChannel openReadChannel(Path target) throws IOException {
+        try {
+            return Files.newByteChannel(target, READ_NOFOLLOW);
+        } catch (UnsupportedOperationException | IllegalArgumentException e) {
+            return Files.newByteChannel(target, StandardOpenOption.READ);
+        }
+    }
+
+    private static SeekableByteChannel openWriteChannel(Path target) throws IOException {
+        try {
+            return Files.newByteChannel(target, WRITE_NOFOLLOW);
+        } catch (UnsupportedOperationException | IllegalArgumentException e) {
+            return Files.newByteChannel(target, StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
         }
     }
 
@@ -200,7 +217,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
             SecureDirectoryStream<Path> dir = root;
             Path curPath = canonicalRoot;
             for (int i = 0; i < segments.size() - 1; i++) {
-                Path seg = Path.of(segments.get(i));
+                Path seg = canonicalRoot.getFileSystem().getPath(segments.get(i));
                 curPath = curPath.resolve(seg);
                 SecureDirectoryStream<Path> next;
                 try {
@@ -216,7 +233,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
                 opened.add(next);
                 dir = next;
             }
-            Path leaf = Path.of(segments.get(segments.size() - 1));
+            Path leaf = canonicalRoot.getFileSystem().getPath(segments.get(segments.size() - 1));
             try (SeekableByteChannel ch = dir.newByteChannel(leaf, WRITE_NOFOLLOW)) {
                 ByteBuffer buf = ByteBuffer.wrap(bytes);
                 while (buf.hasRemaining()) {
@@ -243,7 +260,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
             if (Files.isSymbolicLink(normalized)) {
                 throw denySecurity("write_text", rel, "refusing to write through symbolic link");
             }
-            try (SeekableByteChannel ch = Files.newByteChannel(normalized, WRITE_NOFOLLOW)) {
+            try (SeekableByteChannel ch = openWriteChannel(normalized)) {
                 ByteBuffer buf = ByteBuffer.wrap(bytes);
                 while (buf.hasRemaining()) {
                     ch.write(buf);
@@ -256,14 +273,8 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
     }
 
     private PyObject listDir(Map<String, PyObject> args) {
-        String rel = (args != null && args.get("path") instanceof PyStr s) ? s.value() : ".";
-        if (rel.indexOf('\0') >= 0) {
-            throw PyErrors.error("ValueError", "null byte in path");
-        }
-        Path parsed = Path.of(rel);
-        if (parsed.isAbsolute()) {
-            throw denySecurity("list_dir", rel, "absolute paths are forbidden in scoped workspace");
-        }
+        String relRaw = (args != null && args.get("path") instanceof PyStr s) ? s.value() : ".";
+        String rel = sanitizeRelativePath("list_dir", relRaw);
         Path normalized = checkNormalizedInRoot("list_dir", rel);
         List<String> segments = relativeSegments(normalized);
 
@@ -287,7 +298,31 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         } catch (IOException e) {
             throw mapIoError("list_dir", rel, e);
         }
-        throw PyErrors.error("OSError", "Failed to list directory");
+        return listDirFallback(normalized, rel);
+    }
+
+    private PyObject listDirFallback(Path normalized, String rel) {
+        try {
+            Path real = normalized.toRealPath();
+            if (!real.startsWith(canonicalRoot)) {
+                throw denySecurity("list_dir", rel, "symlink target escapes workspace root");
+            }
+            if (!Files.isDirectory(real, LinkOption.NOFOLLOW_LINKS)) {
+                throw PyErrors.error("FileNotFoundError", "Not a directory: " + rel);
+            }
+            List<PyObject> names = new ArrayList<>();
+            try (DirectoryStream<Path> ds = Files.newDirectoryStream(real)) {
+                for (Path entry : ds) {
+                    names.add(new PyStr(entry.getFileName().toString()));
+                }
+            }
+            names.sort((a, b) -> a.toString().compareTo(b.toString()));
+            return new PyList(names);
+        } catch (NoSuchFileException e) {
+            throw PyErrors.error("FileNotFoundError", "Path not found: " + rel);
+        } catch (IOException e) {
+            throw mapIoError("list_dir", rel, e);
+        }
     }
 
     private boolean exists(Map<String, PyObject> args) {
@@ -301,7 +336,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
                 try {
                     SecureDirectoryStream<Path> parent = traverseExisting(
                             sds, segments.subList(0, segments.size() - 1), opened, "exists", rel);
-                    Path leaf = Path.of(segments.get(segments.size() - 1));
+                    Path leaf = canonicalRoot.getFileSystem().getPath(segments.get(segments.size() - 1));
                     var view = parent.getFileAttributeView(leaf, java.nio.file.attribute.BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
                     BasicFileAttributes attrs = view.readAttributes();
                     return !attrs.isSymbolicLink();
@@ -314,7 +349,18 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         } catch (IOException e) {
             return false;
         }
-        return false;
+        return existsFallback(normalized);
+    }
+
+    private boolean existsFallback(Path normalized) {
+        if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(normalized)) {
+            return false;
+        }
+        try {
+            return normalized.toRealPath().startsWith(canonicalRoot);
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private SecureDirectoryStream<Path> traverseExisting(
@@ -326,7 +372,7 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         SecureDirectoryStream<Path> cur = root;
         for (String seg : dirSegments) {
             try {
-                cur = cur.newDirectoryStream(Path.of(seg), LinkOption.NOFOLLOW_LINKS);
+                cur = cur.newDirectoryStream(canonicalRoot.getFileSystem().getPath(seg), LinkOption.NOFOLLOW_LINKS);
                 opened.add(cur);
             } catch (NotDirectoryException nde) {
                 throw denySecurity(action, rel, "non-directory or symlink encountered in path");
@@ -354,14 +400,22 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         if (!(p instanceof PyStr s) || s.value().isEmpty()) {
             throw PyErrors.error("TypeError", "requires non-empty str 'path'");
         }
-        if (s.value().indexOf('\0') >= 0) {
+        return sanitizeRelativePath("path_check", s.value());
+    }
+
+    private String sanitizeRelativePath(String action, String raw) {
+        if (raw.indexOf('\0') >= 0) {
             throw PyErrors.error("ValueError", "null byte in path");
         }
-        Path parsed = Path.of(s.value());
-        if (parsed.isAbsolute()) {
-            throw denySecurity("path_check", s.value(), "absolute paths are forbidden in scoped workspace");
+        String unified = raw.replace('\\', '/');
+        if (unified.startsWith("/") || (unified.length() >= 2 && unified.charAt(1) == ':')) {
+            throw denySecurity(action, raw, "absolute or drive-qualified paths are forbidden in scoped workspace");
         }
-        return s.value();
+        Path parsed = canonicalRoot.getFileSystem().getPath(unified);
+        if (parsed.isAbsolute()) {
+            throw denySecurity(action, raw, "absolute paths are forbidden in scoped workspace");
+        }
+        return unified;
     }
 
     private Path checkNormalizedInRoot(String action, String rel) {
