@@ -1,6 +1,7 @@
 package org.example.jython3.api;
 
 import org.example.jython3.control.ControlDevice;
+import org.example.jython3.control.HostAttestation;
 import org.example.jython3.host.CapabilitySet;
 import org.example.jython3.host.HostAppBridge;
 import org.example.jython3.host.HostAuditLog;
@@ -77,6 +78,10 @@ public final class EmbeddedRuntime implements AutoCloseable {
 
     public void registerDevice(ControlDevice device) {
         bridge.registerDevice(device);
+    }
+
+    public void registerAttestedDevice(ControlDevice device, HostAttestation attestation) {
+        bridge.registerAttestedDevice(device, attestation);
     }
 
     public void bindModelData(String name, Object plainData) {

@@ -2,6 +2,7 @@ package org.example.jython3.host;
 
 import org.example.jython3.Jython3Interpreter;
 import org.example.jython3.control.ControlDevice;
+import org.example.jython3.control.HostAttestation;
 import org.example.jython3.runtime.BigInt;
 import org.example.jython3.runtime.ExceptionTypeRegistry;
 import org.example.jython3.runtime.PyBool;
@@ -51,6 +52,10 @@ public final class HostAppBridge implements AutoCloseable {
 
     public void registerDevice(ControlDevice device) {
         interpreter.controlRegistry().register(device);
+    }
+
+    public void registerAttestedDevice(ControlDevice device, HostAttestation attestation) {
+        interpreter.controlRegistry().registerAttested(device, attestation);
     }
 
     /**

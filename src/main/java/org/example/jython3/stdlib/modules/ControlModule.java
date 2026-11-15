@@ -76,18 +76,12 @@ public final class ControlModule {
                 session.auditLog().recordDenied(HostCapability.CONTROL, "open_controller", deviceId, "device not allowlisted");
                 throw PyErrors.error("SecurityError", "control access to device '" + deviceId + "' is restricted");
             }
-            ControlDevice device = registry.get(deviceId);
-            if (device == null) {
+            ControlRegistry.Registration reg = registry.getRegistration(deviceId);
+            if (reg == null) {
                 throw PyErrors.error("LookupError", "unknown control device '" + deviceId + "'");
             }
-            if (device.trustTier() == ControlDevice.TrustTier.HARDWARE
-                    && !session.capabilities().allowHardwareAdapters()) {
-                session.auditLog().recordDenied(HostCapability.CONTROL, "open_controller", deviceId,
-                        "hardware adapter denied without explicit allowHardwareAdapters(true)");
-                throw PyErrors.error("SecurityError",
-                        "hardware adapter '" + deviceId + "' requires explicit trusted hardware authorization");
-            }
-            return createControllerHandle(session, device);
+            requireAttestedRegistration(session, reg, "open_controller");
+            return createControllerHandle(session, reg);
         }));
 
         attrs.put("Timer", new PyBuiltinFunction("control.Timer", args -> {
@@ -110,7 +104,27 @@ public final class ControlModule {
         return new PyModule("control", attrs);
     }
 
-    private static PyHostHandle createControllerHandle(HostSession session, ControlDevice device) {
+    private static void requireAttestedRegistration(HostSession session,
+                                                    ControlRegistry.Registration reg,
+                                                    String action) {
+        String deviceId = reg.device().id();
+        if (reg.tier() == ControlRegistry.AttestedTier.UNTRUSTED) {
+            session.auditLog().recordDenied(HostCapability.CONTROL, action, deviceId,
+                    "unattested custom control adapter rejected");
+            throw PyErrors.error("SecurityError",
+                    "control adapter '" + deviceId + "' is untrusted and lacks host attestation");
+        }
+        if (reg.tier() == ControlRegistry.AttestedTier.HARDWARE
+                && !session.capabilities().allowHardwareAdapters()) {
+            session.auditLog().recordDenied(HostCapability.CONTROL, action, deviceId,
+                    "hardware adapter denied without explicit allowHardwareAdapters(true)");
+            throw PyErrors.error("SecurityError",
+                    "hardware adapter '" + deviceId + "' requires explicit trusted hardware authorization");
+        }
+    }
+
+    private static PyHostHandle createControllerHandle(HostSession session, ControlRegistry.Registration reg) {
+        final ControlDevice device = reg.device();
         final List<PyObject> listeners = new CopyOnWriteArrayList<>();
         final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -146,13 +160,7 @@ public final class ControlModule {
                     }
                     cmdArgs.putAll(kwargs);
                     session.requireControlCommand(device.id(), cmdName);
-                    if (device.trustTier() == ControlDevice.TrustTier.HARDWARE
-                            && !session.capabilities().allowHardwareAdapters()) {
-                        session.auditLog().recordDenied(HostCapability.CONTROL, cmdName, device.id(),
-                                "hardware adapter denied without explicit allowHardwareAdapters(true)");
-                        throw PyErrors.error("SecurityError",
-                                "hardware adapter '" + device.id() + "' requires explicit trusted hardware authorization");
-                    }
+                    requireAttestedRegistration(session, reg, cmdName);
                     Map<String, PyObject> safeArgs = new LinkedHashMap<>(cmdArgs.size());
                     for (var e : cmdArgs.entrySet()) {
                         safeArgs.put(e.getKey(), sanitizeControlValue(session, "sanitize_arg",

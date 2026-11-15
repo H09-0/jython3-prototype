@@ -2,6 +2,7 @@ package org.example.jython3;
 
 import org.example.jython3.api.EmbeddedRuntime;
 import org.example.jython3.control.ControlDevice;
+import org.example.jython3.control.HostAttestation;
 import org.example.jython3.host.CapabilitySet;
 import org.example.jython3.host.HostCapability;
 import org.example.jython3.runtime.InterpreterException;
@@ -60,7 +61,7 @@ class HardwareCapabilityTrustTest {
                 .capabilities(controlWithoutHardware)
                 .uiToolkit(new HeadlessUiToolkit())
                 .build()) {
-            rt.registerDevice(new MockHardwareDevice());
+            rt.registerAttestedDevice(new MockHardwareDevice(), HostAttestation.hardware("cnc-driver", "oculix-signer"));
             InterpreterException denied = assertThrows(InterpreterException.class,
                     () -> rt.eval("import control\ncontrol.Controller('cnc.spindle').send('ping')"));
             assertEquals("SecurityError", denied.typeName());
@@ -79,7 +80,7 @@ class HardwareCapabilityTrustTest {
                 .capabilities(controlWithHardware)
                 .uiToolkit(new HeadlessUiToolkit())
                 .build()) {
-            rt.registerDevice(new MockHardwareDevice());
+            rt.registerAttestedDevice(new MockHardwareDevice(), HostAttestation.hardware("cnc-driver", "oculix-signer"));
             rt.eval("import control\nout = control.Controller('cnc.spindle').send('ping')");
             assertEquals("hw:ping", rt.getGlobal("out").toString());
         }
