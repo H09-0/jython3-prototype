@@ -449,8 +449,12 @@ public final class BuiltinFunctions {
                 throw PyErrors.error("TypeError", "sum() can't sum strings [use ''.join(seq) instead]");
             }
             PyIterator it = toIterator(args[0], javaPolicy);
+            var ctx = org.example.jython3.security.ExecutionContext.current();
+            var limits = caller.executionLimits();
+            int ticks = 0;
             while (it.hasNext()) {
-                total = org.example.jython3.runtime.ArithmeticOps.add(total, it.next());
+                if (ctx != null && (++ticks & 0x3F) == 0) ctx.stepInstruction();
+                total = org.example.jython3.runtime.ArithmeticOps.add(total, it.next(), limits);
             }
             return total;
         }));
@@ -694,14 +698,21 @@ public final class BuiltinFunctions {
             for (PyObject a : args) {
                 iters.add(toIterator(a, javaPolicy));
             }
+            var ctx = org.example.jython3.security.ExecutionContext.current();
+            int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
+            int ticks = 0;
             var result = new ArrayList<PyObject>();
             while (true) {
+                if (ctx != null && (++ticks & 0x3F) == 0) ctx.stepInstruction();
                 var tupleItems = new ArrayList<PyObject>(iters.size());
                 for (PyIterator it : iters) {
                     if (!it.hasNext()) {
                         return new PyList(result);
                     }
                     tupleItems.add(it.next());
+                }
+                if (result.size() >= maxColl) {
+                    throw PyErrors.error("MemoryError", "zip() exceeds maximum collection limit (" + maxColl + ")");
                 }
                 result.add(new PyTuple(tupleItems));
             }
@@ -716,8 +727,11 @@ public final class BuiltinFunctions {
         // all(iterable)
         define.accept("all", new PyBuiltinFunction("all", args -> {
             checkArgCount("all", args, 1);
+            var ctx = org.example.jython3.security.ExecutionContext.current();
+            int ticks = 0;
             PyIterator it = toIterator(args[0], javaPolicy);
             while (it.hasNext()) {
+                if (ctx != null && (++ticks & 0x3F) == 0) ctx.stepInstruction();
                 if (!isTruthy(it.next())) return PyBool.FALSE;
             }
             return PyBool.TRUE;
@@ -726,8 +740,11 @@ public final class BuiltinFunctions {
         // any(iterable)
         define.accept("any", new PyBuiltinFunction("any", args -> {
             checkArgCount("any", args, 1);
+            var ctx = org.example.jython3.security.ExecutionContext.current();
+            int ticks = 0;
             PyIterator it = toIterator(args[0], javaPolicy);
             while (it.hasNext()) {
+                if (ctx != null && (++ticks & 0x3F) == 0) ctx.stepInstruction();
                 if (isTruthy(it.next())) return PyBool.TRUE;
             }
             return PyBool.FALSE;
@@ -845,9 +862,10 @@ public final class BuiltinFunctions {
                     throw PyErrors.error(Double.isNaN(val) ? "ValueError" : "OverflowError",
                             "cannot convert float " + val + " to integer");
                 }
-                long r = Math.round(val);
-                if (r >= Integer.MIN_VALUE && r <= Integer.MAX_VALUE) return PyInt.of((int) r);
-                return new BigInt(java.math.BigInteger.valueOf(r));
+                java.math.BigInteger rounded = java.math.BigDecimal.valueOf(val)
+                        .setScale(0, java.math.RoundingMode.HALF_EVEN)
+                        .toBigInteger();
+                return toPyInteger(rounded);
             }
             int digits = toInt(args[1]);
             if (args[0] instanceof PyInt || args[0] instanceof BigInt || args[0] instanceof PyBool) {
@@ -1130,9 +1148,9 @@ public final class BuiltinFunctions {
         if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new ArrayList<>(fs.items());
         if (o instanceof PyStr s) return s.toCodePointList();
         if (o instanceof PyDict d) return d.keys();
+        var ctx = org.example.jython3.security.ExecutionContext.current();
+        int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
         if (o instanceof PyRange r) {
-            var ctx = org.example.jython3.security.ExecutionContext.current();
-            int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
             if (r.lengthBig().compareTo(java.math.BigInteger.valueOf(maxColl)) > 0) {
                 throw PyErrors.error("MemoryError",
                         "range materialization (" + r.lengthBig() + ") exceeds maximum collection limit (" + maxColl + ")");
@@ -1140,7 +1158,13 @@ public final class BuiltinFunctions {
         }
         PyIterator it = toIterator(o, policy);
         var items = new ArrayList<PyObject>();
+        int ticks = 0;
         while (it.hasNext()) {
+            if (ctx != null && (++ticks & 0x3F) == 0) ctx.stepInstruction();
+            if (items.size() >= maxColl) {
+                throw PyErrors.error("MemoryError",
+                        "iterable materialization exceeds maximum collection limit (" + maxColl + ")");
+            }
             items.add(it.next());
         }
         return items;
@@ -1164,7 +1188,7 @@ public final class BuiltinFunctions {
             return PyIterator.fromGenerator(gen);
         }
         if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
-            return PyIterator.fromJavaIterable(iterable, policy, null);
+            return PyIterator.fromJavaIterable(iterable, policy, org.example.jython3.security.ExecutionContext.current());
         }
         if (o instanceof PyInstance inst) {
             PyCaller caller = PyCaller.current();

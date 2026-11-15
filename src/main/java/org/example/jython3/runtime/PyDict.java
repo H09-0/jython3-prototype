@@ -47,6 +47,8 @@ public final class PyDict implements PyObject {
     }
 
     private static final ThreadLocal<QueryKey> QUERY_KEY = ThreadLocal.withInitial(QueryKey::new);
+    private static final ThreadLocal<java.util.Set<Object>> REPR_SEEN =
+            ThreadLocal.withInitial(() -> java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
 
     private final Map<PyKey, PyObject> entries = new LinkedHashMap<>();
 
@@ -146,18 +148,24 @@ public final class PyDict implements PyObject {
 
     @Override
     public String toString() {
-        var sb = new StringBuilder("{");
-        int i = 0;
-        for (var entry : entries.entrySet()) {
-            if (i++ > 0) sb.append(", ");
-            var k = entry.getKey().object();
-            var v = entry.getValue();
-            if (k instanceof PyStr s) sb.append("'").append(s.value()).append("'");
-            else sb.append(k);
-            sb.append(": ");
-            if (v instanceof PyStr s) sb.append("'").append(s.value()).append("'");
-            else sb.append(v);
+        var seen = REPR_SEEN.get();
+        if (!seen.add(this)) return "{...}";
+        try {
+            var sb = new StringBuilder("{");
+            int i = 0;
+            for (var entry : entries.entrySet()) {
+                if (i++ > 0) sb.append(", ");
+                var k = entry.getKey().object();
+                var v = entry.getValue();
+                if (k instanceof PyStr s) sb.append("'").append(s.value()).append("'");
+                else sb.append(k);
+                sb.append(": ");
+                if (v instanceof PyStr s) sb.append("'").append(s.value()).append("'");
+                else sb.append(v);
+            }
+            return sb.append("}").toString();
+        } finally {
+            seen.remove(this);
         }
-        return sb.append("}").toString();
     }
 }

@@ -200,8 +200,16 @@ public final class BuiltinMethodDispatcher {
             case "center", "ljust", "rjust" -> new PyBuiltinFunction("str." + method, args -> {
                 if (args.length < 1 || args.length > 2) throw PyErrors.error("TypeError", method + "() takes 1 or 2 arguments");
                 int width = toInt(args[0]);
-                if (width > 100_000) throw PyErrors.error("MemoryError", "width exceeds limit");
-                char fill = args.length == 2 ? ((PyStr) args[1]).value().charAt(0) : ' ';
+                var ctx = org.example.jython3.security.ExecutionContext.current();
+                int maxStr = ctx != null ? Math.min(100_000, ctx.limits().maxStringLength()) : 100_000;
+                if (width > maxStr) throw PyErrors.error("MemoryError", "width exceeds limit");
+                char fill = ' ';
+                if (args.length == 2) {
+                    if (!(args[1] instanceof PyStr fs) || fs.value().length() != 1) {
+                        throw PyErrors.error("TypeError", "The fill character must be exactly one character long");
+                    }
+                    fill = fs.value().charAt(0);
+                }
                 int cur = s.codePointCount();
                 if (width <= cur) return s;
                 int pad = width - cur;
@@ -213,7 +221,9 @@ public final class BuiltinMethodDispatcher {
             case "zfill" -> new PyBuiltinFunction("str.zfill", args -> {
                 checkArgCount("str.zfill", args, 1);
                 int width = toInt(args[0]);
-                if (width > 100_000) throw PyErrors.error("MemoryError", "width exceeds limit");
+                var ctx = org.example.jython3.security.ExecutionContext.current();
+                int maxStr = ctx != null ? Math.min(100_000, ctx.limits().maxStringLength()) : 100_000;
+                if (width > maxStr) throw PyErrors.error("MemoryError", "width exceeds limit");
                 String raw = s.value();
                 if (raw.length() >= width) return s;
                 int pad = width - raw.length();
@@ -723,7 +733,7 @@ public final class BuiltinMethodDispatcher {
             case "values" -> new PyBuiltinFunction("dict.values", args -> new PyList(dict.values()));
             case "items" -> new PyBuiltinFunction("dict.items", args -> {
                 var items = new ArrayList<PyObject>();
-                for (var entry : dict.itemsList()) items.add(new PyList(entry));
+                for (var entry : dict.itemsList()) items.add(new PyTuple(entry));
                 return new PyList(items);
             });
             case "get" -> new PyBuiltinFunction("dict.get", args -> {
@@ -780,7 +790,9 @@ public final class BuiltinMethodDispatcher {
     }
 
     private static String strDotFormat(String fmt, PyObject[] args, java.util.Map<String, PyObject> kwargs) {
-        var sb = new StringBuilder(fmt.length() + 16);
+        var ctx = org.example.jython3.security.ExecutionContext.current();
+        int maxStr = ctx != null ? ctx.limits().maxStringLength() : 100_000_000;
+        var sb = new StringBuilder(Math.min(fmt.length() + 16, maxStr));
         int autoIdx = 0;
         boolean usedAuto = false;
         boolean usedManual = false;
@@ -814,7 +826,9 @@ public final class BuiltinMethodDispatcher {
                 } else if (keyPart.chars().allMatch(Character::isDigit)) {
                     if (usedAuto) throw PyErrors.error("ValueError", "cannot switch from automatic field numbering to manual field specification");
                     usedManual = true;
-                    int idx = Integer.parseInt(keyPart);
+                    int idx;
+                    try { idx = Integer.parseInt(keyPart); }
+                    catch (NumberFormatException nfe) { throw PyErrors.error("IndexError", "Replacement index " + keyPart + " out of range"); }
                     if (idx < 0 || idx >= args.length) throw PyErrors.error("IndexError", "Replacement index " + idx + " out of range");
                     val = args[idx];
                 } else {
@@ -827,6 +841,9 @@ public final class BuiltinMethodDispatcher {
                     val = new PyStr(val.toString());
                 }
                 sb.append(spec.isEmpty() ? val.toString() : BuiltinFunctions.formatValuePublic(val, spec));
+                if (sb.length() > maxStr) {
+                    throw PyErrors.error("MemoryError", "formatted string exceeds maximum allowed length: " + maxStr);
+                }
             } else if (ch == '}') {
                 if (i + 1 < n && fmt.charAt(i + 1) == '}') { sb.append('}'); i += 2; continue; }
                 throw PyErrors.error("ValueError", "Single '}' encountered in format string");

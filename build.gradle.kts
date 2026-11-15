@@ -83,6 +83,26 @@ tasks.test {
     useJUnitPlatform()
 }
 
+tasks.register<Test>("securityTest") {
+    group = "verification"
+    description = "Run dedicated security verification suite (OWASP/CWE/CERT/OpenSSF)"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("security")
+    }
+}
+
+tasks.register<Test>("logicTest") {
+    group = "verification"
+    description = "Run dedicated language, builtins, stdlib, OOP, async, and bridge logic suite"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("logic")
+    }
+}
+
 tasks.register<Sync>("installLocal") {
     group = "distribution"
     description = "Build distribution and update ~/.local/share/jython3 on the local system"

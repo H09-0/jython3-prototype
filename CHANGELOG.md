@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.14.1-beta] - 2026-11-15
+### Security Audit, Language Fixes & Modular Test Architecture
+- **Full International-Standards Security Audit & Hardening (OWASP Top 10:2025, MITRE CWE, SEI CERT Java, OpenSSF Python)**:
+  - **Java Bridge & Policies (`AllowlistPolicy`, `JavaBridge`, `PyJavaObject`)**: Denied `Timer`/`TimerTask`/`ServiceLoader`/`ResourceBundle`/`StackWalker`/`ScopedValue`/`SecurityManager`, `javax.script.*`/`javax.naming.*`/`java.net.*`/`java.rmi.*`/`java.lang.invoke.*`, XML/JVM/classloader members; switched `Class.forName` to `initialize=false` (CWE-470); blocked `MethodHandle`/`VarHandle`/`Lookup`/`Process`/`Thread`/`Proxy`/`InvocationHandler` in `toPyObject`; enforced cycle/depth guards, `PyHostHandle` protection, `BigInteger` 10,000-digit cap, same-thread SAM proxy affinity, and `PyJavaObject.setMember` parity checks.
+  - **Filesystem & Logging (`IoModule`, `OsModule`, `ScopedWorkspaceAdapter`, `HostAuditLog`)**: Added null-byte & mode checks, ancestor symlink chain rejection, `NOFOLLOW_LINKS` byte-channel I/O, UTF-8 byte-length accounting (CWE-59/CWE-22); fixed `ScopedWorkspaceAdapter` symlink detection on `write_text` and case-insensitive `FileSystemException` mapping; neutralized CRLF/control chars in `HostAuditLog` (CWE-117 / CERT `IDS03-J`).
+  - **Resource Exhaustion, ReDoS & Cyclic Safety (`ArithmeticOps`, `ReModule`, `JsonModule`, `BuiltinFunctions`, `BuiltinMethodDispatcher`, `PyOps`, `PyList`, `PyDict`, `ExecutionContext`, `Jython3Interpreter`)**: Fixed `BigInt` wraparound on sequence `*`, bounded `pow`/`<<`/`BigInt*BigInt` bit-lengths (CWE-190/CWE-400); added `ExecutionContext.checkTimeoutAndCancel()` per regex `charAt` (CWE-1333) + `re.sub`/`findall`/`split` size/budget limits; bounded `json.dumps`/`loads`, `sum`/`zip`/`all`/`any`/`collectIterable`, `%`/`.format()` outputs; added cycle-safe `PyList`/`PyDict.toString()` (`[[...]]`/`{...}`) and `PyOps.pyEquals` depth cap (CWE-674); made `Thread.join()` cancellation-aware.
+- **Language Conformance Fixes**:
+  - Fixed `dict.items()` to return `(key, value)` tuples (`PyTuple`) instead of lists, `round(x)` to use IEEE 754 `RoundingMode.HALF_EVEN` (banker's rounding), and `%04d`/`%d` width/zero-padding in `PyOps.pyStringFormat`.
+- **Dedicated Security & Logic Test Suites (`./gradlew securityTest`, `./gradlew logicTest`, `./gradlew test`)**:
+  - Replaced 74 fragmented flat test files with structured `org.example.jython3.security.*` (`@Tag("security")`, 24 tests) and `org.example.jython3.logic.*` (`@Tag("logic")`, 20 tests) suites alongside `differential.*` (30 tests) and `fieldTest`.
+
 ## [v0.14.0-beta] - 2026-11-15
 ### Added & Improved
 - **Python Execution Model §4.2.2 & PEP 479 (`CompiledCode`, `Jython3Interpreter`, `Pep479AndExecutionModelTest`)**:

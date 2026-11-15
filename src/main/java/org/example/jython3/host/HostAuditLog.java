@@ -28,12 +28,33 @@ public final class HostAuditLog {
 
     public synchronized void recordAllowed(HostCapability cap, String action, String target, String detail) {
         allowedCount++;
-        append(new AuditEntry(Instant.now(), cap, action, target, true, detail != null ? detail : ""));
+        append(new AuditEntry(Instant.now(), cap, sanitizeLogField(action),
+                sanitizeLogField(target), true, sanitizeLogField(detail)));
     }
 
     public synchronized void recordDenied(HostCapability cap, String action, String target, String detail) {
         deniedCount++;
-        append(new AuditEntry(Instant.now(), cap, action, target, false, detail != null ? detail : ""));
+        append(new AuditEntry(Instant.now(), cap, sanitizeLogField(action),
+                sanitizeLogField(target), false, sanitizeLogField(detail)));
+    }
+
+    /** Neutralizes CR/LF and control characters in log fields (CWE-117 / CERT IDS03-J). */
+    public static String sanitizeLogField(String raw) {
+        if (raw == null || raw.isEmpty()) return "";
+        StringBuilder sb = null;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c < 0x20 || c == 0x7F) {
+                if (sb == null) {
+                    sb = new StringBuilder(raw.length());
+                    sb.append(raw, 0, i);
+                }
+                sb.append(' ');
+            } else if (sb != null) {
+                sb.append(c);
+            }
+        }
+        return sb != null ? sb.toString() : raw;
     }
 
     private void append(AuditEntry entry) {

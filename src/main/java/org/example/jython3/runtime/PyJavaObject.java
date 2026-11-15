@@ -90,13 +90,24 @@ public record PyJavaObject(Object object, JavaAccessPolicy policy) implements Py
         if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
 
         // Public instance field
+        if (val instanceof PyHostHandle) {
+            throw PyErrors.error("SecurityError", "cannot assign host capability handle to Java field");
+        }
         try {
             Field f = clazz.getField(name);
-            if (!Modifier.isStatic(f.getModifiers())) {
+            if (!Modifier.isStatic(f.getModifiers()) && Modifier.isPublic(f.getModifiers()) && !f.isSynthetic()) {
                 if (!policy.canWriteField(clazz.getName(), name)) {
                     throw JavaBridge.denied("field '" + name + "'");
                 }
-                Object javaVal = JavaBridge.toJavaObject(val, f.getType(), policy);
+                if (Modifier.isFinal(f.getModifiers())) {
+                    throw PyErrors.error("AttributeError",
+                            "cannot set final field '" + name + "' on Java object '" + clazz.getName() + "'");
+                }
+                Class<?> ft = f.getType();
+                if (!ft.isPrimitive() && !ft.isArray() && !policy.canAccessClass(ft.getName())) {
+                    throw JavaBridge.denied(ft.getName());
+                }
+                Object javaVal = JavaBridge.toJavaObject(val, ft, policy);
                 f.set(object, javaVal);
                 return;
             }

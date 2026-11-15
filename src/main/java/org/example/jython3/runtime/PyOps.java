@@ -165,7 +165,25 @@ public final class PyOps {
         return v != null;
     }
 
+    private static final int MAX_EQ_DEPTH = 256;
+    private static final ThreadLocal<Integer> EQ_DEPTH = ThreadLocal.withInitial(() -> 0);
+
     public static boolean pyEquals(PyObject a, PyObject b) {
+        if (a == b && !(a instanceof PyFloat f && Double.isNaN(f.value()))) return true;
+        int depth = EQ_DEPTH.get();
+        if (depth >= MAX_EQ_DEPTH) {
+            throw PyErrors.error("RecursionError", "maximum recursion depth exceeded in comparison");
+        }
+        EQ_DEPTH.set(depth + 1);
+        try {
+            return pyEqualsInner(a, b);
+        } finally {
+            if (depth == 0) EQ_DEPTH.remove();
+            else EQ_DEPTH.set(depth);
+        }
+    }
+
+    private static boolean pyEqualsInner(PyObject a, PyObject b) {
         if (a instanceof PyNull && b instanceof PyNull) return true;
         if (a instanceof PyBool ab && b instanceof PyBool bb) return ab.value() == bb.value();
         if (a instanceof PyBool ab && b instanceof PyInt bi) return (ab.value() ? 1 : 0) == bi.value();
@@ -480,6 +498,8 @@ public final class PyOps {
         }
 
         var sb = new StringBuilder();
+        var ctx = org.example.jython3.security.ExecutionContext.current();
+        int maxStr = ctx != null ? ctx.limits().maxStringLength() : 100_000_000;
         int argIdx = 0;
         int n = fmt.length();
         int i = 0;
@@ -526,17 +546,30 @@ public final class PyOps {
                         else sb.append(arg.toString());
                     }
                     case 'd', 'i' -> {
-                        if (arg instanceof PyInt pi) sb.append(pi.value());
-                        else if (arg instanceof PyBool pb) sb.append(pb.value() ? 1 : 0);
-                        else if (arg instanceof BigInt bi) sb.append(bi.value().toString());
-                        else if (arg instanceof PyFloat pf) sb.append((long) pf.value());
-                        else throw PyErrors.error("TypeError", "%d format: a real number is required, not " + typeName(arg));
+                        if (arg instanceof PyInt pi) {
+                            sb.append(rawModifier.isEmpty() ? Integer.toString(pi.value())
+                                    : String.format(java.util.Locale.US, subSpec, pi.value()));
+                        } else if (arg instanceof PyBool pb) {
+                            int v = pb.value() ? 1 : 0;
+                            sb.append(rawModifier.isEmpty() ? Integer.toString(v)
+                                    : String.format(java.util.Locale.US, subSpec, v));
+                        } else if (arg instanceof BigInt bi) {
+                            sb.append(rawModifier.isEmpty() ? bi.value().toString()
+                                    : String.format(java.util.Locale.US, subSpec, bi.value()));
+                        } else if (arg instanceof PyFloat pf) {
+                            long v = (long) pf.value();
+                            sb.append(rawModifier.isEmpty() ? Long.toString(v)
+                                    : String.format(java.util.Locale.US, subSpec, v));
+                        } else throw PyErrors.error("TypeError", "%d format: a real number is required, not " + typeName(arg));
                     }
                     case 'f', 'F' -> {
                         double val = toDouble(arg);
                         sb.append(String.format(java.util.Locale.US, subSpec, val));
                     }
                     default -> sb.append(arg.toString());
+                }
+                if (sb.length() > maxStr) {
+                    throw PyErrors.error("MemoryError", "formatted string exceeds maximum allowed length: " + maxStr);
                 }
             } else {
                 sb.append(ch);

@@ -59,6 +59,22 @@ public final class ExecutionContext {
         return cancelled || (parent != null && parent.isCancelled());
     }
 
+    public void checkTimeoutAndCancel() {
+        if (cancelled) {
+            throw PyErrors.error("KeyboardInterrupt", "Execution cancelled by host");
+        }
+        if (timedOut) {
+            throw PyErrors.error("TimeoutError", "Execution timed out: limit=" + limits.timeout());
+        }
+        if (parent != null && parent.hasActiveLimits()) {
+            parent.checkTimeoutAndCancel();
+        }
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            timedOut = true;
+            throw PyErrors.error("TimeoutError", "Execution timed out: limit=" + limits.timeout());
+        }
+    }
+
     /**
      * Checks instruction budget, deadline, and cancellation on each VM opcode cycle.
      */

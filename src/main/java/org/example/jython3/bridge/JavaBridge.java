@@ -219,9 +219,10 @@ public class JavaBridge {
 
         String candidate = fullName;
         int firstDot = fullName.indexOf('.');
+        ClassLoader loader = JavaBridge.class.getClassLoader();
         while (true) {
             try {
-                Class<?> clazz = Class.forName(candidate);
+                Class<?> clazz = Class.forName(candidate, false, loader);
                 if (!policy.canAccessClass(clazz.getName())) throw denied(clazz.getName());
                 return new PyJavaClass(clazz, policy);
             } catch (ClassNotFoundException e) {
@@ -313,10 +314,19 @@ public class JavaBridge {
             throw denied(obj.getClass().getName());
         }
 
-        // Reject dangerous reflection and classloading types completely from entering Python
+        // Reject dangerous reflection, classloading, handle, process, and thread types from entering Python
         if (obj instanceof Class<?> || obj instanceof ClassLoader
                 || obj instanceof java.lang.reflect.Member
                 || obj instanceof java.lang.reflect.AccessibleObject
+                || obj instanceof java.lang.reflect.Proxy
+                || obj instanceof java.lang.reflect.InvocationHandler
+                || obj instanceof java.lang.invoke.MethodHandle
+                || obj instanceof java.lang.invoke.VarHandle
+                || obj instanceof java.lang.invoke.MethodHandles.Lookup
+                || obj instanceof java.lang.Process
+                || obj instanceof java.lang.ProcessHandle
+                || obj instanceof java.lang.Thread
+                || obj instanceof java.lang.ThreadGroup
                 || obj instanceof java.lang.Module
                 || obj instanceof java.lang.ModuleLayer) {
             throw denied(obj.getClass().getName());
@@ -330,9 +340,26 @@ public class JavaBridge {
         return toJavaObject(pyObj, targetType, null);
     }
 
-    /** Convert a Python PyObject into a target Java type, enforcing access policy. */
+    private static final int MAX_BRIDGE_CONVERSION_DEPTH = 128;
+
+    /** Convert a Python PyObject into a target Java type, enforcing access policy and cycle safety. */
     public static Object toJavaObject(PyObject pyObj, Class<?> targetType, JavaAccessPolicy policy) {
+        return toJavaObject(pyObj, targetType, policy, new java.util.IdentityHashMap<>(), 0);
+    }
+
+    private static Object toJavaObject(PyObject pyObj, Class<?> targetType, JavaAccessPolicy policy,
+                                       Map<PyObject, Boolean> active, int depth) {
+        if (depth > MAX_BRIDGE_CONVERSION_DEPTH) {
+            throw PyErrors.error("RecursionError", "maximum Java bridge conversion depth exceeded");
+        }
         if (pyObj instanceof PyNull) return null;
+
+        if (pyObj instanceof org.example.jython3.runtime.PyHostHandle) {
+            if (targetType == org.example.jython3.runtime.PyHostHandle.class || targetType == PyObject.class) {
+                return pyObj;
+            }
+            throw PyErrors.error("SecurityError", "cannot expose host capability handle to arbitrary Java type '" + targetType.getName() + "'");
+        }
 
         if (pyObj instanceof PyJavaObject jo) {
             if (policy != null && !policy.canAccessClass(jo.object().getClass().getName())) {
@@ -362,7 +389,11 @@ public class JavaBridge {
             if (pyObj instanceof org.example.jython3.runtime.BigInt bi) return bi.value();
             if (pyObj instanceof PyInt i) return java.math.BigInteger.valueOf(i.value());
             if (pyObj instanceof PyFloat f) return java.math.BigInteger.valueOf((long) f.value());
-            return new java.math.BigInteger(pyObj.toString());
+            String digits = pyObj.toString();
+            if (digits.length() > 10_000) {
+                throw PyErrors.error("ValueError", "Exceeds the limit (10000 digits) for integer string conversion");
+            }
+            return new java.math.BigInteger(digits);
         }
         if (targetType == double.class || targetType == Double.class) {
             return toJavaDouble(pyObj);
@@ -394,29 +425,45 @@ public class JavaBridge {
             if (pyObj instanceof PyStr s) return s.value();
             if (pyObj instanceof PyBool b) return b.value();
             if (pyObj instanceof PyList list) {
-                var javaList = new ArrayList<Object>(list.items().size());
-                for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy));
-                return javaList;
+                if (active.put(list, Boolean.TRUE) != null) {
+                    throw PyErrors.error("ValueError", "Circular reference detected converting list to Java");
+                }
+                try {
+                    var javaList = new ArrayList<Object>(list.items().size());
+                    for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy, active, depth + 1));
+                    return javaList;
+                } finally {
+                    active.remove(list);
+                }
             }
             if (pyObj instanceof PyDict dict) {
-                var javaMap = new LinkedHashMap<Object, Object>(dict.size() * 2);
-                for (var entry : dict.map().entrySet()) {
-                    javaMap.put(toJavaObject(entry.getKey(), Object.class, policy), toJavaObject(entry.getValue(), Object.class, policy));
+                if (active.put(dict, Boolean.TRUE) != null) {
+                    throw PyErrors.error("ValueError", "Circular reference detected converting dict to Java");
                 }
-                return javaMap;
+                try {
+                    var javaMap = new LinkedHashMap<Object, Object>(dict.size() * 2);
+                    for (var entry : dict.map().entrySet()) {
+                        javaMap.put(toJavaObject(entry.getKey(), Object.class, policy, active, depth + 1),
+                                toJavaObject(entry.getValue(), Object.class, policy, active, depth + 1));
+                    }
+                    return javaMap;
+                } finally {
+                    active.remove(dict);
+                }
             }
             return pyObj;
         }
 
-        // Functional-interface callback proxy for Python callables
+        // Functional-interface callback proxy for Python callables (same-thread synchronous only)
         if (targetType.isInterface()
+                && targetType != java.lang.reflect.InvocationHandler.class
                 && (pyObj instanceof PyFunction || pyObj instanceof PyBuiltinFunction || pyObj instanceof PyBoundMethod)) {
             Method sam = findSingleAbstractMethod(targetType);
             if (sam != null) {
                 if (policy != null && !policy.canAccessClass(targetType.getName())) {
                     throw denied(targetType.getName());
                 }
-                PyCaller capturedCaller = PyCaller.current();
+                Thread owningThread = Thread.currentThread();
                 JavaAccessPolicy boundPolicy = policy;
                 return Proxy.newProxyInstance(
                         targetType.getClassLoader(),
@@ -430,9 +477,12 @@ public class JavaBridge {
                                     default -> null;
                                 };
                             }
-                            PyCaller active = PyCaller.current();
-                            if (active == null) active = capturedCaller;
-                            if (active == null) {
+                            if (Thread.currentThread() != owningThread) {
+                                throw PyErrors.error("SecurityError",
+                                        "Python proxy callback cannot execute asynchronously outside active interpreter thread");
+                            }
+                            PyCaller activeCaller = PyCaller.current();
+                            if (activeCaller == null) {
                                 throw PyErrors.error("RuntimeError", "Python callback invoked outside interpreter");
                             }
                             int n = args == null ? 0 : args.length;
@@ -440,7 +490,7 @@ public class JavaBridge {
                             for (int i = 0; i < n; i++) {
                                 pyArgs[i] = toPyObject(args[i], boundPolicy);
                             }
-                            PyObject result = active.call(pyObj, pyArgs);
+                            PyObject result = activeCaller.call(pyObj, pyArgs);
                             Class<?> retType = method.getReturnType();
                             if (retType == void.class || retType == Void.class) {
                                 return null;
@@ -452,100 +502,122 @@ public class JavaBridge {
 
         // List conversion
         if (pyObj instanceof PyList list && (List.class.isAssignableFrom(targetType) || targetType == Object.class || targetType == Collection.class)) {
-            var javaList = new ArrayList<Object>(list.items().size());
-            for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy));
-            return javaList;
+            if (active.put(list, Boolean.TRUE) != null) {
+                throw PyErrors.error("ValueError", "Circular reference detected converting list to Java");
+            }
+            try {
+                var javaList = new ArrayList<Object>(list.items().size());
+                for (var it : list.items()) javaList.add(toJavaObject(it, Object.class, policy, active, depth + 1));
+                return javaList;
+            } finally {
+                active.remove(list);
+            }
         }
 
         // Map conversion
         if (pyObj instanceof PyDict dict && (Map.class.isAssignableFrom(targetType) || targetType == Object.class)) {
-            var javaMap = new LinkedHashMap<Object, Object>(dict.size() * 2);
-            for (var entry : dict.map().entrySet()) {
-                javaMap.put(toJavaObject(entry.getKey(), Object.class, policy), toJavaObject(entry.getValue(), Object.class, policy));
+            if (active.put(dict, Boolean.TRUE) != null) {
+                throw PyErrors.error("ValueError", "Circular reference detected converting dict to Java");
             }
-            return javaMap;
+            try {
+                var javaMap = new LinkedHashMap<Object, Object>(dict.size() * 2);
+                for (var entry : dict.map().entrySet()) {
+                    javaMap.put(toJavaObject(entry.getKey(), Object.class, policy, active, depth + 1),
+                            toJavaObject(entry.getValue(), Object.class, policy, active, depth + 1));
+                }
+                return javaMap;
+            } finally {
+                active.remove(dict);
+            }
         }
 
         // Array conversion
         if (targetType.isArray() && pyObj instanceof PyList list) {
-            Class<?> componentType = targetType.getComponentType();
-            int len = list.items().size();
-            if (componentType == int.class) {
-                int[] arr = new int[len];
+            if (active.put(list, Boolean.TRUE) != null) {
+                throw PyErrors.error("ValueError", "Circular reference detected converting list to Java array");
+            }
+            try {
+                Class<?> componentType = targetType.getComponentType();
+                int len = list.items().size();
+                if (componentType == int.class) {
+                    int[] arr = new int[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = toJavaInt(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == long.class) {
+                    long[] arr = new long[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = toJavaLong(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == double.class) {
+                    double[] arr = new double[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = toJavaDouble(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == float.class) {
+                    float[] arr = new float[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = (float) toJavaDouble(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == boolean.class) {
+                    boolean[] arr = new boolean[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = toJavaBoolean(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == byte.class) {
+                    byte[] arr = new byte[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = (byte) toJavaInt(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == short.class) {
+                    short[] arr = new short[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = (short) toJavaInt(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == char.class) {
+                    char[] arr = new char[len];
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = toJavaChar(list.items().get(i));
+                    }
+                    return arr;
+                }
+                if (componentType == String.class) {
+                    String[] arr = new String[len];
+                    for (int i = 0; i < len; i++) {
+                        PyObject it = list.items().get(i);
+                        arr[i] = it instanceof PyStr s ? s.value() : (it instanceof PyNull ? null : it.toString());
+                    }
+                    return arr;
+                }
+                if (!componentType.isPrimitive()) {
+                    Object[] arr = (Object[]) java.lang.reflect.Array.newInstance(componentType, len);
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = toJavaObject(list.items().get(i), componentType, policy, active, depth + 1);
+                    }
+                    return arr;
+                }
+                Object arr = java.lang.reflect.Array.newInstance(componentType, len);
                 for (int i = 0; i < len; i++) {
-                    arr[i] = toJavaInt(list.items().get(i));
+                    java.lang.reflect.Array.set(arr, i, toJavaObject(list.items().get(i), componentType, policy, active, depth + 1));
                 }
                 return arr;
+            } finally {
+                active.remove(list);
             }
-            if (componentType == long.class) {
-                long[] arr = new long[len];
-                for (int i = 0; i < len; i++) {
-                    arr[i] = toJavaLong(list.items().get(i));
-                }
-                return arr;
-            }
-            if (componentType == double.class) {
-                double[] arr = new double[len];
-                for (int i = 0; i < len; i++) {
-                    arr[i] = toJavaDouble(list.items().get(i));
-                }
-                return arr;
-            }
-            if (componentType == float.class) {
-                float[] arr = new float[len];
-                for (int i = 0; i < len; i++) {
-                    arr[i] = (float) toJavaDouble(list.items().get(i));
-                }
-                return arr;
-            }
-            if (componentType == boolean.class) {
-                boolean[] arr = new boolean[len];
-                for (int i = 0; i < len; i++) {
-                    arr[i] = toJavaBoolean(list.items().get(i));
-                }
-                return arr;
-            }
-            if (componentType == byte.class) {
-                byte[] arr = new byte[len];
-                for (int i = 0; i < len; i++) {
-                    arr[i] = (byte) toJavaInt(list.items().get(i));
-                }
-                return arr;
-            }
-            if (componentType == short.class) {
-                short[] arr = new short[len];
-                for (int i = 0; i < len; i++) {
-                    arr[i] = (short) toJavaInt(list.items().get(i));
-                }
-                return arr;
-            }
-            if (componentType == char.class) {
-                char[] arr = new char[len];
-                for (int i = 0; i < len; i++) {
-                    arr[i] = toJavaChar(list.items().get(i));
-                }
-                return arr;
-            }
-            if (componentType == String.class) {
-                String[] arr = new String[len];
-                for (int i = 0; i < len; i++) {
-                    PyObject it = list.items().get(i);
-                    arr[i] = it instanceof PyStr s ? s.value() : (it instanceof PyNull ? null : it.toString());
-                }
-                return arr;
-            }
-            if (!componentType.isPrimitive()) {
-                Object[] arr = (Object[]) java.lang.reflect.Array.newInstance(componentType, len);
-                for (int i = 0; i < len; i++) {
-                    arr[i] = toJavaObject(list.items().get(i), componentType, policy);
-                }
-                return arr;
-            }
-            Object arr = java.lang.reflect.Array.newInstance(componentType, len);
-            for (int i = 0; i < len; i++) {
-                java.lang.reflect.Array.set(arr, i, toJavaObject(list.items().get(i), componentType, policy));
-            }
-            return arr;
         }
 
         if (targetType == Object.class) {

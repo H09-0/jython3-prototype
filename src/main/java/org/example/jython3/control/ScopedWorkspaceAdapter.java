@@ -234,6 +234,15 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
                 dir = next;
             }
             Path leaf = canonicalRoot.getFileSystem().getPath(segments.get(segments.size() - 1));
+            try {
+                var view = dir.getFileAttributeView(leaf, java.nio.file.attribute.BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+                BasicFileAttributes attrs = view.readAttributes();
+                if (attrs.isSymbolicLink()) {
+                    throw denySecurity("write_text", rel, "refusing to write through symbolic link");
+                }
+            } catch (NoSuchFileException ignored) {
+                // Creating a fresh regular file; WRITE_NOFOLLOW still guards against concurrent symlink swap.
+            }
             try (SeekableByteChannel ch = dir.newByteChannel(leaf, WRITE_NOFOLLOW)) {
                 ByteBuffer buf = ByteBuffer.wrap(bytes);
                 while (buf.hasRemaining()) {
@@ -444,7 +453,8 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
         }
         if (e instanceof FileSystemException fse) {
             String reason = fse.getReason();
-            if (reason != null && (reason.contains("Symbolic link") || reason.contains("ELOOP") || reason.contains("Too many levels"))) {
+            String lower = reason != null ? reason.toLowerCase(java.util.Locale.ROOT) : "";
+            if (lower.contains("symbolic link") || lower.contains("eloop") || lower.contains("too many levels")) {
                 return denySecurity(action, rel, "refusing to follow symbolic link: " + reason);
             }
         }

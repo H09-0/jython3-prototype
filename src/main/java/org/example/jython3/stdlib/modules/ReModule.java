@@ -135,6 +135,10 @@ public final class ReModule {
         if (!(patObj instanceof PyStr patStr)) {
             throw PyErrors.error("TypeError", "first argument must be string, not '" + PyOps.typeName(patObj) + "'");
         }
+        ExecutionContext ctx = ExecutionContext.current();
+        if (ctx != null && patStr.value().length() > ctx.limits().maxStringLength()) {
+            throw PyErrors.error("MemoryError", "regex pattern exceeds maximum string length");
+        }
         try {
             return Pattern.compile(patStr.value(), flags);
         } catch (PatternSyntaxException pse) {
@@ -146,14 +150,24 @@ public final class ReModule {
         if (!(obj instanceof PyStr s)) {
             throw PyErrors.error("TypeError", "re." + fn + "() expected string, not '" + PyOps.typeName(obj) + "'");
         }
+        ExecutionContext ctx = ExecutionContext.current();
+        if (ctx != null && s.value().length() > ctx.limits().maxStringLength()) {
+            throw PyErrors.error("MemoryError", "re." + fn + "() string exceeds maximum allowed length");
+        }
         return s.value();
     }
 
     private static PyObject doFindAll(Pattern p, String text) {
+        ExecutionContext ctx = ExecutionContext.current();
+        int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
         Matcher m = p.matcher(interruptible(text));
         var list = new ArrayList<PyObject>();
         int groups = m.groupCount();
         while (m.find()) {
+            if (ctx != null) ctx.stepInstruction();
+            if (list.size() >= maxColl) {
+                throw PyErrors.error("OverflowError", "re.findall result exceeds maximum collection size");
+            }
             if (groups == 0) {
                 list.add(new PyStr(m.group()));
             } else if (groups == 1) {
@@ -172,26 +186,39 @@ public final class ReModule {
     }
 
     private static String doSub(Pattern p, String repl, String text, int count) {
+        ExecutionContext ctx = ExecutionContext.current();
+        int maxStr = ctx != null ? ctx.limits().maxStringLength() : 100_000_000;
         Matcher m = p.matcher(interruptible(text));
-        if (count <= 0) {
-            return m.replaceAll(Matcher.quoteReplacement(repl));
-        }
+        String quotedRepl = Matcher.quoteReplacement(repl);
         var sb = new StringBuilder();
         int n = 0;
-        while (n < count && m.find()) {
-            m.appendReplacement(sb, Matcher.quoteReplacement(repl));
+        while ((count <= 0 || n < count) && m.find()) {
+            if (ctx != null) ctx.stepInstruction();
+            m.appendReplacement(sb, quotedRepl);
+            if (sb.length() > maxStr) {
+                throw PyErrors.error("MemoryError", "re.sub output exceeds maximum allowed length");
+            }
             n++;
         }
         m.appendTail(sb);
+        if (sb.length() > maxStr) {
+            throw PyErrors.error("MemoryError", "re.sub output exceeds maximum allowed length");
+        }
         return sb.toString();
     }
 
     private static PyList doSplit(Pattern p, String text, int maxSplit) {
+        ExecutionContext ctx = ExecutionContext.current();
+        int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
         Matcher m = p.matcher(interruptible(text));
         var out = new ArrayList<PyObject>();
         int last = 0;
         int splits = 0;
         while ((maxSplit <= 0 || splits < maxSplit) && m.find()) {
+            if (ctx != null) ctx.stepInstruction();
+            if (out.size() >= maxColl) {
+                throw PyErrors.error("OverflowError", "re.split result exceeds maximum collection size");
+            }
             out.add(new PyStr(text.substring(last, m.start())));
             for (int g = 1; g <= m.groupCount(); g++) {
                 String gv = m.group(g);
@@ -303,10 +330,11 @@ public final class ReModule {
             private int ops = 0;
 
             private void tick() {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw PyErrors.error("KeyboardInterrupt", "Regex interrupted");
+                }
+                ctx.checkTimeoutAndCancel();
                 if ((++ops & 0xF) == 0) {
-                    if (Thread.currentThread().isInterrupted()) {
-                        throw PyErrors.error("KeyboardInterrupt", "Regex interrupted");
-                    }
                     ctx.stepInstruction();
                 }
             }

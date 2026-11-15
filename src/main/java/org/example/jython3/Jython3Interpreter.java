@@ -657,11 +657,29 @@ public class Jython3Interpreter implements AutoCloseable {
             @Override public String name() { return vThread.getName(); }
             @Override public long ident() { return vThread.threadId(); }
             @Override public boolean isAlive() { return vThread.isAlive(); }
-            @Override public void start() { vThread.start(); }
+            @Override public void start() {
+                try {
+                    vThread.start();
+                } catch (Throwable t) {
+                    hostSession.releaseThreadSlot(cleanup);
+                    throw t;
+                }
+            }
             @Override public void join(long timeoutMs) {
                 try {
-                    if (timeoutMs < 0) vThread.join();
-                    else if (timeoutMs > 0) vThread.join(timeoutMs);
+                    long deadline = timeoutMs > 0 ? System.currentTimeMillis() + timeoutMs : Long.MAX_VALUE;
+                    while (vThread.isAlive()) {
+                        if (hostSession.isClosed()) {
+                            throw PyErrors.error("KeyboardInterrupt", "Session closed while joining thread '" + name + "'");
+                        }
+                        if (parentCtx != null && parentCtx.isCancelled()) {
+                            throw PyErrors.error("KeyboardInterrupt", "Cancelled while joining thread '" + name + "'");
+                        }
+                        if (timeoutMs == 0) break;
+                        long rem = timeoutMs > 0 ? deadline - System.currentTimeMillis() : 50L;
+                        if (timeoutMs > 0 && rem <= 0) break;
+                        vThread.join(Math.min(50L, Math.max(1L, rem)));
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw PyErrors.error("KeyboardInterrupt", "Interrupted joining thread '" + name + "'");

@@ -322,56 +322,31 @@ public final class ArithmeticOps {
     public static PyObject multiply(PyObject rawL, PyObject rawR, ExecutionLimits limits) {
         var r = unwrapBool(rawR);
         var l = unwrapBool(rawL);
-        if (l instanceof PyStr s && r instanceof PyInt n) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value());
-            if (newLen > limits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + limits.maxStringLength());
-            }
-            return new PyStr(s.value().repeat(Math.max(0, n.value())));
-        } else if (l instanceof PyInt n && r instanceof PyStr s) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value());
-            if (newLen > limits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + limits.maxStringLength());
-            }
-            return new PyStr(s.value().repeat(Math.max(0, n.value())));
-        } else if (l instanceof PyStr s && r instanceof BigInt n) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value().longValue());
-            if (newLen > limits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + limits.maxStringLength());
-            }
-            return new PyStr(s.value().repeat(Math.max(0, n.value().intValue())));
-        } else if (l instanceof BigInt n && r instanceof PyStr s) {
-            long newLen = (long) s.value().length() * Math.max(0, n.value().longValue());
-            if (newLen > limits.maxStringLength()) {
-                throw PyErrors.error("OverflowError", "String length exceeds maximum allowed limit: " + limits.maxStringLength());
-            }
-            return new PyStr(s.value().repeat(Math.max(0, n.value().intValue())));
-        } else if (l instanceof PyList ll && r instanceof PyInt n) {
-            long newSize = (long) ll.items().size() * Math.max(0, n.value());
-            if (newSize > limits.maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + limits.maxCollectionSize());
-            }
-            var items = new ArrayList<PyObject>();
-            long count = Math.max(0, n.value());
-            for (long i = 0; i < count; i++) items.addAll(ll.items());
+        int maxStr = limits != null ? limits.maxStringLength() : 100_000_000;
+        int maxColl = limits != null ? limits.maxCollectionSize() : 100_000_000;
+        if (l instanceof PyStr s && (r instanceof PyInt || r instanceof BigInt)) {
+            return repeatString(s.value(), r, maxStr);
+        } else if ((l instanceof PyInt || l instanceof BigInt) && r instanceof PyStr s) {
+            return repeatString(s.value(), l, maxStr);
+        } else if (l instanceof PyList ll && (r instanceof PyInt || r instanceof BigInt)) {
+            int count = extractSequenceRepeatCount(r, ll.items().size(), maxColl, "List");
+            var items = new ArrayList<PyObject>(ll.items().size() * count);
+            for (int i = 0; i < count; i++) items.addAll(ll.items());
             return new PyList(items);
-        } else if (l instanceof PyTuple tt && r instanceof PyInt n) {
-            long count = Math.max(0, n.value());
-            long newSize = (long) tt.items().size() * count;
-            if (newSize > limits.maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + limits.maxCollectionSize());
-            }
-            var items = new ArrayList<PyObject>();
-            for (long i = 0; i < count; i++) items.addAll(tt.items());
+        } else if ((l instanceof PyInt || l instanceof BigInt) && r instanceof PyList ll) {
+            int count = extractSequenceRepeatCount(l, ll.items().size(), maxColl, "List");
+            var items = new ArrayList<PyObject>(ll.items().size() * count);
+            for (int i = 0; i < count; i++) items.addAll(ll.items());
+            return new PyList(items);
+        } else if (l instanceof PyTuple tt && (r instanceof PyInt || r instanceof BigInt)) {
+            int count = extractSequenceRepeatCount(r, tt.items().size(), maxColl, "Tuple");
+            var items = new ArrayList<PyObject>(tt.items().size() * count);
+            for (int i = 0; i < count; i++) items.addAll(tt.items());
             return new PyTuple(items);
-        } else if (l instanceof PyInt n && r instanceof PyTuple tt) {
-            long count = Math.max(0, n.value());
-            long newSize = (long) tt.items().size() * count;
-            if (newSize > limits.maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + limits.maxCollectionSize());
-            }
-            var items = new ArrayList<PyObject>();
-            for (long i = 0; i < count; i++) items.addAll(tt.items());
+        } else if ((l instanceof PyInt || l instanceof BigInt) && r instanceof PyTuple tt) {
+            int count = extractSequenceRepeatCount(l, tt.items().size(), maxColl, "Tuple");
+            var items = new ArrayList<PyObject>(tt.items().size() * count);
+            for (int i = 0; i < count; i++) items.addAll(tt.items());
             return new PyTuple(items);
         } else if (l instanceof PyBytes pb && (r instanceof PyInt || r instanceof BigInt)) {
             return repeatBytes(pb.bytesUnsafe(), r, limits, true);
@@ -393,18 +368,41 @@ public final class ArithmeticOps {
             } catch (ArithmeticException ae) {
                 return new BigInt(BigInteger.valueOf(lv).multiply(BigInteger.valueOf(rv)));
             }
-        } else if (l instanceof BigInt bi && r instanceof BigInt bri) {
-            return new BigInt(bi.value().multiply(bri.value()));
-        } else if (l instanceof BigInt bi && r instanceof PyInt ri) {
-            return new BigInt(bi.value().multiply(BigInteger.valueOf(ri.value())));
-        } else if (l instanceof PyInt li && r instanceof BigInt bri) {
-            return new BigInt(BigInteger.valueOf(li.value()).multiply(bri.value()));
+        } else if ((l instanceof BigInt || l instanceof PyInt) && (r instanceof BigInt || r instanceof PyInt)) {
+            BigInteger ba = l instanceof PyInt li ? BigInteger.valueOf(li.value()) : ((BigInt) l).value();
+            BigInteger bb = r instanceof PyInt ri ? BigInteger.valueOf(ri.value()) : ((BigInt) r).value();
+            if (limits != null && ba.signum() != 0 && bb.signum() != 0) {
+                long maxBits = maxBitLength(limits);
+                if ((long) ba.bitLength() + bb.bitLength() > maxBits) {
+                    throw PyErrors.error("OverflowError", "Integer bit length exceeds maximum allowed limit");
+                }
+            }
+            return new BigInt(ba.multiply(bb));
         } else if (isNumeric(l) && isNumeric(r)) {
             return new PyFloat(toDouble(l) * toDouble(r));
         }
         PyObject dunder = tryBinaryDunder(rawL, rawR, "__mul__", "__rmul__");
         if (dunder != null) return dunder;
         throw PyErrors.error("TypeError", "unsupported operand types for *: '" + typeName(rawL) + "' and '" + typeName(rawR) + "'");
+    }
+
+    private static PyStr repeatString(String s, PyObject countObj, int maxStr) {
+        int count = extractSequenceRepeatCount(countObj, s.length(), maxStr, "String");
+        return new PyStr(s.repeat(count));
+    }
+
+    private static int extractSequenceRepeatCount(PyObject countObj, int elemSize, int maxLimit, String kind) {
+        BigInteger bi = countObj instanceof PyInt pi ? BigInteger.valueOf(pi.value()) : ((BigInt) countObj).value();
+        if (bi.signum() <= 0 || elemSize == 0) return 0;
+        BigInteger maxCount = BigInteger.valueOf(maxLimit).divide(BigInteger.valueOf(elemSize));
+        if (bi.compareTo(maxCount) > 0) {
+            throw PyErrors.error("OverflowError", kind + " length exceeds maximum allowed limit: " + maxLimit);
+        }
+        return bi.intValueExact();
+    }
+
+    private static long maxBitLength(ExecutionLimits limits) {
+        return Math.max(1_048_576L, (long) limits.maxExponent() * 64L);
     }
 
     public static PyObject bitwiseAnd(PyObject rawL, PyObject rawR) {
@@ -503,6 +501,9 @@ public final class ArithmeticOps {
             }
         }
         BigInteger base = l instanceof PyInt li ? BigInteger.valueOf(li.value()) : ((BigInt) l).value();
+        if (limits != null && base.signum() != 0 && (long) base.bitLength() + shift > maxBitLength(limits)) {
+            throw PyErrors.error("OverflowError", "Shift result exceeds maximum allowed bit length");
+        }
         return fromBigInteger(base.shiftLeft(shift));
     }
 
@@ -650,6 +651,12 @@ public final class ArithmeticOps {
                 return new PyFloat(res);
             }
             int expInt = exp.intValueExact();
+            if (limits != null && base.abs().compareTo(BigInteger.ONE) > 0 && expInt > 0) {
+                long estBits = (long) base.bitLength() * expInt;
+                if (estBits > maxBitLength(limits)) {
+                    throw PyErrors.error("OverflowError", "Power result exceeds maximum allowed bit length");
+                }
+            }
             return fromBigInteger(base.pow(expInt));
         }
         double exp = toDouble(r);

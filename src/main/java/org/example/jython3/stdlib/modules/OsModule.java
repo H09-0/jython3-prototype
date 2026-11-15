@@ -26,7 +26,8 @@ public final class OsModule {
         Map<String, PyObject> attrs = new HashMap<>();
 
         attrs.put("getcwd",  fn("getcwd",  args -> {
-            if (!hostPolicy.canListDirectory(Path.of("."))) {
+            Path cwd = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+            if (!hostPolicy.canListDirectory(Path.of(".")) || !hostPolicy.canListDirectory(cwd)) {
                 throw PyErrors.error("SecurityError", "access to current working directory is restricted");
             }
             return new PyStr(System.getProperty("user.dir"));
@@ -51,14 +52,25 @@ public final class OsModule {
 
         attrs.put("listdir", fn("listdir", args -> {
             String pathStr = args.length > 0 ? args[0].toString() : ".";
-            Path p = Path.of(pathStr);
+            if (pathStr.indexOf('\0') >= 0) {
+                throw PyErrors.error("ValueError", "embedded null byte in path");
+            }
+            Path p = Path.of(pathStr).toAbsolutePath().normalize();
             if (!hostPolicy.canListDirectory(p)) {
                 throw PyErrors.error("SecurityError", "access to list directory '" + pathStr + "' is restricted");
             }
-            File dir = p.toFile();
-            if (!dir.exists() || !dir.isDirectory()) {
+            if (!java.nio.file.Files.exists(p) || !java.nio.file.Files.isDirectory(p)) {
                 throw PyErrors.error("FileNotFoundError", "No such file or directory: '" + pathStr + "'");
             }
+            try {
+                Path real = p.toRealPath();
+                if (!hostPolicy.canListDirectory(real)) {
+                    throw PyErrors.error("SecurityError", "access to list directory '" + pathStr + "' is restricted");
+                }
+            } catch (java.io.IOException ioe) {
+                throw PyErrors.error("OSError", ioe.getMessage());
+            }
+            File dir = p.toFile();
             File[] files = dir.listFiles();
             var list = new ArrayList<PyObject>();
             if (files != null) {

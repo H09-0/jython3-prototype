@@ -43,14 +43,24 @@ public final class JsonModule {
                 indent = Math.max(0, Math.min(32, PyOps.toInt(indentObj)));
             }
             boolean sortKeys = kwargs.containsKey("sort_keys") && PyOps.isTruthy(kwargs.get("sort_keys"));
-            return new PyStr(simpleJsonDumps(args[0],
+            ExecutionContext ctx = ExecutionContext.current();
+            int maxStr = ctx != null ? ctx.limits().maxStringLength() : 100_000_000;
+            String out = simpleJsonDumps(args[0],
                     java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()),
-                    0, indent, sortKeys));
+                    0, indent, sortKeys, maxStr);
+            if (out.length() > maxStr) {
+                throw PyErrors.error("MemoryError", "JSON output exceeds maximum allowed string length: " + maxStr);
+            }
+            return new PyStr(out);
         }));
         attrs.put("loads", fn("loads", args -> {
             if (args.length == 0) throw PyErrors.error("TypeError", "loads() missing 1 required positional argument: 's'");
             if (!(args[0] instanceof PyStr str)) {
                 throw PyErrors.error("TypeError", "the JSON object must be str, not '" + PyOps.typeName(args[0]) + "'");
+            }
+            ExecutionContext ctx = ExecutionContext.current();
+            if (ctx != null && str.value().length() > ctx.limits().maxStringLength()) {
+                throw PyErrors.error("MemoryError", "JSON input exceeds maximum allowed string length");
             }
             return new JsonParser(str.value()).parse();
         }));
@@ -83,7 +93,7 @@ public final class JsonModule {
     }
 
     private static String simpleJsonDumps(PyObject o, java.util.Set<PyObject> active,
-                                          int depth, int indent, boolean sortKeys) {
+                                          int depth, int indent, boolean sortKeys, int maxStr) {
         if (depth > MAX_DEPTH) {
             throw PyErrors.error("RecursionError", "maximum JSON serialization depth exceeded");
         }
@@ -108,7 +118,8 @@ public final class JsonModule {
                 for (int i = 0; i < list.items().size(); i++) {
                     if (i > 0) sb.append(",");
                     if (indent >= 0) sb.append('\n').append(" ".repeat((depth + 1) * indent));
-                    sb.append(simpleJsonDumps(list.items().get(i), active, depth + 1, indent, sortKeys));
+                    sb.append(simpleJsonDumps(list.items().get(i), active, depth + 1, indent, sortKeys, maxStr));
+                    if (sb.length() > maxStr) throw PyErrors.error("MemoryError", "JSON output exceeds maximum string length");
                 }
                 if (indent >= 0) sb.append('\n').append(" ".repeat(depth * indent));
                 sb.append("]");
@@ -127,7 +138,8 @@ public final class JsonModule {
                 for (int i = 0; i < tuple.items().size(); i++) {
                     if (i > 0) sb.append(",");
                     if (indent >= 0) sb.append('\n').append(" ".repeat((depth + 1) * indent));
-                    sb.append(simpleJsonDumps(tuple.items().get(i), active, depth + 1, indent, sortKeys));
+                    sb.append(simpleJsonDumps(tuple.items().get(i), active, depth + 1, indent, sortKeys, maxStr));
+                    if (sb.length() > maxStr) throw PyErrors.error("MemoryError", "JSON output exceeds maximum string length");
                 }
                 if (indent >= 0) sb.append('\n').append(" ".repeat(depth * indent));
                 sb.append("]");
@@ -155,7 +167,8 @@ public final class JsonModule {
                             ? escapeJsonString(ks.value())
                             : escapeJsonString(e.getKey().toString());
                     sb.append(keyJson).append(indent >= 0 ? ": " : ":")
-                            .append(simpleJsonDumps(e.getValue(), active, depth + 1, indent, sortKeys));
+                            .append(simpleJsonDumps(e.getValue(), active, depth + 1, indent, sortKeys, maxStr));
+                    if (sb.length() > maxStr) throw PyErrors.error("MemoryError", "JSON output exceeds maximum string length");
                 }
                 if (indent >= 0) sb.append('\n').append(" ".repeat(depth * indent));
                 sb.append("}");
@@ -172,6 +185,8 @@ public final class JsonModule {
         private final String src;
         private final int len;
         private final ExecutionContext ctx = ExecutionContext.current();
+        private final int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
+        private int totalElements = 0;
         private int pos = 0;
 
         JsonParser(String src) {
@@ -228,6 +243,9 @@ public final class JsonModule {
                 }
                 pos++;
                 PyObject val = parseValue(depth);
+                if (++totalElements > maxColl) {
+                    throw PyErrors.error("OverflowError", "JSON collection size exceeds limit");
+                }
                 map.put(new PyStr(key), val);
                 skipWhitespace();
                 if (pos >= len) throw decodeError("Expecting ',' or '}' delimiter", pos);
@@ -247,6 +265,9 @@ public final class JsonModule {
                 return new PyList(list);
             }
             while (true) {
+                if (++totalElements > maxColl) {
+                    throw PyErrors.error("OverflowError", "JSON collection size exceeds limit");
+                }
                 list.add(parseValue(depth));
                 skipWhitespace();
                 if (pos >= len) throw decodeError("Expecting ',' or ']' delimiter", pos);
@@ -334,6 +355,9 @@ public final class JsonModule {
 
             String numStr = src.substring(start, pos);
             if (isFloat) return new PyFloat(Double.parseDouble(numStr));
+            if (numStr.length() > 10_000) {
+                throw PyErrors.error("ValueError", "Exceeds the limit (10000 digits) for integer string conversion");
+            }
             try { return PyInt.of(Integer.parseInt(numStr)); }
             catch (NumberFormatException nfe) { return new BigInt(new BigInteger(numStr)); }
         }
