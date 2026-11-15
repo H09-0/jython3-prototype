@@ -467,4 +467,39 @@ public class CoreDifferentialTest {
                 + "fns = [lambda x, k=i: x + k for i in range(3)]\n"
                 + "print([f(10) for f in fns])");
     }
+
+    @Test
+    void testLazyGeneratorsAndExpressionsDifferential() {
+        assertMatchesCPython("genexpr_basic_and_next",
+                "print(list(x * 2 for x in [1, 2, 3]))\n"
+                + "g = (x for x in [1, 2, 3])\n"
+                + "print(next(g), next(g), next(g))\n"
+                + "try:\n    next(g)\nexcept StopIteration:\n    print('done')");
+        assertMatchesCPython("generator_finally_and_return_value",
+                "def f():\n    log = []\n    try:\n        yield 1\n        yield 2\n    finally:\n        log.append('cleanup')\n    return log\n"
+                + "g = f()\nprint(next(g))\nprint(next(g))\n"
+                + "try:\n    next(g)\nexcept StopIteration as e:\n    print('done', e.value)");
+        assertMatchesCPython("genexpr_sum_filter_and_closure",
+                "print(sum(x for x in range(10) if x % 2 == 0))\n"
+                + "def outer():\n    x = 10\n    return (x + y for y in range(3))\n"
+                + "print(list(outer()))");
+        assertMatchesCPython("generator_lazy_events_and_nested",
+                "events = []\n"
+                + "def g():\n    for i in range(3):\n        events.append('before')\n        yield i\n        events.append('after')\n"
+                + "it = g()\nprint('init:', events)\n"
+                + "print('n0:', next(it), events)\n"
+                + "print('n1:', next(it), events)\n"
+                + "print('rest:', list(it), events)\n"
+                + "print('nested:', list((x + 1 for x in (y * 10 for y in [1, 2, 3]))))\n"
+                + "def inf():\n    n = 0\n    while True:\n        yield n\n        n += 1\n"
+                + "print('zip_inf:', list(zip(['a', 'b'], inf())))\n"
+                + "print('all_inf:', all(x < 2 for x in inf()), 'any_inf:', any(x == 3 for x in inf()))");
+        assertMatchesCPython("generator_exception_traceback_metadata",
+                "def g():\n    yield 1\n    raise ValueError('boom')\n"
+                + "it = g()\nprint(next(it))\n"
+                + "try:\n    next(it)\nexcept ValueError as e:\n"
+                + "    names = []\n    tb = e.__traceback__\n"
+                + "    while tb is not None:\n        names.append(tb.tb_frame.f_code.co_name)\n        tb = tb.tb_next\n"
+                + "    print(str(e), tb is None, names)");
+    }
 }

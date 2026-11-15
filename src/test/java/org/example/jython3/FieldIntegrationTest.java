@@ -990,4 +990,41 @@ public class FieldIntegrationTest {
             """);
         assertEquals(PyBool.TRUE, interp.getGlobal("reentrant_ok"));
     }
+
+    @Test
+    @DisplayName("Lazy generators and generator expressions integrate with try/finally, with, and Java callbacks")
+    void testLazyGeneratorsIntegration() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            from java.util import ArrayList
+
+            events = []
+            def pipeline(limit):
+                try:
+                    for i in range(limit):
+                        events.append("yield:" + str(i))
+                        yield i * i
+                finally:
+                    events.append("cleanup")
+
+            gen = pipeline(5)
+            assert events == []
+            assert next(gen) == 0 and events == ["yield:0"]
+            assert next(gen) == 1 and events == ["yield:0", "yield:1"]
+
+            # consume remainder via generator expression + sum
+            rem = sum(x for x in gen if x > 2)
+            assert rem == 4 + 9 + 16
+            assert events == ["yield:0", "yield:1", "yield:2", "yield:3", "yield:4", "cleanup"]
+
+            # Java ArrayList fed lazily through nested generator expressions
+            jl = ArrayList()
+            for v in [1, 2, 3, 4]:
+                jl.add(v)
+            assert list((y + 10 for y in (x * 2 for x in jl if x % 2 == 0))) == [14, 18]
+
+            lazy_ok = True
+            """);
+        assertEquals(PyBool.TRUE, interp.getGlobal("lazy_ok"));
+    }
 }
