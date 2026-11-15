@@ -11,6 +11,7 @@ import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
+import org.example.jython3.runtime.PyRange;
 import org.example.jython3.runtime.PySet;
 import org.example.jython3.runtime.PySlice;
 import org.example.jython3.runtime.PyStr;
@@ -318,6 +319,23 @@ public final class BuiltinMethodDispatcher {
     private static PySet toSetView(PyObject obj, JavaAccessPolicy policy) {
         if (obj instanceof PySet s) return s;
         return new PySet(BuiltinFunctions.collectIterable(obj, policy));
+    }
+
+    public static PyObject rangeAttr(PyRange r, String attr) {
+        return switch (attr) {
+            case "start" -> r.startPy();
+            case "stop" -> r.stopPy();
+            case "step" -> r.stepPy();
+            case "count" -> new PyBuiltinFunction("range.count", args -> {
+                checkArgCount("range.count", args, 1);
+                return r.contains(args[0]) ? PyInt.ONE : PyInt.ZERO;
+            });
+            case "index" -> new PyBuiltinFunction("range.index", args -> {
+                checkArgCount("range.index", args, 1);
+                return r.indexOf(args[0]);
+            });
+            default -> throw PyErrors.error("AttributeError", "'range' object has no attribute '" + attr + "'");
+        };
     }
 
     public static PyObject sliceAttr(PySlice sl, String attr) {

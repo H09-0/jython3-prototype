@@ -39,6 +39,7 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PyProperty;
+import org.example.jython3.runtime.PyRange;
 import org.example.jython3.runtime.PySlice;
 import org.example.jython3.runtime.PyStaticMethod;
 import org.example.jython3.runtime.PyStr;
@@ -111,6 +112,7 @@ public final class BuiltinFunctions {
             if (o instanceof PyDict d) return new PyInt(d.size());
             if (o instanceof org.example.jython3.runtime.PySet set) return new PyInt(set.size());
             if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new PyInt(fs.size());
+            if (o instanceof PyRange r) return PyInt.of(r.lenInt());
             if (o instanceof PyInstance inst) {
                 if (inst.hasField("__len__")) {
                     PyObject lenMethod = inst.getField("__len__");
@@ -493,40 +495,24 @@ public final class BuiltinFunctions {
             return d;
         }));
 
-        // range(stop) or range(start, stop) or range(start, stop, step)
-        define.accept("range", new PyBuiltinFunction("range", args -> {
-            int start = 0, stop, step = 1;
+        // range(stop) or range(start, stop) or range(start, stop, step) -> lazy O(1) PyRange
+        defineType.accept("range", PyBuiltinFunction.builtinType("range", args -> {
+            java.math.BigInteger start = java.math.BigInteger.ZERO;
+            java.math.BigInteger stop;
+            java.math.BigInteger step = java.math.BigInteger.ONE;
             if (args.length == 1) {
-                stop = toInt(args[0]);
+                stop = toBigIntStrict(args[0], "range");
             } else if (args.length == 2) {
-                start = toInt(args[0]);
-                stop = toInt(args[1]);
+                start = toBigIntStrict(args[0], "range");
+                stop = toBigIntStrict(args[1], "range");
             } else if (args.length == 3) {
-                start = toInt(args[0]);
-                stop = toInt(args[1]);
-                step = toInt(args[2]);
+                start = toBigIntStrict(args[0], "range");
+                stop = toBigIntStrict(args[1], "range");
+                step = toBigIntStrict(args[2], "range");
             } else {
                 throw PyErrors.error("TypeError", "range expected at most 3 arguments, got " + args.length);
             }
-            if (step == 0) throw PyErrors.error("ValueError", "range() arg 3 must not be zero");
-            long count = 0;
-            if (step > 0 && stop > start) {
-                count = ((long) stop - (long) start - 1L) / (long) step + 1L;
-            } else if (step < 0 && start > stop) {
-                count = ((long) start - (long) stop - 1L) / (-(long) step) + 1L;
-            }
-            int maxColl = caller.executionLimits().maxCollectionSize();
-            if (count > maxColl) {
-                throw PyErrors.error("MemoryError",
-                        "range() length (" + count + ") exceeds maximum collection limit (" + maxColl + ")");
-            }
-            var items = new ArrayList<PyObject>((int) count);
-            if (step > 0) {
-                for (long i = start; i < stop; i += step) items.add(PyInt.of((int) i));
-            } else {
-                for (long i = start; i > stop; i += step) items.add(PyInt.of((int) i));
-            }
-            return new PyList(items);
+            return new PyRange(start, stop, step);
         }));
 
         // sorted(iterable, *, key=None, reverse=False)
@@ -571,6 +557,9 @@ public final class BuiltinFunctions {
         define.accept("reversed", new PyBuiltinFunction("reversed", args -> {
             checkArgCount("reversed", args, 1);
             PyObject seq = args[0];
+            if (seq instanceof PyRange r) {
+                return r.reversedIterator();
+            }
             if (seq instanceof PyInstance inst && inst.hasField("__reversed__")) {
                 return toIterator(caller.call(inst.getField("__reversed__"), new PyObject[0]), javaPolicy);
             }
@@ -877,6 +866,10 @@ public final class BuiltinFunctions {
             if (args[0] instanceof PySlice) {
                 return PyBool.of("start".equals(name) || "stop".equals(name) || "step".equals(name) || "indices".equals(name));
             }
+            if (args[0] instanceof PyRange) {
+                return PyBool.of("start".equals(name) || "stop".equals(name) || "step".equals(name)
+                        || "count".equals(name) || "index".equals(name));
+            }
             if (args[0] instanceof org.example.jython3.runtime.PyHostHandle hh) {
                 return PyBool.of(hh.hasAttr(name));
             }
@@ -941,6 +934,12 @@ public final class BuiltinFunctions {
             } else if (args[0] instanceof PySlice sl) {
                 try {
                     return BuiltinMethodDispatcher.sliceAttr(sl, name);
+                } catch (InterpreterException ie) {
+                    if (!"AttributeError".equals(ie.typeName())) throw ie;
+                }
+            } else if (args[0] instanceof PyRange r) {
+                try {
+                    return BuiltinMethodDispatcher.rangeAttr(r, name);
                 } catch (InterpreterException ie) {
                     if (!"AttributeError".equals(ie.typeName())) throw ie;
                 }
@@ -1094,6 +1093,14 @@ public final class BuiltinFunctions {
         if (o instanceof org.example.jython3.runtime.PyFrozenSet fs) return new ArrayList<>(fs.items());
         if (o instanceof PyStr s) return s.toCodePointList();
         if (o instanceof PyDict d) return d.keys();
+        if (o instanceof PyRange r) {
+            var ctx = org.example.jython3.security.ExecutionContext.current();
+            int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
+            if (r.lengthBig().compareTo(java.math.BigInteger.valueOf(maxColl)) > 0) {
+                throw PyErrors.error("MemoryError",
+                        "range materialization (" + r.lengthBig() + ") exceeds maximum collection limit (" + maxColl + ")");
+            }
+        }
         PyIterator it = toIterator(o, policy);
         var items = new ArrayList<PyObject>();
         while (it.hasNext()) {
@@ -1105,6 +1112,7 @@ public final class BuiltinFunctions {
     /** Converts a supported iterable into a fresh iterator. */
     private static PyIterator toIterator(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
         if (o instanceof PyIterator it) return it;
+        if (o instanceof PyRange r) return r.iterator();
         if (o instanceof PyList list) return new PyIterator(list.items(), 0);
         if (o instanceof PyTuple tuple) return new PyIterator(tuple.items(), 0);
         if (o instanceof org.example.jython3.runtime.PySet s) return new PyIterator(new ArrayList<>(s.items()), 0);
@@ -1235,6 +1243,8 @@ public final class BuiltinFunctions {
             Collections.addAll(names, "close", "send", "throw");
         } else if (o instanceof PySlice) {
             Collections.addAll(names, "indices", "start", "step", "stop");
+        } else if (o instanceof PyRange) {
+            Collections.addAll(names, "count", "index", "start", "step", "stop");
         } else if (o instanceof org.example.jython3.runtime.PyHostHandle hh) {
             names.addAll(hh.attrNames());
         } else if (o instanceof PyStr) {
@@ -1310,6 +1320,7 @@ public final class BuiltinFunctions {
         if (obj instanceof PyNull) return NONE_TYPE;
         if (obj instanceof PyGenerator) return GENERATOR_TYPE;
         if (obj instanceof PyIterator) return ITERATOR_TYPE;
+        if (obj instanceof PyRange) return builtinTypes.get("range");
         if (obj instanceof PyModule) return MODULE_TYPE;
         if (obj instanceof PySlice) return SLICE_TYPE;
         if (obj instanceof PyTraceback) return TRACEBACK_TYPE;
@@ -1389,6 +1400,7 @@ public final class BuiltinFunctions {
                 case "method" -> (obj instanceof PyBoundMethod);
                 case "generator" -> (obj instanceof PyGenerator);
                 case "iterator" -> (obj instanceof PyIterator);
+                case "range" -> (obj instanceof PyRange);
                 case "module" -> (obj instanceof PyModule);
                 case "slice" -> (obj instanceof PySlice);
                 case "traceback" -> (obj instanceof PyTraceback);

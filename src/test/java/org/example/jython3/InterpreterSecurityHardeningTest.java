@@ -28,9 +28,11 @@ class InterpreterSecurityHardeningTest {
                 .uiToolkit(new HeadlessUiToolkit())
                 .build()) {
 
-            // 1. Huge range() blocked before allocation
+            // 1. Huge range materialization blocked before allocation (while lazy range() is O(1))
+            rt.eval("r_huge = range(0, 2_000_000_000)\nhit = (1_500_000_000 in r_huge)");
+            assertEquals("True", rt.getGlobal("hit").toString());
             assertEquals("MemoryError",
-                    assertThrows(InterpreterException.class, () -> rt.eval("range(0, 2000000000)")).typeName());
+                    assertThrows(InterpreterException.class, () -> rt.eval("list(range(0, 2_000_000_000))")).typeName());
 
             // 2. %999999999f blocked before String.format OOM
             assertEquals("MemoryError",

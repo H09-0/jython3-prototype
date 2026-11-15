@@ -50,6 +50,9 @@ public final class PyKey {
         if (obj instanceof PyNull) {
             return 0;
         }
+        if (obj instanceof PyRange r) {
+            return r.hashCode();
+        }
         if (obj instanceof PyBool b) {
             return b.value() ? 1 : 0;
         }

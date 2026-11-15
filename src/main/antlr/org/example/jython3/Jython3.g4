@@ -309,6 +309,7 @@ expr
     | expr OR expr                                         # OrExpr
     | expr IF expr ELSE expr                               # TernaryExpr
     | LAMBDA param_list? COLON expr                        # LambdaExpr
+    | ID WALRUS expr                                       # WalrusExpr
     | LPAREN yield_expr RPAREN                             # ParenYieldExpr
     | LPAREN gen_expr RPAREN                               # GenExpr
     | LPAREN expr RPAREN                                   # Paren
@@ -434,6 +435,7 @@ EQ              : '==';
 NEQ             : '!=';
 LTE             : '<=';
 GTE             : '>=';
+WALRUS          : ':=';
 
 // Single-character punctuation & operators
 ASSIGN  : '=';
@@ -463,11 +465,14 @@ AT     : '@';
 
 // Literals — FSTRING must come before STRING so the lexer picks the right rule
 ID     : [a-zA-Z_][a-zA-Z0-9_]*;
-FLOAT  : [0-9]+ '.' [0-9]* | '.' [0-9]+;
-INT    : '0' [xX] [0-9a-fA-F]+
-       | '0' [bB] [01]+
-       | '0' [oO] [0-7]+
-       | [0-9]+
+FLOAT  : [0-9] ('_'? [0-9])* '.' ([0-9] ('_'? [0-9])*)? ([eE] [+-]? [0-9] ('_'? [0-9])*)?
+       | '.' [0-9] ('_'? [0-9])* ([eE] [+-]? [0-9] ('_'? [0-9])*)?
+       | [0-9] ('_'? [0-9])* [eE] [+-]? [0-9] ('_'? [0-9])*
+       ;
+INT    : '0' [xX] ('_'? [0-9a-fA-F])+
+       | '0' [bB] ('_'? [01])+
+       | '0' [oO] ('_'? [0-7])+
+       | [0-9] ('_'? [0-9])*
        ;
 
 /**

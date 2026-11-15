@@ -73,6 +73,7 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyOps;
 import org.example.jython3.runtime.PyProperty;
+import org.example.jython3.runtime.PyRange;
 import org.example.jython3.runtime.PySet;
 import org.example.jython3.runtime.PySlice;
 import org.example.jython3.runtime.PyStaticMethod;
@@ -2702,6 +2703,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push(val);
                     } else if (ctr instanceof PyStr s && idx instanceof PyInt ix) {
                         stack.push(new PyStr(s.getCodePointAt(ix.value())));
+                    } else if (ctr instanceof PyRange r && idx instanceof PySlice sl) {
+                        stack.push(r.slice(sl));
+                    } else if (ctr instanceof PyRange r) {
+                        stack.push(r.getAt(idx));
                     } else if (ctr instanceof PyInstance inst) {
                         PyObject getitem = inst.getField("__getitem__");
                         if (getitem != null) {
@@ -2748,6 +2753,7 @@ public class Jython3Interpreter implements AutoCloseable {
                 case GET_ITER -> {
                     PyObject o = stack.pop();
                     if (o instanceof PyIterator iter) stack.push(iter);
+                    else if (o instanceof PyRange r) stack.push(r.iterator());
                     else if (o instanceof PyList list) stack.push(new PyIterator(list.items(), 0));
                     else if (o instanceof PyTuple tuple) stack.push(new PyIterator(tuple.items(), 0));
                     else if (o instanceof PyStr s) {
@@ -2919,6 +2925,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push("__class__".equals(attr)
                                 ? BuiltinFunctions.typeOf(sl, builtinTypes)
                                 : BuiltinMethodDispatcher.sliceAttr(sl, attr));
+                    } else if (obj instanceof PyRange r) {
+                        stack.push("__class__".equals(attr)
+                                ? BuiltinFunctions.typeOf(r, builtinTypes)
+                                : BuiltinMethodDispatcher.rangeAttr(r, attr));
                     } else if (obj instanceof PyHostHandle hh) {
                         if ("__class__".equals(attr)) {
                             stack.push(BuiltinFunctions.typeOf(hh, builtinTypes));

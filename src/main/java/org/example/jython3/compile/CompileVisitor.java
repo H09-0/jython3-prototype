@@ -1049,7 +1049,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
     @Override public Void visitParen(Jython3Parser.ParenContext c) { visit(c.expr()); return null; }
     @Override public Void visitInt(Jython3Parser.IntContext c) {
-        String text = c.INT().getText();
+        String text = c.INT().getText().replace("_", "");
         int radix = 10;
         if (text.startsWith("0x") || text.startsWith("0X")) {
             text = text.substring(2);
@@ -1068,7 +1068,17 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         }
         return null;
     }
-    @Override public Void visitFloat(Jython3Parser.FloatContext c) { b.emit(OpCode.LOAD_CONST, Double.valueOf(c.FLOAT().getText())); return null; }
+    @Override public Void visitFloat(Jython3Parser.FloatContext c) {
+        b.emit(OpCode.LOAD_CONST, Double.valueOf(c.FLOAT().getText().replace("_", "")));
+        return null;
+    }
+
+    @Override public Void visitWalrusExpr(Jython3Parser.WalrusExprContext c) {
+        visit(c.expr());
+        b.emit(OpCode.DUP_TOP);
+        b.emit(OpCode.STORE_FAST, c.ID().getText());
+        return null;
+    }
     @Override public Void visitRStr(Jython3Parser.RStrContext c) {
         String raw = c.RSTRING().getText().substring(1);
         String unquoted;
