@@ -324,13 +324,46 @@ public class Jython3Interpreter implements AutoCloseable {
     private Map<String, PyObject> currentGlobals;
     private FastStack stack;
     private Map<String, PyObject> currentLocals;
+    private PyObject[] slotLocals;
     /** Set of variable names declared `global` in the current function frame. */
     private java.util.Set<String> globalCells;
     private final Deque<Frame> callStack = new ArrayDeque<>();
     private final Deque<FastStack> freeStacks = new ArrayDeque<>();
     private final Deque<Deque<ExceptHandler>> freeExceptStacks = new ArrayDeque<>();
     private final Deque<Deque<PyObject>> freeActiveExceptions = new ArrayDeque<>();
+    private final Deque<Map<String, PyObject>> freeLocals = new ArrayDeque<>();
+    private final Deque<PyObject[]> freeSlotArrays = new ArrayDeque<>();
     private static final int MAX_FRAME_POOL = 64;
+
+    private PyObject[] borrowSlots(int needed) {
+        if (!freeSlotArrays.isEmpty()) {
+            PyObject[] arr = freeSlotArrays.pop();
+            if (arr.length >= needed) return arr;
+        }
+        return new PyObject[Math.max(16, needed)];
+    }
+
+    private void recycleSlots(PyObject[] sl, int slotCount) {
+        if (sl != null && freeSlotArrays.size() < MAX_FRAME_POOL) {
+            int limit = Math.min(sl.length, Math.max(slotCount, 16));
+            for (int i = 0; i < limit; i++) sl[i] = null;
+            freeSlotArrays.push(sl);
+        }
+    }
+
+    private Map<String, PyObject> borrowLocals() {
+        return freeLocals.isEmpty() ? new HashMap<>(16) : freeLocals.pop();
+    }
+
+    private void recycleLocals(Map<String, PyObject> m) {
+        if (m != null && m != globals && m != currentGlobals
+                && (currentFunction == null || m != currentFunction.closure())
+                && m instanceof HashMap<?, ?>
+                && freeLocals.size() < MAX_FRAME_POOL && m.size() <= 64) {
+            m.clear();
+            freeLocals.push(m);
+        }
+    }
 
     private FastStack borrowStack() {
         return freeStacks.isEmpty() ? new FastStack() : freeStacks.pop();
@@ -467,12 +500,14 @@ public class Jython3Interpreter implements AutoCloseable {
         this.moduleLoader = new ModuleLoader();
         this.bytecodeCache = new ConcurrentHashMap<>();
         this.controlRegistry = new ControlRegistry();
-        this.builtinSymbols = new ConcurrentHashMap<>();
-        this.builtinTypes = new ConcurrentHashMap<>();
-        this.globals = new ConcurrentHashMap<>();
+        this.builtinSymbols = new HashMap<>();
+        this.builtinTypes = new HashMap<>();
+        CapabilitySet effectiveCaps = capabilities != null ? capabilities : CapabilitySet.none();
+        this.globals = effectiveCaps.has(org.example.jython3.host.HostCapability.THREADS)
+                ? new ConcurrentHashMap<>() : new HashMap<>();
         this.currentGlobals = this.globals;
         this.hostSession = new HostSession(
-                capabilities != null ? capabilities : CapabilitySet.none(),
+                effectiveCaps,
                 this::invokeHostCallback,
                 this.javaAccessPolicy);
         this.interpreterCaller = createCaller();
@@ -745,6 +780,7 @@ public class Jython3Interpreter implements AutoCloseable {
             }, timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         }
 
+        final var savedSlots = slotLocals;
         try {
             currentContext = cbCtx;
             enforceLimits = cbCtx.hasActiveLimits();
@@ -752,6 +788,7 @@ public class Jython3Interpreter implements AutoCloseable {
             if (stack == null) stack = new FastStack();
             if (currentGlobals == null) currentGlobals = globals;
             if (currentLocals == null) currentLocals = globals;
+            slotLocals = null;
             return callPyCallable(callable, args != null ? args : new PyObject[0]);
         } catch (InterpreterException ie) {
             if (watchdogFired.get() && (cbCtx.isTimedOut() || "KeyboardInterrupt".equals(ie.typeName()))) {
@@ -759,6 +796,7 @@ public class Jython3Interpreter implements AutoCloseable {
             }
             throw ie;
         } finally {
+            slotLocals = savedSlots;
             callbackDone.set(true);
             if (watchdogFuture != null) {
                 watchdogFuture.cancel(false);
@@ -1049,6 +1087,7 @@ public class Jython3Interpreter implements AutoCloseable {
             stack = new FastStack();
             currentGlobals = globals;
             currentLocals = globals;
+            slotLocals = null;
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
@@ -1109,6 +1148,7 @@ public class Jython3Interpreter implements AutoCloseable {
             stack = new FastStack();
             currentGlobals = globals;
             currentLocals = globals;
+            slotLocals = null;
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
@@ -1184,6 +1224,7 @@ public class Jython3Interpreter implements AutoCloseable {
     private void executeIsolated(CompiledCode code, Map<String, PyObject> executionLocals, String filename) {
         var savedStack = stack;
         var savedLocals = currentLocals;
+        var savedSlots = slotLocals;
         var savedGlobals = currentGlobals;
         var savedExcept = exceptStack;
         var savedActive = activeExceptions;
@@ -1197,6 +1238,7 @@ public class Jython3Interpreter implements AutoCloseable {
             stack = new FastStack();
             currentGlobals = executionLocals;
             currentLocals = executionLocals;
+            slotLocals = null;
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
@@ -1209,6 +1251,7 @@ public class Jython3Interpreter implements AutoCloseable {
         } finally {
             stack = savedStack;
             currentLocals = savedLocals;
+            slotLocals = savedSlots;
             currentGlobals = savedGlobals;
             exceptStack = savedExcept;
             activeExceptions = savedActive;
@@ -1358,6 +1401,7 @@ public class Jython3Interpreter implements AutoCloseable {
         var savedFrames = new ArrayDeque<>(callStack);
         var savedStack = stack;
         var savedLocals = currentLocals;
+        var savedSlots = slotLocals;
         var savedExcept = exceptStack;
         var savedActive = activeExceptions;
         var savedActiveGen = activeGenerator;
@@ -1376,6 +1420,7 @@ public class Jython3Interpreter implements AutoCloseable {
             callStack.clear();
             stack = gen.operandStack();
             currentLocals = gen.locals();
+            slotLocals = null;
             exceptStack = gen.exceptHandlers();
             activeExceptions = gen.activeExceptions();
             globalCells = gen.globalCells();
@@ -1402,6 +1447,7 @@ public class Jython3Interpreter implements AutoCloseable {
             callStack.addAll(savedFrames);
             stack = savedStack;
             currentLocals = savedLocals;
+            slotLocals = savedSlots;
             exceptStack = savedExcept;
             activeExceptions = savedActive;
             currentFunc = savedFunc;
@@ -1595,10 +1641,21 @@ public class Jython3Interpreter implements AutoCloseable {
                     else if (v instanceof CompiledCode cc) stack.push(new PyCompiledCodeWrapper(cc));
                     else throw PyErrors.error("RuntimeError", "unknown constant: " + v);
                 }
+                case LOAD_SLOT -> {
+                    PyObject v = slotLocals[ai];
+                    if (v == null) {
+                        throw PyErrors.error("UnboundLocalError",
+                                "cannot access local variable '" + code.slotNames()[ai] + "' where it is not associated with a value");
+                    }
+                    stack.push(v);
+                }
+                case STORE_SLOT -> slotLocals[ai] = stack.pop();
                 case LOAD_FAST -> {
                     String n = (String) pool[ai];
                     PyObject v = null;
-                    if (globalCells != null && globalCells.contains(n)) {
+                    if (globalCells == null && currentLocals != null) {
+                        v = currentLocals.get(n);
+                    } else if (globalCells != null && globalCells.contains(n)) {
                         v = globals.get(n);
                         if (v == null) v = currentGlobals.get(n);
                     } else if (currentLocals != null) {
@@ -1728,8 +1785,34 @@ public class Jython3Interpreter implements AutoCloseable {
                 }
 
                 // ── Arithmetic ──
-                case ADD        -> binaryAdd();
-                case SUBTRACT   -> binarySubtract();
+                case ADD -> {
+                    PyObject r = stack.pop(), l = stack.pop();
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        int a = li.value(), b = ri.value();
+                        int sum = a + b;
+                        if (((a ^ sum) & (b ^ sum)) < 0) {
+                            stack.push(new BigInt(java.math.BigInteger.valueOf((long) a + b)));
+                        } else {
+                            stack.push(PyInt.of(sum));
+                        }
+                    } else {
+                        stack.push(ArithmeticOps.add(l, r, executionLimits));
+                    }
+                }
+                case SUBTRACT -> {
+                    PyObject r = stack.pop(), l = stack.pop();
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        int a = li.value(), b = ri.value();
+                        int diff = a - b;
+                        if (((a ^ b) & (a ^ diff)) < 0) {
+                            stack.push(new BigInt(java.math.BigInteger.valueOf((long) a - b)));
+                        } else {
+                            stack.push(PyInt.of(diff));
+                        }
+                    } else {
+                        stack.push(ArithmeticOps.subtract(l, r));
+                    }
+                }
                 case MULTIPLY   -> binaryMultiply();
                 case INPLACE_ADD -> {
                     var r = stack.pop();
@@ -1807,32 +1890,54 @@ public class Jython3Interpreter implements AutoCloseable {
                 case RSHIFT         -> { var r = stack.pop(); var l = stack.pop(); stack.push(ArithmeticOps.rightShift(l, r)); }
 
                 // ── Comparison ──
-                case COMPARE_EQ     -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(pyEquals(l, r))); }
-                case COMPARE_NEQ    -> { var r = stack.pop(); var l = stack.pop(); stack.push(PyBool.of(!pyEquals(l, r))); }
-                case COMPARE_LT     -> {
+                case COMPARE_EQ -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        stack.push(PyBool.of(li.value() == ri.value()));
+                    } else {
+                        stack.push(PyBool.of(pyEquals(l, r)));
+                    }
+                }
+                case COMPARE_NEQ -> {
+                    var r = stack.pop(); var l = stack.pop();
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        stack.push(PyBool.of(li.value() != ri.value()));
+                    } else {
+                        stack.push(PyBool.of(!pyEquals(l, r)));
+                    }
+                }
+                case COMPARE_LT -> {
+                    var r = stack.pop(); var l = stack.pop();
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        stack.push(PyBool.of(li.value() < ri.value()));
+                    } else if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
                         stack.push(PyBool.of(PyOps.setSize(l) < PyOps.setSize(r) && PyOps.setIsSubset(l, r)));
                     } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) < 0));
                 }
-                case COMPARE_GT     -> {
+                case COMPARE_GT -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        stack.push(PyBool.of(li.value() > ri.value()));
+                    } else if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
                         stack.push(PyBool.of(PyOps.setSize(l) > PyOps.setSize(r) && PyOps.setIsSubset(r, l)));
                     } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) > 0));
                 }
-                case COMPARE_LTE    -> {
+                case COMPARE_LTE -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        stack.push(PyBool.of(li.value() <= ri.value()));
+                    } else if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
                         stack.push(PyBool.of(PyOps.setIsSubset(l, r)));
                     } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) <= 0));
                 }
-                case COMPARE_GTE    -> {
+                case COMPARE_GTE -> {
                     var r = stack.pop(); var l = stack.pop();
-                    if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
+                    if (l instanceof PyInt li && r instanceof PyInt ri) {
+                        stack.push(PyBool.of(li.value() >= ri.value()));
+                    } else if (PyOps.isSetLike(l) && PyOps.isSetLike(r)) {
                         stack.push(PyBool.of(PyOps.setIsSubset(r, l)));
                     } else if (isNan(l) || isNan(r)) stack.push(PyBool.FALSE);
                     else stack.push(PyBool.of(compareObjects(l, r) >= 0));
@@ -1950,11 +2055,13 @@ public class Jython3Interpreter implements AutoCloseable {
                     // belonging to the enclosing code must never be popped by the nested loop.
                     var classLocals = new HashMap<String, PyObject>();
                     var savedLocals = currentLocals;
+                    var savedSlots = slotLocals;
                     var savedStack = stack;
                     var savedExceptStack = exceptStack;
                     var savedActiveGen = activeGenerator;
                     try {
                         currentLocals = classLocals;
+                        slotLocals = null;
                         stack = new FastStack();
                         exceptStack = new ArrayDeque<>();
                         activeGenerator = null;
@@ -1962,6 +2069,7 @@ public class Jython3Interpreter implements AutoCloseable {
                     } finally {
                         activeGenerator = savedActiveGen;
                         currentLocals = savedLocals;
+                        slotLocals = savedSlots;
                         stack = savedStack;
                         exceptStack = savedExceptStack;
                     }
@@ -2005,9 +2113,9 @@ public class Jython3Interpreter implements AutoCloseable {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
                             globalCells = null;
-                            currentLocals = bindArgs(fn, callArgs, kwNames, kwValues);
+                            installFunctionLocals(fn, bindArgs(fn, callArgs, kwNames, kwValues));
                             stack = borrowStack();
                             exceptStack = borrowExceptStack();
                             activeExceptions = borrowActiveExceptions();
@@ -2043,9 +2151,9 @@ public class Jython3Interpreter implements AutoCloseable {
                             throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                         }
                         callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
+                                activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
                         globalCells = null; // new frame starts with no global declarations
-                        currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
+                        installFunctionLocals(fn, bindArgs(fn, posArgs, kwNames, kwValues));
                         stack = borrowStack();
                         exceptStack = borrowExceptStack();
                         activeExceptions = borrowActiveExceptions();
@@ -2120,6 +2228,177 @@ public class Jython3Interpreter implements AutoCloseable {
                 }
                 case CALL_FUNCTION -> {
                     int argc = ai;
+                    PyObject peekCallable = stack.peekFromTop(argc);
+                    if (peekCallable instanceof PyFunction fn
+                            && fn.defaults().length == 0
+                            && fn.argsParam() == null && fn.kwargsParam() == null
+                            && argc == fn.params().size() && !containsYield(fn.code())) {
+                        if (callDepth() >= MAX_CALL_DEPTH) {
+                            throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+                        }
+                        CompiledCode fnCode = fn.code();
+                        int slots = fnCode.slotCount();
+                        if (slots > 0) {
+                            PyObject[] sl = borrowSlots(slots);
+                            for (int i = argc - 1; i >= 0; i--) {
+                                sl[i] = stack.pop();
+                            }
+                            stack.pop(); // pop callable
+                            callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
+                            globalCells = null;
+                            currentLocals = fn.closure();
+                            slotLocals = sl;
+                            stack = borrowStack();
+                            exceptStack = borrowExceptStack();
+                            activeExceptions = borrowActiveExceptions();
+                            currentFunc = fn.name();
+                            currentFunction = fn;
+                            code = fnCode;
+                            bc = code.bytecode();
+                            pool = code.constPool();
+                            pyPool = code.pyConstPool();
+                            pc = 0;
+                            continue outer;
+                        } else if (fn.closure() == null) {
+                            var fl = borrowLocals();
+                            var params = fn.params();
+                            for (int i = argc - 1; i >= 0; i--) {
+                                fl.put(params.get(i), stack.pop());
+                            }
+                            stack.pop(); // pop callable
+                            callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
+                            globalCells = null;
+                            currentLocals = fl;
+                            slotLocals = null;
+                            stack = borrowStack();
+                            exceptStack = borrowExceptStack();
+                            activeExceptions = borrowActiveExceptions();
+                            currentFunc = fn.name();
+                            currentFunction = fn;
+                            code = fnCode;
+                            bc = code.bytecode();
+                            pool = code.constPool();
+                            pyPool = code.pyConstPool();
+                            pc = 0;
+                            continue outer;
+                        }
+                    }
+                    if (peekCallable instanceof PyBoundMethod bm) {
+                        PyFunction fn = bm.fn();
+                        if (fn.defaults().length == 0
+                                && fn.argsParam() == null && fn.kwargsParam() == null
+                                && argc + 1 == fn.params().size() && !containsYield(fn.code())) {
+                            if (callDepth() >= MAX_CALL_DEPTH) {
+                                throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+                            }
+                            CompiledCode fnCode = fn.code();
+                            int slots = fnCode.slotCount();
+                            if (slots > 0) {
+                                PyObject[] sl = borrowSlots(slots);
+                                sl[0] = bm.instance();
+                                for (int i = argc; i >= 1; i--) {
+                                    sl[i] = stack.pop();
+                                }
+                                stack.pop(); // pop bound method
+                                callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                        activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
+                                globalCells = null;
+                                currentLocals = fn.closure();
+                                slotLocals = sl;
+                                stack = borrowStack();
+                                exceptStack = borrowExceptStack();
+                                activeExceptions = borrowActiveExceptions();
+                                currentFunc = fn.name();
+                                currentFunction = fn;
+                                code = fnCode;
+                                bc = code.bytecode();
+                                pool = code.constPool();
+                                pyPool = code.pyConstPool();
+                                pc = 0;
+                                continue outer;
+                            } else if (fn.closure() == null) {
+                                var fl = borrowLocals();
+                                var params = fn.params();
+                                fl.put(params.get(0), bm.instance());
+                                for (int i = argc; i >= 1; i--) {
+                                    fl.put(params.get(i), stack.pop());
+                                }
+                                stack.pop(); // pop bound method
+                                callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                        activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
+                                globalCells = null;
+                                currentLocals = fl;
+                                slotLocals = null;
+                                stack = borrowStack();
+                                exceptStack = borrowExceptStack();
+                                activeExceptions = borrowActiveExceptions();
+                                currentFunc = fn.name();
+                                currentFunction = fn;
+                                code = fnCode;
+                                bc = code.bytecode();
+                                pool = code.constPool();
+                                pyPool = code.pyConstPool();
+                                pc = 0;
+                                continue outer;
+                            }
+                        }
+                    }
+                    if (peekCallable instanceof PyClass cls && !cls.isExceptionType()) {
+                        Object[] cache = code.attrCache();
+                        AttrCacheEntry entry = (cache != null && pc < cache.length) ? (AttrCacheEntry) cache[pc] : null;
+                        PyObject initObj;
+                        if (entry != null && entry.cachedClass() == cls && entry.cachedClassVersion() == cls.version()) {
+                            initObj = entry.cachedMember();
+                        } else {
+                            initObj = cls.lookupMember("__init__");
+                            if (cache != null && pc < cache.length) {
+                                cache[pc] = new AttrCacheEntry(cls, cls.version(), initObj);
+                            }
+                        }
+                        if (initObj == null && argc == 0) {
+                            stack.pop(); // pop cls
+                            stack.push(new PyInstance(cls));
+                            break;
+                        }
+                        if (initObj instanceof PyFunction initFn
+                                && initFn.defaults().length == 0
+                                && initFn.argsParam() == null && initFn.kwargsParam() == null
+                                && argc + 1 == initFn.params().size() && !containsYield(initFn.code())) {
+                            CompiledCode fnCode = initFn.code();
+                            int slots = fnCode.slotCount();
+                            if (slots > 0) {
+                                if (callDepth() >= MAX_CALL_DEPTH) {
+                                    throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+                                }
+                                var inst = new PyInstance(cls);
+                                PyObject[] sl = borrowSlots(slots);
+                                sl[0] = inst;
+                                for (int i = argc; i >= 1; i--) {
+                                    sl[i] = stack.pop();
+                                }
+                                stack.pop(); // pop cls
+                                callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
+                                        activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals, inst));
+                                globalCells = null;
+                                currentLocals = initFn.closure();
+                                slotLocals = sl;
+                                stack = borrowStack();
+                                exceptStack = borrowExceptStack();
+                                activeExceptions = borrowActiveExceptions();
+                                currentFunc = initFn.name();
+                                currentFunction = initFn;
+                                code = fnCode;
+                                bc = code.bytecode();
+                                pool = code.constPool();
+                                pyPool = code.pyConstPool();
+                                pc = 0;
+                                continue outer;
+                            }
+                        }
+                    }
+
                     var args = new PyObject[argc];
                     for (int i = argc - 1; i >= 0; i--) args[i] = stack.pop();
                     PyObject callable = stack.pop();
@@ -2137,9 +2416,9 @@ public class Jython3Interpreter implements AutoCloseable {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
                             globalCells = null;
-                            currentLocals = bindArgs(fn, callArgs, null, null);
+                            installFunctionLocals(fn, bindArgs(fn, callArgs, null, null));
                             stack = borrowStack();
                             exceptStack = borrowExceptStack();
                             activeExceptions = borrowActiveExceptions();
@@ -2181,9 +2460,9 @@ public class Jython3Interpreter implements AutoCloseable {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
-                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction));
+                                    activeExceptions, currentFunc, currentFile, currentLine, currentGlobals, globalCells, currentFunction, slotLocals));
                             globalCells = null; // new frame starts with no global declarations
-                            currentLocals = bindArgs(fn, args, null, null);
+                            installFunctionLocals(fn, bindArgs(fn, args, null, null));
                             stack = borrowStack();
                             exceptStack = borrowExceptStack();
                             activeExceptions = borrowActiveExceptions();
@@ -2277,6 +2556,8 @@ public class Jython3Interpreter implements AutoCloseable {
                         return null;
                     }
                     Frame cf = callStack.pop();
+                    recycleSlots(slotLocals, code.slotCount());
+                    recycleLocals(currentLocals);
                     recycleStack(stack);
                     recycleExceptStack(exceptStack);
                     recycleActiveExceptions(activeExceptions);
@@ -2286,6 +2567,7 @@ public class Jython3Interpreter implements AutoCloseable {
                     pyPool = code.pyConstPool();
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
+                    slotLocals = cf.slotLocals();
                     if (cf.globals() != null) currentGlobals = cf.globals();
                     globalCells = cf.globalCells(); // restore caller's global declarations
                     stack = cf.stack();
@@ -2295,7 +2577,7 @@ public class Jython3Interpreter implements AutoCloseable {
                     currentFunction = cf.function();
                     currentFile = cf.file();
                     currentLine = cf.line();
-                    stack.push(rv);
+                    stack.push(cf.initInstance() != null ? cf.initInstance() : rv);
                     continue outer;
                 }
 
@@ -2510,9 +2792,16 @@ public class Jython3Interpreter implements AutoCloseable {
                     String attr = (String) pool[ai];
                     PyObject obj = stack.pop();
                     if (obj instanceof PyInstance inst) {
+                        PyClass cls = inst.pyClass();
+                        if (!cls.hasProperties()) {
+                            PyObject val = inst.fields().get(attr);
+                            if (val != null) {
+                                stack.push(val);
+                                break;
+                            }
+                        }
                         Object[] cache = code.attrCache();
                         AttrCacheEntry entry = (cache != null && pc < cache.length) ? (AttrCacheEntry) cache[pc] : null;
-                        PyClass cls = inst.pyClass();
                         PyObject member;
                         if (entry != null && entry.cachedClass() == cls && entry.cachedClassVersion() == cls.version()) {
                             member = entry.cachedMember();
@@ -2886,6 +3175,8 @@ public class Jython3Interpreter implements AutoCloseable {
                 }
                 while (callStack.size() > baseDepth) {
                     Frame cf = callStack.pop();
+                    recycleSlots(slotLocals, code.slotCount());
+                    recycleLocals(currentLocals);
                     recycleStack(stack);
                     recycleExceptStack(exceptStack);
                     recycleActiveExceptions(activeExceptions);
@@ -2895,6 +3186,7 @@ public class Jython3Interpreter implements AutoCloseable {
                     pyPool = code.pyConstPool();
                     pc = cf.returnPc();
                     currentLocals = cf.locals();
+                    slotLocals = cf.slotLocals();
                     if (cf.globals() != null) currentGlobals = cf.globals();
                     globalCells = cf.globalCells();
                     stack = cf.stack();
@@ -3030,6 +3322,24 @@ public class Jython3Interpreter implements AutoCloseable {
      * @param kwNames  keyword argument names, or null/empty for positional-only
      * @param kwValues keyword argument values parallel to kwNames
      */
+    private void installFunctionLocals(PyFunction fn, Map<String, PyObject> bound) {
+        CompiledCode fc = fn.code();
+        int sc = fc.slotCount();
+        if (sc > 0) {
+            PyObject[] sl = borrowSlots(sc);
+            String[] names = fc.slotNames();
+            for (int i = 0; i < sc; i++) {
+                sl[i] = bound.get(names[i]);
+            }
+            recycleLocals(bound);
+            this.slotLocals = sl;
+            this.currentLocals = fn.closure();
+        } else {
+            this.slotLocals = null;
+            this.currentLocals = bound;
+        }
+    }
+
     private PyObject callPyCallableKw(PyObject callable, PyObject[] posArgs,
                                       String[] kwNames, PyObject[] kwValues) {
         if (callable instanceof PyBuiltinFunction bf) {
@@ -3062,6 +3372,7 @@ public class Jython3Interpreter implements AutoCloseable {
             }
             var savedStack = stack;
             var savedLocals = currentLocals;
+            var savedSlots = slotLocals;
             var savedExcept = exceptStack;
             var savedActive = activeExceptions;
             var savedFunc = currentFunc;
@@ -3078,7 +3389,7 @@ public class Jython3Interpreter implements AutoCloseable {
             Deque<ExceptHandler> borrowedExcept = null;
             Deque<PyObject> borrowedActive = null;
             try {
-                currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
+                installFunctionLocals(fn, bindArgs(fn, posArgs, kwNames, kwValues));
                 stack = borrowedStack = borrowStack();
                 exceptStack = borrowedExcept = borrowExceptStack();
                 activeExceptions = borrowedActive = borrowActiveExceptions();
@@ -3091,12 +3402,14 @@ public class Jython3Interpreter implements AutoCloseable {
             } finally {
                 activeGenerator = savedActiveGen;
                 if (outerCtx != null) outerActiveContexts.removeLast();
+                recycleSlots(slotLocals, fn.code().slotCount());
                 recycleStack(borrowedStack);
                 recycleExceptStack(borrowedExcept);
                 recycleActiveExceptions(borrowedActive);
                 // Always restore the caller's frame state, including when the callee raises.
                 stack = savedStack;
                 currentLocals = savedLocals;
+                slotLocals = savedSlots;
                 exceptStack = savedExcept;
                 activeExceptions = savedActive;
                 currentFunc = savedFunc;
@@ -3140,7 +3453,8 @@ public class Jython3Interpreter implements AutoCloseable {
         int nPos = posArgs.length;
 
         int totalExpected = (fn.closure() != null ? fn.closure().size() : 0) + nParams + 4;
-        var fl = new HashMap<String, PyObject>(Math.max(8, (int)(totalExpected / 0.75f) + 1));
+        Map<String, PyObject> fl = (totalExpected <= 12) ? borrowLocals()
+                : new HashMap<>(Math.max(8, (int)(totalExpected / 0.75f) + 1));
         // 1. Seed with closure
         if (fn.closure() != null) fl.putAll(fn.closure());
 

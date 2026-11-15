@@ -20,6 +20,7 @@ public final class PyClass implements PyObject {
     private final Set<PyClass> subclasses = Collections.newSetFromMap(new WeakHashMap<>());
     private List<PyClass> mro;
     private volatile long version = 1;
+    private volatile boolean hasProperties;
 
     /**
      * Marks the root of the exception hierarchy. Every class that has this
@@ -37,6 +38,7 @@ public final class PyClass implements PyObject {
             baseClass.addSubclass(this);
         }
         this.mro = computeC3Mro();
+        this.hasProperties = computeHasProperties();
     }
 
     public PyClass(String name, PyClass baseClass, Map<String, PyObject> members, List<PyClass> basesList) {
@@ -57,6 +59,18 @@ public final class PyClass implements PyObject {
             baseClass.addSubclass(this);
         }
         this.mro = computeC3Mro();
+        this.hasProperties = computeHasProperties();
+    }
+
+    public boolean hasProperties() { return hasProperties; }
+
+    private boolean computeHasProperties() {
+        for (PyClass c : mro) {
+            for (PyObject v : c.members.values()) {
+                if (v instanceof PyProperty) return true;
+            }
+        }
+        return false;
     }
 
     public String name() { return name; }
@@ -82,6 +96,7 @@ public final class PyClass implements PyObject {
     public synchronized void invalidateHierarchy() {
         this.version++;
         this.memberCache.clear();
+        this.hasProperties = computeHasProperties();
         for (PyClass sub : subclasses) {
             sub.invalidateHierarchy();
         }

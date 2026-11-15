@@ -77,7 +77,10 @@ public enum OpCode {
     INPLACE_OR(92),
     INPLACE_XOR(93),
     // ── generator delegation
-    YIELD_FROM(94);         // arg: donePc; stack: [..., sub_iter, sentVal] -> suspends or jumps to donePc with [..., retVal]
+    YIELD_FROM(94),         // arg: donePc; stack: [..., sub_iter, sentVal] -> suspends or jumps to donePc with [..., retVal]
+    // ── array-indexed local variable slots
+    LOAD_SLOT(95),          // arg: local slot index -> pushes slotLocals[ai]
+    STORE_SLOT(96);         // arg: local slot index -> pops value into slotLocals[ai]
 
     private final int code;
 

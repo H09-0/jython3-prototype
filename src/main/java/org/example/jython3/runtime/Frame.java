@@ -21,7 +21,34 @@ public record Frame(CompiledCode code, int returnPc,
                     String funcName, String file, int line,
                     Map<String, PyObject> globals,
                     Set<String> globalCells,
-                    PyFunction function) {
+                    PyFunction function,
+                    PyObject[] slotLocals,
+                    PyInstance initInstance) {
+
+    public Frame(CompiledCode code, int returnPc,
+                 Map<String, PyObject> locals, FastStack stack,
+                 Deque<ExceptHandler> exceptHandlers,
+                 Deque<PyObject> activeExceptions,
+                 String funcName, String file, int line,
+                 Map<String, PyObject> globals,
+                 Set<String> globalCells,
+                 PyFunction function,
+                 PyObject[] slotLocals) {
+        this(code, returnPc, locals, stack, exceptHandlers, activeExceptions,
+             funcName, file, line, globals, globalCells, function, slotLocals, null);
+    }
+
+    public Frame(CompiledCode code, int returnPc,
+                 Map<String, PyObject> locals, FastStack stack,
+                 Deque<ExceptHandler> exceptHandlers,
+                 Deque<PyObject> activeExceptions,
+                 String funcName, String file, int line,
+                 Map<String, PyObject> globals,
+                 Set<String> globalCells,
+                 PyFunction function) {
+        this(code, returnPc, locals, stack, exceptHandlers, activeExceptions,
+             funcName, file, line, globals, globalCells, function, null, null);
+    }
 
     /** Constructor with globals and globalCells but without function. */
     public Frame(CompiledCode code, int returnPc,

@@ -10,8 +10,12 @@ import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.runtime.PyStr;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -27,26 +31,113 @@ import java.util.Set;
  */
 public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
                            boolean hasYield, Object[] attrCache, Set<String> referencedNames,
-                           PyObject[] pyConstPool) {
+                           PyObject[] pyConstPool, String[] slotNames) {
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines) {
         this(bytecode, constPool, lines,
              scanYield(bytecode),
              new Object[bytecode != null ? bytecode.length : 0],
              collectReferencedNames(bytecode, constPool),
-             buildPyConstPool(constPool));
+             buildPyConstPool(constPool),
+             null);
     }
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines, boolean hasYield, Object[] attrCache) {
         this(bytecode, constPool, lines, hasYield, attrCache,
              collectReferencedNames(bytecode, constPool),
-             buildPyConstPool(constPool));
+             buildPyConstPool(constPool),
+             null);
     }
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
                         boolean hasYield, Object[] attrCache, Set<String> referencedNames) {
         this(bytecode, constPool, lines, hasYield, attrCache, referencedNames,
-             buildPyConstPool(constPool));
+             buildPyConstPool(constPool),
+             null);
+    }
+
+    public int slotCount() {
+        return slotNames != null ? slotNames.length : 0;
+    }
+
+    /**
+     * Rewrites pure local {@code LOAD_FAST}/{@code STORE_FAST} instructions into
+     * array-indexed {@code LOAD_SLOT}/{@code STORE_SLOT} when the function has no
+     * generators, nested functions, {@code global}/{@code nonlocal}, or dynamic
+     * scope inspection ({@code vars}/{@code dir}/{@code locals}).
+     */
+    public CompiledCode optimizeSlots(List<String> params, String argsParam, String kwargsParam) {
+        if (hasYield || bytecode == null || constPool == null) return this;
+        int opMakeFn = OpCode.MAKE_FUNCTION.code();
+        int opMakeFnDef = OpCode.MAKE_FUNCTION_DEFAULTS.code();
+        int opBuildCls = OpCode.BUILD_CLASS.code();
+        int opLoadConst = OpCode.LOAD_CONST.code();
+        int opLoadFast = OpCode.LOAD_FAST.code();
+        int opStoreFast = OpCode.STORE_FAST.code();
+        int opDeleteFast = OpCode.DELETE_FAST.code();
+        int opDeleteSilent = OpCode.DELETE_NAME_SILENT.code();
+        int opLoadSlot = OpCode.LOAD_SLOT.code();
+        int opStoreSlot = OpCode.STORE_SLOT.code();
+
+        for (int instr : bytecode) {
+            int op = instr >>> 16;
+            int ai = instr & 0xFFFF;
+            if (op == opMakeFn || op == opMakeFnDef || op == opBuildCls
+                    || op == opDeleteFast || op == opDeleteSilent) {
+                return this;
+            }
+            if (op == opLoadConst && ai < constPool.length) {
+                Object c = constPool[ai];
+                if (c instanceof PyFunction) {
+                    return this; // lambda / genexpr captures enclosing currentLocals
+                }
+                if (c instanceof String s && (s.startsWith("@global:") || s.startsWith("@nonlocal:"))) {
+                    return this;
+                }
+            }
+            if (op == opLoadFast && ai < constPool.length && constPool[ai] instanceof String name
+                    && ("vars".equals(name) || "dir".equals(name) || "locals".equals(name) || "super".equals(name))) {
+                return this;
+            }
+        }
+
+        Map<String, Integer> slotMap = new HashMap<>();
+        List<String> orderedNames = new ArrayList<>();
+        if (params != null) {
+            for (String p : params) {
+                if (slotMap.putIfAbsent(p, orderedNames.size()) == null) orderedNames.add(p);
+            }
+        }
+        if (argsParam != null && slotMap.putIfAbsent(argsParam, orderedNames.size()) == null) {
+            orderedNames.add(argsParam);
+        }
+        if (kwargsParam != null && slotMap.putIfAbsent(kwargsParam, orderedNames.size()) == null) {
+            orderedNames.add(kwargsParam);
+        }
+        for (int instr : bytecode) {
+            int op = instr >>> 16;
+            int ai = instr & 0xFFFF;
+            if (op == opStoreFast && ai < constPool.length && constPool[ai] instanceof String name) {
+                if (slotMap.putIfAbsent(name, orderedNames.size()) == null) orderedNames.add(name);
+            }
+        }
+        if (orderedNames.isEmpty() || orderedNames.size() > 256) return this;
+
+        int[] rewritten = bytecode.clone();
+        for (int i = 0; i < rewritten.length; i++) {
+            int instr = rewritten[i];
+            int op = instr >>> 16;
+            int ai = instr & 0xFFFF;
+            if (ai < constPool.length && constPool[ai] instanceof String name) {
+                Integer slot = slotMap.get(name);
+                if (slot != null) {
+                    if (op == opLoadFast) rewritten[i] = (opLoadSlot << 16) | slot;
+                    else if (op == opStoreFast) rewritten[i] = (opStoreSlot << 16) | slot;
+                }
+            }
+        }
+        return new CompiledCode(rewritten, constPool, lines, hasYield, attrCache,
+                referencedNames, pyConstPool, orderedNames.toArray(new String[0]));
     }
 
     private static PyObject[] buildPyConstPool(Object[] constPool) {

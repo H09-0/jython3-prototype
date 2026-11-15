@@ -23,6 +23,10 @@ public final class PyInstance implements PyObject {
     }
 
     public PyObject getField(String name) {
+        if (!pyClass.hasProperties()) {
+            PyObject val = fields.get(name);
+            if (val != null) return val;
+        }
         PyObject member = pyClass.lookupMember(name);
         if (member instanceof PyProperty prop && prop.isDataDescriptor()) {
             return invokePropertyGetter(prop, name);
@@ -80,18 +84,20 @@ public final class PyInstance implements PyObject {
     }
 
     public void setField(String name, PyObject val) {
-        PyObject member = pyClass.lookupMember(name);
-        if (member instanceof PyProperty prop) {
-            if (prop.fset() == null) {
-                throw PyErrors.error("AttributeError",
-                        "property '" + name + "' of '" + pyClass.name() + "' object has no setter");
+        if (pyClass.hasProperties()) {
+            PyObject member = pyClass.lookupMember(name);
+            if (member instanceof PyProperty prop) {
+                if (prop.fset() == null) {
+                    throw PyErrors.error("AttributeError",
+                            "property '" + name + "' of '" + pyClass.name() + "' object has no setter");
+                }
+                PyCaller caller = PyCaller.current();
+                if (caller == null) {
+                    throw PyErrors.error("RuntimeError", "no active interpreter for property");
+                }
+                caller.call(prop.fset(), new PyObject[]{this, val});
+                return;
             }
-            PyCaller caller = PyCaller.current();
-            if (caller == null) {
-                throw PyErrors.error("RuntimeError", "no active interpreter for property");
-            }
-            caller.call(prop.fset(), new PyObject[]{this, val});
-            return;
         }
         fields.put(name, val);
         if (boundMethodCache != null) {
@@ -100,18 +106,20 @@ public final class PyInstance implements PyObject {
     }
 
     public boolean deleteField(String name) {
-        PyObject member = pyClass.lookupMember(name);
-        if (member instanceof PyProperty prop) {
-            if (prop.fdel() == null) {
-                throw PyErrors.error("AttributeError",
-                        "property '" + name + "' of '" + pyClass.name() + "' object has no deleter");
+        if (pyClass.hasProperties()) {
+            PyObject member = pyClass.lookupMember(name);
+            if (member instanceof PyProperty prop) {
+                if (prop.fdel() == null) {
+                    throw PyErrors.error("AttributeError",
+                            "property '" + name + "' of '" + pyClass.name() + "' object has no deleter");
+                }
+                PyCaller caller = PyCaller.current();
+                if (caller == null) {
+                    throw PyErrors.error("RuntimeError", "no active interpreter for property");
+                }
+                caller.call(prop.fdel(), new PyObject[]{this});
+                return true;
             }
-            PyCaller caller = PyCaller.current();
-            if (caller == null) {
-                throw PyErrors.error("RuntimeError", "no active interpreter for property");
-            }
-            caller.call(prop.fdel(), new PyObject[]{this});
-            return true;
         }
         if (!fields.containsKey(name)) return false;
         fields.remove(name);

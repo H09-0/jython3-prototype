@@ -204,8 +204,8 @@ public final class BytecodeValidator {
                 }
                 yield new int[]{0, 1};
             }
-            case LOAD_FAST, LOAD_GLOBAL, LOAD_GLOBAL_NAME -> new int[]{0, 1};
-            case STORE_FAST, STORE_GLOBAL_NAME, POP_TOP, EXECFILE -> new int[]{1, -1};
+            case LOAD_FAST, LOAD_GLOBAL, LOAD_GLOBAL_NAME, LOAD_SLOT -> new int[]{0, 1};
+            case STORE_FAST, STORE_GLOBAL_NAME, STORE_SLOT, POP_TOP, EXECFILE -> new int[]{1, -1};
             case STORE_SUBSCR -> new int[]{3, -3};
             case STORE_ATTR -> new int[]{2, -2};
             case DELETE_SUBSCR -> new int[]{2, -2};

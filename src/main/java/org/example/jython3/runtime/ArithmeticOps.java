@@ -21,26 +21,27 @@ public final class ArithmeticOps {
     }
 
     public static PyObject add(PyObject rawL, PyObject rawR) {
+        return add(rawL, rawR, null);
+    }
+
+    public static PyObject add(PyObject rawL, PyObject rawR, ExecutionLimits limits) {
         var r = unwrapBool(rawR);
         var l = unwrapBool(rawL);
         if (l instanceof PyStr ls && r instanceof PyStr rs) {
-            var ctx = org.example.jython3.security.ExecutionContext.current();
-            if (ctx != null && (long) ls.value().length() + rs.value().length() > ctx.limits().maxStringLength()) {
-                throw PyErrors.error("MemoryError", "String length exceeds maximum allowed limit: " + ctx.limits().maxStringLength());
+            if (limits != null && (long) ls.value().length() + rs.value().length() > limits.maxStringLength()) {
+                throw PyErrors.error("MemoryError", "String length exceeds maximum allowed limit: " + limits.maxStringLength());
             }
             return new PyStr(ls.value() + rs.value());
         } else if (l instanceof PyList ll && r instanceof PyList rl) {
-            var ctx = org.example.jython3.security.ExecutionContext.current();
-            if (ctx != null && (long) ll.items().size() + rl.items().size() > ctx.limits().maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + ctx.limits().maxCollectionSize());
+            if (limits != null && (long) ll.items().size() + rl.items().size() > limits.maxCollectionSize()) {
+                throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + limits.maxCollectionSize());
             }
             var items = new ArrayList<>(ll.items());
             items.addAll(rl.items());
             return new PyList(items);
         } else if (l instanceof PyTuple lt && r instanceof PyTuple rt) {
-            var ctx = org.example.jython3.security.ExecutionContext.current();
-            if (ctx != null && (long) lt.items().size() + rt.items().size() > ctx.limits().maxCollectionSize()) {
-                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + ctx.limits().maxCollectionSize());
+            if (limits != null && (long) lt.items().size() + rt.items().size() > limits.maxCollectionSize()) {
+                throw PyErrors.error("OverflowError", "Tuple size exceeds maximum allowed limit: " + limits.maxCollectionSize());
             }
             var items = new ArrayList<>(lt.items());
             items.addAll(rt.items());
