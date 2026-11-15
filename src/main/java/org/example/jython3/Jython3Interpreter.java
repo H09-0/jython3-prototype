@@ -1351,9 +1351,17 @@ public class Jython3Interpreter implements AutoCloseable {
             gen.fail();
             throw PyErrors.error("RuntimeError", "generator ignored GeneratorExit");
         } catch (InterpreterException ie) {
-            if ("StopIteration".equals(ie.typeName()) || "GeneratorExit".equals(ie.typeName())) {
+            if (("StopIteration".equals(ie.typeName()) && ie.isGeneratorReturn())
+                    || "GeneratorExit".equals(ie.typeName())) {
                 gen.complete();
                 return PyNull.INSTANCE;
+            }
+            if ("StopIteration".equals(ie.typeName())) {
+                gen.fail();
+                PyException rtPe = new PyException(exceptionTypes.type("RuntimeError"),
+                        List.of(new PyStr("generator raised StopIteration")));
+                if (ie.value() instanceof PyException orig) rtPe.setExplicitCause(orig);
+                throw PyErrors.errorValue(rtPe);
             }
             gen.fail();
             throw ie;
@@ -1442,6 +1450,14 @@ public class Jython3Interpreter implements AutoCloseable {
             throw PyErrors.error("RecursionError", "maximum recursion depth exceeded (host stack exhausted)");
         } catch (InterpreterException ie) {
             if (gen.state() == PyGenerator.State.RUNNING) gen.fail();
+            if ("StopIteration".equals(ie.typeName()) && !ie.isGeneratorReturn()) {
+                PyException rtPe = new PyException(exceptionTypes.type("RuntimeError"),
+                        List.of(new PyStr("generator raised StopIteration")));
+                if (ie.value() instanceof PyException orig) {
+                    rtPe.setExplicitCause(orig);
+                }
+                throw PyErrors.errorValue(rtPe);
+            }
             throw ie;
         } finally {
             nestedDepth -= (hidden + 1);
@@ -1631,9 +1647,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (("<lambda>".equals(f.name()) || "<genexpr>".equals(f.name()))
                                 && capSrc != null && capSrc != globals) {
                             var refs = f.code() != null ? f.code().referencedNames() : java.util.Set.<String>of();
+                            var fnLocals = f.code() != null ? f.code().localNames() : java.util.Set.<String>of();
                             var captured = new HashMap<String, PyObject>(f.closure());
                             for (Map.Entry<String, PyObject> e : capSrc.entrySet()) {
-                                if (refs.contains(e.getKey())) {
+                                if (refs.contains(e.getKey()) && !fnLocals.contains(e.getKey())) {
                                     captured.put(e.getKey(), e.getValue());
                                 }
                             }
@@ -1665,6 +1682,12 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (v == null) v = currentGlobals.get(n);
                     } else if (currentLocals != null) {
                         v = currentLocals.get(n);
+                    }
+                    if (v == null && currentLocals != globals && currentLocals != null
+                            && (globalCells == null || !globalCells.contains(n))
+                            && code.localNames().contains(n)) {
+                        throw PyErrors.error("UnboundLocalError",
+                                "cannot access local variable '" + n + "' where it is not associated with a value");
                     }
                     if (v == null) v = currentGlobals.get(n);
                     if (v == null) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
@@ -1766,8 +1789,16 @@ public class Jython3Interpreter implements AutoCloseable {
                 case DELETE_FAST -> {
                     String n = (String) pool[ai];
                     if (currentLocals != null && currentLocals.get(n) instanceof org.example.jython3.runtime.PyCell cell) {
-                        if (!cell.isBound()) throw PyErrors.error("NameError", "name '" + n + "' is not defined");
+                        if (!cell.isBound()) throw PyErrors.error("UnboundLocalError",
+                                "cannot access local variable '" + n + "' where it is not associated with a value");
                         cell.set(null);
+                    } else if (currentLocals != null && currentLocals != globals
+                            && (globalCells == null || !globalCells.contains(n))
+                            && code.localNames().contains(n)) {
+                        if (currentLocals.remove(n) == null) {
+                            throw PyErrors.error("UnboundLocalError",
+                                    "cannot access local variable '" + n + "' where it is not associated with a value");
+                        }
                     } else if ((currentLocals == null || currentLocals.remove(n) == null) && globals.remove(n) == null) {
                         throw PyErrors.error("NameError", "name '" + n + "' is not defined");
                     }
@@ -2065,11 +2096,14 @@ public class Jython3Interpreter implements AutoCloseable {
                     PyObject fnObj = stack.pop();
                     if (fnObj instanceof PyFunction fn) {
                         var refs = fn.code() != null ? fn.code().referencedNames() : java.util.Set.<String>of();
-                        // Capture only referenced enclosing locals (closure) except the function name itself
+                        var fnLocals = fn.code() != null ? fn.code().localNames() : java.util.Set.<String>of();
+                        // Capture only referenced free (non-local) enclosing bindings
                         Map<String, PyObject> capSrc = closureCaptureLocals != null ? closureCaptureLocals : currentLocals;
                         if (capSrc != null && capSrc != globals) {
                             for (Map.Entry<String, PyObject> e : capSrc.entrySet()) {
-                                if (!e.getKey().equals(funcName) && refs.contains(e.getKey())) {
+                                if (!e.getKey().equals(funcName)
+                                        && refs.contains(e.getKey())
+                                        && !fnLocals.contains(e.getKey())) {
                                     fn.closure().putIfAbsent(e.getKey(), e.getValue());
                                 }
                             }
@@ -2630,10 +2664,12 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (activeGenerator != null) {
                             activeGenerator.complete();
                             if (rv instanceof PyNull) {
-                                throw PyErrors.error("StopIteration", "");
+                                throw PyErrors.errorValue(new PyException(exceptionTypes.type("StopIteration"), List.of()))
+                                        .markGeneratorReturn();
                             }
                             throw PyErrors.errorValue(
-                                    new PyException(exceptionTypes.type("StopIteration"), List.of(rv)));
+                                    new PyException(exceptionTypes.type("StopIteration"), List.of(rv)))
+                                    .markGeneratorReturn();
                         }
                         stack.push(rv);
                         return null;

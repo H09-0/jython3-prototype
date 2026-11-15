@@ -542,7 +542,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         // ── 4. Emit: load prototype → push defaults → MAKE_FUNCTION_DEFAULTS ──
         // Build a prototype PyFunction that holds params/argsParam/kwargsParam/code.
         // Defaults are attached by the VM when it processes MAKE_FUNCTION_DEFAULTS.
-        CompiledCode fnCode = fb.build().optimizeSlots(positional, argsParam, kwargsParam);
+        CompiledCode fnCode = fb.build()
+                .withFunctionLocals(positional, argsParam, kwargsParam)
+                .optimizeSlots(positional, argsParam, kwargsParam);
         b.emit(OpCode.LOAD_CONST,
                new PyFunction(fnName, positional, new org.example.jython3.runtime.PyObject[0],
                               argsParam, kwargsParam, fnCode, null));

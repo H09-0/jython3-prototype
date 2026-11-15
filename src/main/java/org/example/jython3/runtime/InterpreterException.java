@@ -28,6 +28,8 @@ public class InterpreterException extends RuntimeException {
     private final List<TraceEntry> traceback = new ArrayList<>();
     /** True when thrown by an internal unwind continuation (RERAISE / bare raise). */
     private boolean continuation;
+    /** True when StopIteration represents normal completion (return / falling off end) of a generator. */
+    private boolean generatorReturn;
     /** Number of entries already flushed onto the carried PyException. */
     private int flushedFrames = 0;
 
@@ -92,6 +94,13 @@ public class InterpreterException extends RuntimeException {
 
     public void clearContinuation() {
         this.continuation = false;
+    }
+
+    public boolean isGeneratorReturn() { return generatorReturn; }
+
+    public InterpreterException markGeneratorReturn() {
+        this.generatorReturn = true;
+        return this;
     }
 
     /** Appends any un-flushed unwind frames onto {@code pe}, never duplicating. */

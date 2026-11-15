@@ -38,7 +38,7 @@ class CoreLanguageCompletenessTest {
                     pass
                 try:
                     return ("leaked", e)
-                except NameError:
+                except UnboundLocalError:
                     return ("deleted", True)
 
             print(g())

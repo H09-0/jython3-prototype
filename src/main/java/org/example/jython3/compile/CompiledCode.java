@@ -31,7 +31,7 @@ import java.util.Set;
  */
 public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
                            boolean hasYield, Object[] attrCache, Set<String> referencedNames,
-                           PyObject[] pyConstPool, String[] slotNames) {
+                           PyObject[] pyConstPool, String[] slotNames, Set<String> localNames) {
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines) {
         this(bytecode, constPool, lines,
@@ -39,25 +39,62 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
              new Object[bytecode != null ? bytecode.length : 0],
              collectReferencedNames(bytecode, constPool),
              buildPyConstPool(constPool),
-             null);
+             null,
+             Set.of());
     }
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines, boolean hasYield, Object[] attrCache) {
         this(bytecode, constPool, lines, hasYield, attrCache,
              collectReferencedNames(bytecode, constPool),
              buildPyConstPool(constPool),
-             null);
+             null,
+             Set.of());
     }
 
     public CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
                         boolean hasYield, Object[] attrCache, Set<String> referencedNames) {
         this(bytecode, constPool, lines, hasYield, attrCache, referencedNames,
              buildPyConstPool(constPool),
-             null);
+             null,
+             Set.of());
     }
 
     public int slotCount() {
         return slotNames != null ? slotNames.length : 0;
+    }
+
+    /**
+     * Computes static Python 3 function-scope local names (PEP 227 / Execution Model §4.2.2):
+     * all parameters and assignment/deletion targets not declared {@code global} or {@code nonlocal}.
+     */
+    public CompiledCode withFunctionLocals(List<String> params, String argsParam, String kwargsParam) {
+        if (bytecode == null || constPool == null) return this;
+        Set<String> declaredExternal = new HashSet<>();
+        Set<String> locals = new HashSet<>();
+        if (params != null) locals.addAll(params);
+        if (argsParam != null) locals.add(argsParam);
+        if (kwargsParam != null) locals.add(kwargsParam);
+
+        int opLoadConst = OpCode.LOAD_CONST.code();
+        int opStoreFast = OpCode.STORE_FAST.code();
+        int opDeleteFast = OpCode.DELETE_FAST.code();
+        int opDeleteSilent = OpCode.DELETE_NAME_SILENT.code();
+
+        for (int instr : bytecode) {
+            int op = instr >>> 16;
+            int ai = instr & 0xFFFF;
+            if (ai >= constPool.length) continue;
+            if (op == opLoadConst && constPool[ai] instanceof String s) {
+                if (s.startsWith("@global:")) declaredExternal.add(s.substring(8));
+                else if (s.startsWith("@nonlocal:")) declaredExternal.add(s.substring(10));
+            } else if ((op == opStoreFast || op == opDeleteFast || op == opDeleteSilent)
+                    && constPool[ai] instanceof String varName && !isSyntheticName(varName)) {
+                locals.add(varName);
+            }
+        }
+        locals.removeAll(declaredExternal);
+        return new CompiledCode(bytecode, constPool, lines, hasYield, attrCache,
+                referencedNames, pyConstPool, slotNames, Collections.unmodifiableSet(locals));
     }
 
     /**
@@ -137,7 +174,7 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
             }
         }
         return new CompiledCode(rewritten, constPool, lines, hasYield, attrCache,
-                referencedNames, pyConstPool, orderedNames.toArray(new String[0]));
+                referencedNames, pyConstPool, orderedNames.toArray(new String[0]), localNames);
     }
 
     private static PyObject[] buildPyConstPool(Object[] constPool) {
