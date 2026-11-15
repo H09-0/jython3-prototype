@@ -258,10 +258,31 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             b.emit(OpCode.ROT_THREE);
             b.emit(OpCode.STORE_SUBSCR);
         } else if (target instanceof LValue.TupleTarget tt) {
-            b.emitRaw(OpCode.UNPACK_SEQUENCE, tt.elements().size());
-            for (LValue elem : tt.elements()) {
-                emitStore(elem);
+            int starIdx = -1;
+            for (int i = 0; i < tt.elements().size(); i++) {
+                if (tt.elements().get(i) instanceof LValue.StarTarget) {
+                    starIdx = i;
+                    break;
+                }
             }
+            if (starIdx < 0) {
+                b.emitRaw(OpCode.UNPACK_SEQUENCE, tt.elements().size());
+                for (LValue elem : tt.elements()) {
+                    emitStore(elem);
+                }
+            } else {
+                int before = starIdx;
+                int after = tt.elements().size() - 1 - starIdx;
+                if (before > 255 || after > 255) {
+                    throw new CompileError("too many expressions in star-unpacking assignment");
+                }
+                b.emitRaw(OpCode.UNPACK_EX, (after << 8) | before);
+                for (LValue elem : tt.elements()) {
+                    emitStore(elem instanceof LValue.StarTarget st ? st.inner() : elem);
+                }
+            }
+        } else if (target instanceof LValue.StarTarget) {
+            throw new CompileError("starred assignment target must be in a list or tuple");
         }
     }
 
@@ -305,6 +326,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             for (LValue elem : tt.elements()) {
                 emitDelete(elem);
             }
+        } else if (target instanceof LValue.StarTarget) {
+            throw new CompileError("cannot use starred expression here");
         }
     }
 
@@ -530,43 +553,101 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return null;
     }
 
+    private static final class ParsedSignature {
+        final List<String> positional = new ArrayList<>();
+        int posonlyCount = 0;
+        final List<Jython3Parser.ExprContext> defaultExprs = new ArrayList<>();
+        String argsParam = null;
+        final List<String> kwonlyParams = new ArrayList<>();
+        final List<Jython3Parser.ExprContext> kwDefaultExprs = new ArrayList<>();
+        int kwDefaultNonNullCount = 0;
+        String kwargsParam = null;
+
+        static ParsedSignature parse(Jython3Parser.Param_listContext paramList) {
+            var sig = new ParsedSignature();
+            if (paramList == null) return sig;
+            var seenNames = new java.util.HashSet<String>();
+            boolean seenSlash = false;
+            boolean seenStar = false;
+            boolean seenKwargs = false;
+            boolean bareStar = false;
+
+            for (var item : paramList.param_item()) {
+                if (seenKwargs) {
+                    throw new CompileError("arguments cannot follow var-keyword argument");
+                }
+                if (item instanceof Jython3Parser.PosOnlySlashParamContext) {
+                    if (seenSlash) throw new CompileError("/ may appear only once");
+                    if (seenStar) throw new CompileError("/ must be ahead of *");
+                    if (sig.positional.isEmpty()) throw new CompileError("at least one argument must precede /");
+                    seenSlash = true;
+                    sig.posonlyCount = sig.positional.size();
+                } else if (item instanceof Jython3Parser.BareStarParamContext) {
+                    if (seenStar) throw new CompileError("star argument may appear only once");
+                    seenStar = true;
+                    bareStar = true;
+                } else if (item instanceof Jython3Parser.ArgsParamContext ap) {
+                    if (seenStar) throw new CompileError("var-positional argument may appear only once");
+                    String name = ap.ID().getText();
+                    if (!seenNames.add(name)) throw new CompileError("duplicate argument '" + name + "' in function definition");
+                    seenStar = true;
+                    sig.argsParam = name;
+                } else if (item instanceof Jython3Parser.KwargsParamContext kp) {
+                    String name = kp.ID().getText();
+                    if (!seenNames.add(name)) throw new CompileError("duplicate argument '" + name + "' in function definition");
+                    seenKwargs = true;
+                    sig.kwargsParam = name;
+                } else if (item instanceof Jython3Parser.SimpleParamContext sp) {
+                    String name = sp.ID().getText();
+                    if (!seenNames.add(name)) throw new CompileError("duplicate argument '" + name + "' in function definition");
+                    if (seenStar) {
+                        sig.kwonlyParams.add(name);
+                        sig.kwDefaultExprs.add(null);
+                    } else {
+                        if (!sig.defaultExprs.isEmpty()) {
+                            throw new CompileError("non-default argument follows default argument");
+                        }
+                        sig.positional.add(name);
+                    }
+                } else if (item instanceof Jython3Parser.DefaultParamContext dp) {
+                    String name = dp.ID().getText();
+                    if (!seenNames.add(name)) throw new CompileError("duplicate argument '" + name + "' in function definition");
+                    if (seenStar) {
+                        sig.kwonlyParams.add(name);
+                        sig.kwDefaultExprs.add(dp.expr());
+                        sig.kwDefaultNonNullCount++;
+                    } else {
+                        sig.positional.add(name);
+                        sig.defaultExprs.add(dp.expr());
+                    }
+                }
+            }
+            if (bareStar && sig.kwonlyParams.isEmpty()) {
+                throw new CompileError("named arguments must follow bare *");
+            }
+            return sig;
+        }
+
+        org.example.jython3.runtime.PyObject[] buildProtoKwDefaults() {
+            var arr = new org.example.jython3.runtime.PyObject[kwonlyParams.size()];
+            for (int i = 0; i < kwonlyParams.size(); i++) {
+                arr[i] = kwDefaultExprs.get(i) != null ? org.example.jython3.runtime.PyNull.INSTANCE : null;
+            }
+            return arr;
+        }
+    }
+
     private void compileFunctionDef(String fnName,
                                      String storeName,
                                      Jython3Parser.Param_listContext paramList,
                                      Jython3Parser.SuiteContext suite,
                                      boolean isAsync) {
-        // ── 1. Parse parameter list ──────────────────────────────────────────
-        var positional   = new ArrayList<String>();  // plain and default params
-        var defaultExprs = new ArrayList<Jython3Parser.ExprContext>();  // default value exprs
-        String argsParam   = null;  // *args name
-        String kwargsParam = null;  // **kwargs name
-
-        if (paramList != null) {
-            for (var item : paramList.param_item()) {
-                if (item instanceof Jython3Parser.SimpleParamContext sp) {
-                    if (!defaultExprs.isEmpty())
-                        throw new CompileError("non-default argument follows default argument");
-                    positional.add(sp.ID().getText());
-                } else if (item instanceof Jython3Parser.DefaultParamContext dp) {
-                    positional.add(dp.ID().getText());
-                    defaultExprs.add(dp.expr());
-                } else if (item instanceof Jython3Parser.ArgsParamContext ap) {
-                    argsParam = ap.ID().getText();
-                } else if (item instanceof Jython3Parser.KwargsParamContext kp) {
-                    kwargsParam = kp.ID().getText();
-                }
-            }
-        }
-
-        // ── 2. Build the function prototype WITHOUT defaults baked in ────────
-        // Defaults are evaluated at definition time (outer scope), so we
-        // push them onto the stack now, before MAKE_FUNCTION_DEFAULTS.
-        int nDefaults = defaultExprs.size();
-        boolean hasArgs   = argsParam != null;
-        boolean hasKwargs = kwargsParam != null;
+        ParsedSignature sig = ParsedSignature.parse(paramList);
+        int totalDefaults = sig.defaultExprs.size() + sig.kwDefaultNonNullCount;
+        boolean hasArgs   = sig.argsParam != null;
+        boolean hasKwargs = sig.kwargsParam != null;
         int flags = (hasArgs ? 1 : 0) | (hasKwargs ? 2 : 0);
 
-        // ── 3. Compile the function body ─────────────────────────────────────
         var fb = new CodeBuilder();
         var fv = new CompileVisitor(fb, true, isAsync);
         fv.visit(suite);
@@ -574,28 +655,25 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         fb.emit(OpCode.RETURN_VALUE);
         fb.emit(OpCode.HALT);
 
-        // ── 4. Emit: load prototype → push defaults → MAKE_FUNCTION_DEFAULTS ──
-        // Build a prototype PyFunction that holds params/argsParam/kwargsParam/code.
-        // Defaults are attached by the VM when it processes MAKE_FUNCTION_DEFAULTS.
         CompiledCode fnCode = fb.build()
-                .withFunctionLocals(positional, argsParam, kwargsParam);
+                .withFunctionLocals(sig.positional, sig.kwonlyParams, sig.argsParam, sig.kwargsParam);
         if (!isAsync) {
-            fnCode = fnCode.optimizeSlots(positional, argsParam, kwargsParam);
+            fnCode = fnCode.optimizeSlots(sig.positional, sig.kwonlyParams, sig.argsParam, sig.kwargsParam);
         }
         b.emit(OpCode.LOAD_CONST,
-               new PyFunction(fnName, positional, new org.example.jython3.runtime.PyObject[0],
-                              argsParam, kwargsParam, fnCode, null, isAsync));
+               new PyFunction(fnName, sig.positional, sig.posonlyCount,
+                              new org.example.jython3.runtime.PyObject[0],
+                              sig.argsParam, sig.kwonlyParams, sig.buildProtoKwDefaults(),
+                              sig.kwargsParam, fnCode, null, isAsync));
 
-        if (nDefaults == 0 && !hasArgs && !hasKwargs) {
-            // Fast path: simple function, no advanced signature features
+        if (totalDefaults == 0 && !hasArgs && !hasKwargs) {
             b.emit(OpCode.MAKE_FUNCTION, storeName);
         } else {
-            // Evaluate each default value expression in the enclosing scope
-            for (var dExpr : defaultExprs) visit(dExpr);
-            // Encode: (nDefaults << 2) | flags
-            b.emitRaw(OpCode.MAKE_FUNCTION_DEFAULTS, (nDefaults << 2) | flags);
-            // MAKE_FUNCTION_DEFAULTS also captures closure & stores under name;
-            // but we still need to emit the name so the VM knows where to store it.
+            for (var dExpr : sig.defaultExprs) visit(dExpr);
+            for (var kwExpr : sig.kwDefaultExprs) {
+                if (kwExpr != null) visit(kwExpr);
+            }
+            b.emitRaw(OpCode.MAKE_FUNCTION_DEFAULTS, (totalDefaults << 2) | flags);
             b.emit(OpCode.MAKE_FUNCTION, storeName);
         }
     }
@@ -1774,43 +1852,30 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     /** Compile a lambda expression into an anonymous PyFunction. */
     private void compileLambda(Jython3Parser.Param_listContext paramList,
                                Jython3Parser.ExprContext bodyExpr) {
-        // Parse parameters (same as func_def)
-        var positional   = new ArrayList<String>();
-        var defaultExprs = new ArrayList<Jython3Parser.ExprContext>();
-        String argsParam   = null;
-        String kwargsParam = null;
-        if (paramList != null) {
-            for (var item : paramList.param_item()) {
-                if (item instanceof Jython3Parser.SimpleParamContext sp) {
-                    positional.add(sp.ID().getText());
-                } else if (item instanceof Jython3Parser.DefaultParamContext dp) {
-                    positional.add(dp.ID().getText());
-                    defaultExprs.add(dp.expr());
-                } else if (item instanceof Jython3Parser.ArgsParamContext ap) {
-                    argsParam = ap.ID().getText();
-                } else if (item instanceof Jython3Parser.KwargsParamContext kp) {
-                    kwargsParam = kp.ID().getText();
-                }
-            }
-        }
-        int nDefaults = defaultExprs.size();
-        boolean hasArgs   = argsParam != null;
-        boolean hasKwargs = kwargsParam != null;
-        // Compile body: single expression, return its value
+        ParsedSignature sig = ParsedSignature.parse(paramList);
+        int totalDefaults = sig.defaultExprs.size() + sig.kwDefaultNonNullCount;
+        boolean hasArgs   = sig.argsParam != null;
+        boolean hasKwargs = sig.kwargsParam != null;
+
         var fb = new CodeBuilder();
         var fv = new CompileVisitor(fb, true);
         fv.visit(bodyExpr);
         fb.emit(OpCode.RETURN_VALUE);
         fb.emit(OpCode.HALT);
+        CompiledCode fnCode = fb.build()
+                .withFunctionLocals(sig.positional, sig.kwonlyParams, sig.argsParam, sig.kwargsParam);
         b.emit(OpCode.LOAD_CONST,
-               new PyFunction("<lambda>", positional, new org.example.jython3.runtime.PyObject[0],
-                              argsParam, kwargsParam, fb.build(), null));
-        if (nDefaults > 0 || hasArgs || hasKwargs) {
-            for (var dExpr : defaultExprs) visit(dExpr);
-            b.emitRaw(OpCode.MAKE_FUNCTION_DEFAULTS, (nDefaults << 2) | ((hasArgs ? 1 : 0) | (hasKwargs ? 2 : 0)));
-            // MAKE_FUNCTION_DEFAULTS enriches the prototype and pushes it back onto the stack!
+               new PyFunction("<lambda>", sig.positional, sig.posonlyCount,
+                              new org.example.jython3.runtime.PyObject[0],
+                              sig.argsParam, sig.kwonlyParams, sig.buildProtoKwDefaults(),
+                              sig.kwargsParam, fnCode, null, false));
+        if (totalDefaults > 0 || hasArgs || hasKwargs) {
+            for (var dExpr : sig.defaultExprs) visit(dExpr);
+            for (var kwExpr : sig.kwDefaultExprs) {
+                if (kwExpr != null) visit(kwExpr);
+            }
+            b.emitRaw(OpCode.MAKE_FUNCTION_DEFAULTS, (totalDefaults << 2) | ((hasArgs ? 1 : 0) | (hasKwargs ? 2 : 0)));
         }
-        // The lambda PyFunction remains on top of stack as an expression value.
     }
 
     // ── ternary / conditional expression ─────────────────────────────────

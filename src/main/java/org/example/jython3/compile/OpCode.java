@@ -84,7 +84,9 @@ public enum OpCode {
     // ── PEP 492 coroutines (async/await)
     GET_AWAITABLE(97),      // pops expr, validates coroutine/__await__, pushes awaitable iterator
     AWAIT_FROM(98),         // arg: donePc; like YIELD_FROM but accepts PyCoroutine + iterators
-    GET_AITER(99);          // pops obj, calls __aiter__(), pushes async iterator
+    GET_AITER(99),          // pops obj, calls __aiter__(), pushes async iterator
+    // ── PEP 3132 extended unpacking
+    UNPACK_EX(100);         // arg: (after << 8) | before; pops iterable, pushes before + list + after
 
     private final int code;
 

@@ -2094,32 +2094,38 @@ public class Jython3Interpreter implements AutoCloseable {
 
                 // ── Functions & Classes ──
                 case MAKE_FUNCTION_DEFAULTS -> {
-                    // Encoding: arg = (nDefaults << 2) | flags
-                    // flags: bit0=hasArgs, bit1=hasKwargs
-                    // Stack after LOAD_CONST(prototype): [prototype, def0, def1, ...defN-1]
-                    // MAKE_FUNCTION follows immediately after and stores the enriched fn.
                     int encoded   = ai;
-                    int nDefaults = encoded >> 2;
-                    boolean hasArgs   = (encoded & 1) != 0;
-                    boolean hasKwargs = (encoded & 2) != 0;
+                    int totalDefaults = encoded >> 2;
 
-                    // Pop defaults off stack (pushed in order: first default on bottom)
-                    var defaults = new PyObject[nDefaults];
-                    for (int i = nDefaults - 1; i >= 0; i--) defaults[i] = stack.pop();
+                    var allDefaults = new PyObject[totalDefaults];
+                    for (int i = totalDefaults - 1; i >= 0; i--) allDefaults[i] = stack.pop();
 
-                    // The prototype PyFunction is next on stack
                     PyObject protoObj = stack.pop();
                     if (!(protoObj instanceof PyFunction proto)) {
                         throw PyErrors.error("SystemError", "MAKE_FUNCTION_DEFAULTS: expected PyFunction prototype on stack");
                     }
-                    // Build enriched PyFunction with the evaluated defaults
+                    PyObject[] protoKw = proto.kwDefaults();
+                    int kwDefaultCount = 0;
+                    for (PyObject v : protoKw) {
+                        if (v != null) kwDefaultCount++;
+                    }
+                    int posDefaultCount = Math.max(0, totalDefaults - kwDefaultCount);
+                    var posDefaults = new PyObject[posDefaultCount];
+                    System.arraycopy(allDefaults, 0, posDefaults, 0, posDefaultCount);
+
+                    var kwDefaults = new PyObject[protoKw.length];
+                    int kwCursor = posDefaultCount;
+                    for (int i = 0; i < protoKw.length; i++) {
+                        if (protoKw[i] != null && kwCursor < totalDefaults) {
+                            kwDefaults[i] = allDefaults[kwCursor++];
+                        }
+                    }
+
                     var enriched = new PyFunction(
-                            proto.name(), proto.params(), defaults,
-                            proto.argsParam(), proto.kwargsParam(),
+                            proto.name(), proto.params(), proto.posonlyCount(), posDefaults,
+                            proto.argsParam(), proto.kwonlyParams(), kwDefaults, proto.kwargsParam(),
                             proto.code(), proto.closure(), proto.isAsync());
                     stack.push(enriched);
-                    // Note: the following MAKE_FUNCTION instruction will capture
-                    // closure and store the function — we fall through to it.
                 }
                 case MAKE_FUNCTION -> {
                     String funcName = (String) pool[ai];
@@ -2381,6 +2387,7 @@ public class Jython3Interpreter implements AutoCloseable {
                             && !fn.isAsync()
                             && fn.defaults().length == 0
                             && fn.argsParam() == null && fn.kwargsParam() == null
+                            && fn.kwonlyParams().isEmpty()
                             && argc == fn.params().size() && !containsYield(fn.code())) {
                         if (callDepth() >= MAX_CALL_DEPTH) {
                             throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -2439,6 +2446,7 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (!fn.isAsync()
                                 && fn.defaults().length == 0
                                 && fn.argsParam() == null && fn.kwargsParam() == null
+                                && fn.kwonlyParams().isEmpty()
                                 && argc + 1 == fn.params().size() && !containsYield(fn.code())) {
                             if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
@@ -2515,6 +2523,7 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (initObj instanceof PyFunction initFn
                                 && initFn.defaults().length == 0
                                 && initFn.argsParam() == null && initFn.kwargsParam() == null
+                                && initFn.kwonlyParams().isEmpty()
                                 && argc + 1 == initFn.params().size() && !containsYield(initFn.code())) {
                             CompiledCode fnCode = initFn.code();
                             int slots = fnCode.slotCount();
@@ -3370,31 +3379,36 @@ public class Jython3Interpreter implements AutoCloseable {
                     return null;
                 }
 
-                // ── Sequence unpacking: a, b = iterable ──────────────────
+                // ── Sequence unpacking: a, b = iterable / a, *mid, b = iterable ──
                 case UNPACK_SEQUENCE -> {
                     int count = ai;
                     PyObject seq = stack.pop();
-                    // Collect elements from any iterable into a fixed-size list
-                    var elems = new java.util.ArrayList<PyObject>(count);
-                    if (seq instanceof PyList pl) {
-                        for (var e : pl.items()) elems.add(e);
-                    } else if (seq instanceof PyTuple pt) {
-                        for (var e : pt.items()) elems.add(e);
-                    } else if (seq instanceof PyStr s) {
-                        for (var e : s.toCodePointList()) elems.add(e);
-                    } else if (seq instanceof PyIterator it) {
-                        while (it.hasNext()) elems.add(it.next());
-                    } else {
-                        throw PyErrors.error("TypeError",
-                                "cannot unpack non-iterable " + typeName(seq) + " object");
-                    }
+                    java.util.List<PyObject> elems = BuiltinFunctions.collectIterable(seq, javaAccessPolicy);
                     if (elems.size() != count) {
                         throw PyErrors.error("ValueError",
-                                "not enough values to unpack (expected " + count +
-                                ", got " + elems.size() + ")");
+                                elems.size() < count
+                                        ? "not enough values to unpack (expected " + count + ", got " + elems.size() + ")"
+                                        : "too many values to unpack (expected " + count + ")");
                     }
-                    // Push in reverse order so first element is on top
                     for (int i = count - 1; i >= 0; i--) stack.push(elems.get(i));
+                }
+                case UNPACK_EX -> {
+                    int before = ai & 0xFF;
+                    int after = (ai >>> 8) & 0xFF;
+                    PyObject seq = stack.pop();
+                    java.util.List<PyObject> elems = BuiltinFunctions.collectIterable(seq, javaAccessPolicy);
+                    int minNeeded = before + after;
+                    if (elems.size() < minNeeded) {
+                        throw PyErrors.error("ValueError",
+                                "not enough values to unpack (expected at least " + minNeeded + ", got " + elems.size() + ")");
+                    }
+                    for (int i = elems.size() - 1; i >= elems.size() - after; i--) {
+                        stack.push(elems.get(i));
+                    }
+                    stack.push(new PyList(new ArrayList<>(elems.subList(before, elems.size() - after))));
+                    for (int i = before - 1; i >= 0; i--) {
+                        stack.push(elems.get(i));
+                    }
                 }
 
                 // ── global / nonlocal declarations ───────────────────────
@@ -3822,36 +3836,35 @@ public class Jython3Interpreter implements AutoCloseable {
                                            PyObject[] posArgs,
                                            String[] kwNames,
                                            PyObject[] kwValues) {
-        List<String> params     = fn.params();
-        PyObject[]   defaults   = fn.defaults();
-        String       argsParam  = fn.argsParam();
-        String       kwargsParam = fn.kwargsParam();
+        List<String> params       = fn.params();
+        int          posonlyCount = fn.posonlyCount();
+        PyObject[]   defaults     = fn.defaults();
+        String       argsParam    = fn.argsParam();
+        List<String> kwonlyParams = fn.kwonlyParams();
+        PyObject[]   kwDefaults   = fn.kwDefaults();
+        String       kwargsParam  = fn.kwargsParam();
         int nParams   = params.size();
         int nDefaults = defaults.length;
-        int nPos = posArgs.length;
+        int nPos      = posArgs.length;
 
-        int totalExpected = (fn.closure() != null ? fn.closure().size() : 0) + nParams + 4;
+        int totalExpected = (fn.closure() != null ? fn.closure().size() : 0) + nParams + kwonlyParams.size() + 4;
         Map<String, PyObject> fl = (totalExpected <= 12) ? borrowLocals()
                 : new HashMap<>(Math.max(8, (int)(totalExpected / 0.75f) + 1));
-        // 1. Seed with closure
         if (fn.closure() != null) fl.putAll(fn.closure());
 
-        // Fast path: pure positional call matching parameter count with no kwargs or varargs
-        if (kwNames == null && nPos == nParams && nDefaults == 0 && argsParam == null && kwargsParam == null) {
+        if (kwNames == null && nPos == nParams && nDefaults == 0
+                && argsParam == null && kwargsParam == null && kwonlyParams.isEmpty()) {
             for (int i = 0; i < nParams; i++) {
                 fl.put(params.get(i), posArgs[i]);
             }
             return fl;
         }
 
-        // Index at which defaults start (right-aligned)
         int defaultStart = nParams - nDefaults;
 
-        // 2. Assign positional args to params
         int nFill = Math.min(nPos, nParams);
         for (int i = 0; i < nFill; i++) fl.put(params.get(i), posArgs[i]);
 
-        // 3. Collect extra positionals into *args tuple (or error)
         if (nPos > nParams) {
             if (argsParam != null) {
                 var extra = new ArrayList<PyObject>(nPos - nParams);
@@ -3864,15 +3877,30 @@ public class Jython3Interpreter implements AutoCloseable {
                     (nPos == 1 ? "was" : "were") + " given");
             }
         } else if (argsParam != null) {
-            fl.put(argsParam, PyTuple.EMPTY);  // *args receives empty tuple
+            fl.put(argsParam, PyTuple.EMPTY);
         }
 
-        // 4. Assign keyword args by name
         var extraKw = new LinkedHashMap<PyObject, PyObject>();
         if (kwNames != null) {
             for (int i = 0; i < kwNames.length; i++) {
                 String kwName = kwNames[i];
-                if (params.contains(kwName)) {
+                int posIdx = params.indexOf(kwName);
+                if (posIdx >= 0) {
+                    if (posIdx < posonlyCount) {
+                        if (kwargsParam != null) {
+                            extraKw.put(new PyStr(kwName), kwValues[i]);
+                        } else {
+                            throw PyErrors.error("TypeError",
+                                fn.name() + "() got some positional-only arguments passed as keyword arguments: '" + kwName + "'");
+                        }
+                    } else {
+                        if (fl.containsKey(kwName)) {
+                            throw PyErrors.error("TypeError",
+                                fn.name() + "() got multiple values for argument '" + kwName + "'");
+                        }
+                        fl.put(kwName, kwValues[i]);
+                    }
+                } else if (kwonlyParams.contains(kwName)) {
                     if (fl.containsKey(kwName)) {
                         throw PyErrors.error("TypeError",
                             fn.name() + "() got multiple values for argument '" + kwName + "'");
@@ -3890,7 +3918,6 @@ public class Jython3Interpreter implements AutoCloseable {
             fl.put(kwargsParam, new PyDict(extraKw));
         }
 
-        // 5. Fill remaining params with defaults (right-aligned)
         for (int i = nFill; i < nParams; i++) {
             if (!fl.containsKey(params.get(i))) {
                 int di = i - defaultStart;
@@ -3899,6 +3926,18 @@ public class Jython3Interpreter implements AutoCloseable {
                 } else {
                     throw PyErrors.error("TypeError",
                         fn.name() + "() missing required positional argument: '" + params.get(i) + "'");
+                }
+            }
+        }
+
+        for (int i = 0; i < kwonlyParams.size(); i++) {
+            String kwName = kwonlyParams.get(i);
+            if (!fl.containsKey(kwName)) {
+                if (i < kwDefaults.length && kwDefaults[i] != null) {
+                    fl.put(kwName, kwDefaults[i]);
+                } else {
+                    throw PyErrors.error("TypeError",
+                        fn.name() + "() missing 1 required keyword-only argument: '" + kwName + "'");
                 }
             }
         }

@@ -68,10 +68,16 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
      * all parameters and assignment/deletion targets not declared {@code global} or {@code nonlocal}.
      */
     public CompiledCode withFunctionLocals(List<String> params, String argsParam, String kwargsParam) {
+        return withFunctionLocals(params, List.of(), argsParam, kwargsParam);
+    }
+
+    public CompiledCode withFunctionLocals(List<String> params, List<String> kwonlyParams,
+                                           String argsParam, String kwargsParam) {
         if (bytecode == null || constPool == null) return this;
         Set<String> declaredExternal = new HashSet<>();
         Set<String> locals = new HashSet<>();
         if (params != null) locals.addAll(params);
+        if (kwonlyParams != null) locals.addAll(kwonlyParams);
         if (argsParam != null) locals.add(argsParam);
         if (kwargsParam != null) locals.add(kwargsParam);
 
@@ -104,6 +110,11 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
      * scope inspection ({@code vars}/{@code dir}/{@code locals}).
      */
     public CompiledCode optimizeSlots(List<String> params, String argsParam, String kwargsParam) {
+        return optimizeSlots(params, List.of(), argsParam, kwargsParam);
+    }
+
+    public CompiledCode optimizeSlots(List<String> params, List<String> kwonlyParams,
+                                      String argsParam, String kwargsParam) {
         if (hasYield || bytecode == null || constPool == null) return this;
         int opMakeFn = OpCode.MAKE_FUNCTION.code();
         int opMakeFnDef = OpCode.MAKE_FUNCTION_DEFAULTS.code();
@@ -142,6 +153,11 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
         List<String> orderedNames = new ArrayList<>();
         if (params != null) {
             for (String p : params) {
+                if (slotMap.putIfAbsent(p, orderedNames.size()) == null) orderedNames.add(p);
+            }
+        }
+        if (kwonlyParams != null) {
+            for (String p : kwonlyParams) {
                 if (slotMap.putIfAbsent(p, orderedNames.size()) == null) orderedNames.add(p);
             }
         }

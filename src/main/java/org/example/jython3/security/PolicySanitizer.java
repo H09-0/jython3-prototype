@@ -176,8 +176,15 @@ public final class PolicySanitizer {
             return coro;
         }
         if (val instanceof PyFunction fn) {
-            var res = new PyFunction(fn.name(), fn.params(), fn.defaults(),
-                    fn.argsParam(), fn.kwargsParam(), fn.code(), new HashMap<>(), fn.isAsync());
+            PyObject[] safeKwDefaults = fn.kwDefaults().clone();
+            for (int i = 0; i < safeKwDefaults.length; i++) {
+                if (safeKwDefaults[i] != null) {
+                    safeKwDefaults[i] = sanitize(safeKwDefaults[i], policy, targetSession, visited);
+                }
+            }
+            var res = new PyFunction(fn.name(), fn.params(), fn.posonlyCount(), fn.defaults(),
+                    fn.argsParam(), fn.kwonlyParams(), safeKwDefaults, fn.kwargsParam(),
+                    fn.code(), new HashMap<>(), fn.isAsync());
             visited.put(val, res);
             for (var entry : fn.closure().entrySet()) {
                 res.closure().put(entry.getKey(), sanitize(entry.getValue(), policy, targetSession, visited));

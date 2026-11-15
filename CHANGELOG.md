@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.14.2-beta] - 2026-11-15
+### Added
+- **PEP 3102 Keyword-Only Arguments, PEP 570 Positional-Only Parameters, and PEP 3132 Starred Unpacking (`Jython3.g4`, `OpCode`, `LValue`, `CompileVisitor`, `PyFunction`, `CompiledCode`, `PolicySanitizer`, `Jython3Interpreter`)**:
+  - Added full grammar, compile-time validation (`SyntaxError`), and runtime `bindArgs` support for positional-only `/` (`posonlyCount`), bare `*`, `*args, kw`, required & defaulted keyword-only parameters (`kwonlyParams`, `kwDefaults`) across both `def`/`async def` and `lambda`.
+  - Added `OpCode.UNPACK_EX(100)`, `LValue.StarTarget`, and `BytecodeValidator`/`BytecodeDisassembler` support for extended starred iterable unpacking (`a, *mid, b = seq`, `*head, tail = seq`, `for a, *rest in rows:`) bounded by `ExecutionLimits.maxCollectionSize`.
+
 ## [v0.14.1-beta] - 2026-11-15
 ### Security Audit, Language Fixes & Modular Test Architecture
 - **Full International-Standards Security Audit & Hardening (OWASP Top 10:2025, MITRE CWE, SEI CERT Java, OpenSSF Python)**:

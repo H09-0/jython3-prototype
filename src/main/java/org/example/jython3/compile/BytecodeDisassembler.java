@@ -75,6 +75,11 @@ public final class BytecodeDisassembler {
             case JUMP, JUMP_IF_FALSE, JUMP_IF_TRUE_OR_POP, JUMP_IF_FALSE_OR_POP,
                  FOR_ITER, PUSH_EXCEPT_HANDLER -> "-> " + ai;
             case YIELD_FROM, AWAIT_FROM -> "(delegate, done -> " + ai + ")";
+            case UNPACK_EX -> {
+                int before = ai & 0xFF;
+                int after = (ai >>> 8) & 0xFF;
+                yield "(before=" + before + ", after=" + after + ")";
+            }
             case YIELD_VALUE -> "(suspend, resume -> " + (pc + 1) + ")";
             case CALL_FUNCTION, CALL_FUNCTION_EX, BUILD_LIST, BUILD_DICT, BUILD_TUPLE,
                  BUILD_SET, BUILD_SLICE, UNPACK_SEQUENCE, MAKE_FUNCTION_DEFAULTS,

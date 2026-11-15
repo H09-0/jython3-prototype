@@ -77,7 +77,8 @@ target_list
     ;
 
 single_target
-    : expr LBRACK slice_item RBRACK    # TargetSubscript
+    : MUL single_target                # TargetStar
+    | expr LBRACK slice_item RBRACK    # TargetSubscript
     | expr DOT ID                      # TargetAttr
     | LPAREN target_list RPAREN        # TargetParenTuple
     | LBRACK target_list RBRACK        # TargetListTuple
@@ -285,6 +286,8 @@ param_list
 param_item
     : POWER ID       # KwargsParam
     | MUL ID         # ArgsParam
+    | MUL            # BareStarParam
+    | DIV            # PosOnlySlashParam
     | ID ASSIGN expr # DefaultParam
     | ID             # SimpleParam
     ;

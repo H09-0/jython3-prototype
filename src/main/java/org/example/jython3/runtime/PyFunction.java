@@ -8,34 +8,25 @@ import java.util.Map;
 import org.example.jython3.compile.CompiledCode;
 
 /**
- * Python function object.
- *
- * <p>Stores the full CPython-compatible call signature:
- * <ul>
- *   <li>{@code params}    – ordered list of positional/default parameter names (excluding
- *       {@code *args} and {@code **kwargs}).</li>
- *   <li>{@code defaults}  – evaluated default values for the LAST {@code defaults.length}
- *       params.  Empty array when no defaults are declared.</li>
- *   <li>{@code argsParam} – name bound to the {@code *args} tuple, or {@code null}.</li>
- *   <li>{@code kwargsParam} – name bound to the {@code **kwargs} dict, or {@code null}.</li>
- * </ul>
- *
- * <p>Argument binding follows CPython semantics (PEP 3102):
- * positional args fill {@code params} from left; keyword args fill remaining
- * slots by name; leftover positionals go to {@code *argsParam}; leftover
- * keywords go to {@code **kwargsParam}; defaults fill any unfilled trailing
- * slots.
+ * Python function object supporting PEP 570 positional-only parameters ({@code /}),
+ * positional-or-keyword parameters, defaults, {@code *args}, PEP 3102 keyword-only
+ * parameters with optional defaults, and {@code **kwargs}.
  */
 public final class PyFunction implements PyObject {
 
     private final String name;
-    /** Positional/default param names; excludes *args and **kwargs. */
+    /** Positional (posonly + pos-or-kw) param names; excludes *args, kwonly, and **kwargs. */
     private final List<String> params;
-    /** Default values for the last params.size() - (params.size()-defaults.length) params.
-     *  Invariant: defaults.length <= params.size(). */
+    /** Number of leading parameters in {@code params} that are positional-only (PEP 570). */
+    private final int posonlyCount;
+    /** Default values for the last {@code defaults.length} positional params. */
     private final PyObject[] defaults;
     /** Name for *args parameter, null if not declared. */
     private final String argsParam;
+    /** PEP 3102 keyword-only parameter names (in declaration order). */
+    private final List<String> kwonlyParams;
+    /** Parallel to {@code kwonlyParams}: default value or {@code null} when required. */
+    private final PyObject[] kwDefaults;
     /** Name for **kwargs parameter, null if not declared. */
     private final String kwargsParam;
     private final CompiledCode code;
@@ -43,18 +34,15 @@ public final class PyFunction implements PyObject {
     private final boolean isAsync;
     private Map<String, PyObject> attrs;
 
-    /** Simple constructor — no defaults, no *args/**kwargs (backward-compat). */
     public PyFunction(String name, List<String> params, CompiledCode code) {
-        this(name, params, new PyObject[0], null, null, code, null, false);
+        this(name, params, 0, new PyObject[0], null, List.of(), new PyObject[0], null, code, null, false);
     }
 
-    /** Constructor with closure — no defaults, no *args/**kwargs (backward-compat). */
     public PyFunction(String name, List<String> params, CompiledCode code,
                       Map<String, PyObject> closure) {
-        this(name, params, new PyObject[0], null, null, code, closure, false);
+        this(name, params, 0, new PyObject[0], null, List.of(), new PyObject[0], null, code, closure, false);
     }
 
-    /** Full constructor used by MAKE_FUNCTION_DEFAULTS. */
     public PyFunction(String name,
                       List<String> params,
                       PyObject[] defaults,
@@ -62,7 +50,7 @@ public final class PyFunction implements PyObject {
                       String kwargsParam,
                       CompiledCode code,
                       Map<String, PyObject> closure) {
-        this(name, params, defaults, argsParam, kwargsParam, code, closure, false);
+        this(name, params, 0, defaults, argsParam, List.of(), new PyObject[0], kwargsParam, code, closure, false);
     }
 
     public PyFunction(String name,
@@ -73,24 +61,44 @@ public final class PyFunction implements PyObject {
                       CompiledCode code,
                       Map<String, PyObject> closure,
                       boolean isAsync) {
+        this(name, params, 0, defaults, argsParam, List.of(), new PyObject[0], kwargsParam, code, closure, isAsync);
+    }
+
+    public PyFunction(String name,
+                      List<String> params,
+                      int posonlyCount,
+                      PyObject[] defaults,
+                      String argsParam,
+                      List<String> kwonlyParams,
+                      PyObject[] kwDefaults,
+                      String kwargsParam,
+                      CompiledCode code,
+                      Map<String, PyObject> closure,
+                      boolean isAsync) {
         this.name = name;
         this.params = List.copyOf(params);
+        this.posonlyCount = Math.max(0, Math.min(posonlyCount, this.params.size()));
         this.defaults = defaults == null ? new PyObject[0] : defaults.clone();
         this.argsParam = argsParam;
+        this.kwonlyParams = kwonlyParams == null ? List.of() : List.copyOf(kwonlyParams);
+        this.kwDefaults = kwDefaults == null ? new PyObject[0] : kwDefaults.clone();
         this.kwargsParam = kwargsParam;
         this.code = code;
         this.closure = closure == null ? new HashMap<>() : new HashMap<>(closure);
         this.isAsync = isAsync;
     }
 
-    public String name()          { return name; }
-    public List<String> params()  { return params; }
-    public PyObject[] defaults()  { return defaults; }
-    public String argsParam()     { return argsParam; }
-    public String kwargsParam()   { return kwargsParam; }
-    public CompiledCode code()    { return code; }
+    public String name()               { return name; }
+    public List<String> params()       { return params; }
+    public int posonlyCount()          { return posonlyCount; }
+    public PyObject[] defaults()       { return defaults; }
+    public String argsParam()          { return argsParam; }
+    public List<String> kwonlyParams() { return kwonlyParams; }
+    public PyObject[] kwDefaults()     { return kwDefaults; }
+    public String kwargsParam()        { return kwargsParam; }
+    public CompiledCode code()         { return code; }
     public Map<String, PyObject> closure() { return closure; }
-    public boolean isAsync()      { return isAsync; }
+    public boolean isAsync()           { return isAsync; }
 
     public PyObject getExtraAttr(String key) {
         return attrs != null ? attrs.get(key) : null;
@@ -107,7 +115,8 @@ public final class PyFunction implements PyObject {
 
     /** True if this function uses any advanced signature feature. */
     public boolean hasAdvancedSignature() {
-        return defaults.length > 0 || argsParam != null || kwargsParam != null;
+        return defaults.length > 0 || argsParam != null || kwargsParam != null
+                || posonlyCount > 0 || !kwonlyParams.isEmpty();
     }
 
     @Override public String toString() { return "<function " + name + ">"; }

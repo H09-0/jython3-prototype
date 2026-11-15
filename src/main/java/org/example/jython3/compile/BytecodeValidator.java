@@ -230,6 +230,11 @@ public final class BytecodeValidator {
             case LIST_COMP_INIT, SET_COMP_INIT -> new int[]{0, 1};
             case LIST_COMP_APPEND, SET_COMP_ADD, LIST_EXTEND, DICT_MERGE -> new int[]{2, -1};
             case UNPACK_SEQUENCE -> new int[]{1, ai - 1};
+            case UNPACK_EX -> {
+                int before = ai & 0xFF;
+                int after = (ai >>> 8) & 0xFF;
+                yield new int[]{1, before + after};
+            }
             case ASSERT -> new int[]{ai == 1 ? 1 : 0, ai == 1 ? -1 : 0};
             case IMPORT_MODULE -> new int[]{0, 0};
             case MAKE_FUNCTION -> new int[]{1, -1};

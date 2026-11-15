@@ -48,15 +48,22 @@ class CoreLanguageAndExecutionModelTest {
             st = {x % 3 for x in range(7)}
             print(sorted(d.items()), sorted(st))
 
-            # Unpacking and single-eval augmented assignment
+            # Unpacking, PEP 3132 starred unpacking, and single-eval augmented assignment
             a, (b1, b2) = [10, (20, 30)]
+            first, *mid, last = range(6)
+            *head, tail = "abcd"
+            only_star, = (99,)
+            *only_list, = range(3)
+            rows = []
+            for p, *rest in [(1, 2, 3), (4,)]:
+                rows.append((p, rest))
             hits = []
             def idx():
                 hits.append(1)
                 return 0
             arr = [5]
             arr[idx()] += 7
-            print(a, b1, b2, arr, len(hits))
+            print(a, b1, b2, first, mid, last, head, tail, only_star, only_list, rows, arr, len(hits))
             """;
         DifferentialHarness.assertMatchesCPython(code);
     }
@@ -66,7 +73,7 @@ class CoreLanguageAndExecutionModelTest {
     void functionsScopeAndExecutionModelMatchCPython() {
         String code = """
             g = 100
-            def outer(x, scale=2, *args, **kwargs):
+            def outer(x, *args, scale=2, **kwargs):
                 total = x
                 def inner(delta):
                     nonlocal total
@@ -76,7 +83,30 @@ class CoreLanguageAndExecutionModelTest {
                     return total
                 res = inner(5)
                 return (res, total, args, sorted(kwargs.items()), g)
-            print(outer(10, 3, 1, 2, k="v"))
+            print(outer(10, 1, 2, scale=3, k="v"))
+
+            # PEP 3102 keyword-only (*, ...) & PEP 570 positional-only (/) + lambda
+            def full_sig(a, b=10, /, c=20, *args, req_kw, opt_kw=99, **kwargs):
+                return (a, b, c, args, req_kw, opt_kw, sorted(kwargs.items()))
+            print(full_sig(1, 2, 3, 4, req_kw="R", a="extra-a"))
+            def kw_only(x, *, k1, k2=5):
+                return (x, k1, k2)
+            print(kw_only(7, k1=8))
+            fn_lam = lambda a, /, *, b=10: a + b
+            print(fn_lam(5, b=7), fn_lam(5))
+
+            try:
+                kw_only(1, 2)
+            except TypeError:
+                print("kw_only_pos_err: ok")
+            try:
+                kw_only(1)
+            except TypeError:
+                print("kw_only_missing_err: ok")
+            try:
+                (lambda a, /: a)(a=1)
+            except TypeError:
+                print("pos_only_kw_err: ok")
 
             # Call-site *args/**kwargs unpacking
             def fn(a, b, c=10, d=20):
@@ -181,6 +211,22 @@ class CoreLanguageAndExecutionModelTest {
             assertEquals("ZeroDivisionError", ie.typeName());
         } finally {
             ExceptionTypeRegistry.restore(prev);
+        }
+
+        // PEP 3102 / 570 / 3132 static compile-time SyntaxErrors
+        try (var py = Jython3Interpreter.restricted()) {
+            for (String bad : new String[]{
+                    "def f(/): pass",
+                    "def f(*): pass",
+                    "def f(*a, /): pass",
+                    "def f(**kw, a=1): pass",
+                    "def f(a, a): pass",
+                    "*a = [1, 2]",
+                    "a, *b, *c = [1, 2, 3]"
+            }) {
+                assertEquals("SyntaxError",
+                        assertThrows(InterpreterException.class, () -> py.eval(bad), bad).typeName());
+            }
         }
     }
 }
