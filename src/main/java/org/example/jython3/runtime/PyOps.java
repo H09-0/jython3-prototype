@@ -143,6 +143,25 @@ public final class PyOps {
         if (v instanceof PyFloat f) return f.value() != 0.0;
         if (v instanceof PyJavaObject jo) return jo.object() != null;
         if (v instanceof PyCell c) return c.isBound() && isTruthy(c.get());
+        if (v instanceof PyInstance inst) {
+            PyCaller caller = PyCaller.current();
+            if (caller != null) {
+                PyObject boolMember = inst.pyClass().lookupMember("__bool__");
+                if (boolMember != null) {
+                    PyObject res = caller.call(boolMember, new PyObject[]{inst});
+                    if (res instanceof PyBool b) return b.value();
+                    throw PyErrors.error("TypeError", "__bool__ should return bool, returned " + typeName(res));
+                }
+                PyObject lenMember = inst.pyClass().lookupMember("__len__");
+                if (lenMember != null) {
+                    PyObject res = caller.call(lenMember, new PyObject[]{inst});
+                    int len = toInt(res);
+                    if (len < 0) throw PyErrors.error("ValueError", "__len__() should return >= 0");
+                    return len != 0;
+                }
+            }
+            return true;
+        }
         return v != null;
     }
 
@@ -198,10 +217,31 @@ public final class PyOps {
         if (a instanceof PyBoundMethod ma && b instanceof PyBoundMethod mb) {
             return ma.instance() == mb.instance() && ma.fn() == mb.fn();
         }
+        if (a instanceof PyInstance || b instanceof PyInstance) {
+            PyCaller caller = PyCaller.current();
+            if (caller != null) {
+                if (a instanceof PyInstance ia) {
+                    PyObject eq = ia.pyClass().lookupMember("__eq__");
+                    if (eq != null) {
+                        PyObject res = caller.call(eq, new PyObject[]{ia, b});
+                        if (res != PyNotImplemented.INSTANCE) return isTruthy(res);
+                    }
+                }
+                if (b instanceof PyInstance ib) {
+                    PyObject eq = ib.pyClass().lookupMember("__eq__");
+                    if (eq != null) {
+                        PyObject res = caller.call(eq, new PyObject[]{ib, a});
+                        if (res != PyNotImplemented.INSTANCE) return isTruthy(res);
+                    }
+                }
+            }
+            return a == b;
+        }
         if (a instanceof PyClass || a instanceof PyException || a instanceof PyFunction
                 || a instanceof PyBuiltinFunction
-                || a instanceof PyInstance || a instanceof PyModule
+                || a instanceof PyModule
                 || a instanceof PyHostHandle
+                || a instanceof PyNotImplemented
                 || a instanceof PyTraceback || a instanceof PyFrameInfo || a instanceof PyCodeInfo) {
             return a == b;
         }
@@ -248,6 +288,36 @@ public final class PyOps {
         }
         if (isNumeric(a) && isNumeric(b)) return Double.compare(toDouble(a), toDouble(b));
         if (a instanceof PyStr as2 && b instanceof PyStr bs) return as2.value().compareTo(bs.value());
+        if (a instanceof PyInstance ia) {
+            PyCaller caller = PyCaller.current();
+            if (caller != null) {
+                PyObject lt = ia.pyClass().lookupMember("__lt__");
+                if (lt != null) {
+                    PyObject res = caller.call(lt, new PyObject[]{ia, b});
+                    if (res != PyNotImplemented.INSTANCE) {
+                        if (isTruthy(res)) return -1;
+                        PyObject gt = ia.pyClass().lookupMember("__gt__");
+                        if (gt != null) {
+                            PyObject gr = caller.call(gt, new PyObject[]{ia, b});
+                            if (gr != PyNotImplemented.INSTANCE && isTruthy(gr)) return 1;
+                        }
+                        return pyEquals(ia, b) ? 0 : 1;
+                    }
+                }
+            }
+        }
+        if (b instanceof PyInstance ib) {
+            PyCaller caller = PyCaller.current();
+            if (caller != null) {
+                PyObject gt = ib.pyClass().lookupMember("__gt__");
+                if (gt != null) {
+                    PyObject res = caller.call(gt, new PyObject[]{ib, a});
+                    if (res != PyNotImplemented.INSTANCE) {
+                        return isTruthy(res) ? -1 : (pyEquals(a, ib) ? 0 : 1);
+                    }
+                }
+            }
+        }
         throw PyErrors.error("TypeError", "'<' not supported between instances of '" + typeName(a) + "' and '" + typeName(b) + "'");
     }
 
@@ -310,6 +380,37 @@ public final class PyOps {
         if (container instanceof PyByteArray ba) {
             return ba.contains(item);
         }
+        if (container instanceof PyInstance inst) {
+            PyObject containsFn = inst.pyClass().lookupMember("__contains__");
+            if (containsFn != null) {
+                PyCaller caller = PyCaller.current();
+                if (caller != null) {
+                    return isTruthy(caller.call(containsFn, new PyObject[]{inst, item}));
+                }
+            }
+            PyObject iterFn = inst.pyClass().lookupMember("__iter__");
+            if (iterFn != null) {
+                PyCaller caller = PyCaller.current();
+                if (caller != null) {
+                    PyObject it = caller.call(iterFn, new PyObject[]{inst});
+                    PyObject nextFn = it instanceof PyInstance ii ? ii.pyClass().lookupMember("__next__") : null;
+                    if (it instanceof PyIterator pit) {
+                        while (pit.hasNext()) if (pyEquals(pit.next(), item)) return true;
+                        return false;
+                    }
+                    if (nextFn != null) {
+                        while (true) {
+                            try {
+                                if (pyEquals(caller.call(nextFn, new PyObject[]{it}), item)) return true;
+                            } catch (InterpreterException ie) {
+                                if ("StopIteration".equals(ie.typeName())) return false;
+                                throw ie;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if (container instanceof PyStr s && item instanceof PyStr sub) return s.value().contains(sub.value());
         if (container instanceof PyDict dict) return dict.containsKey(item);
         throw PyErrors.error("TypeError", "argument of type '" + typeName(container) + "' is not iterable");
@@ -346,6 +447,7 @@ public final class PyOps {
         if (o instanceof PySuper) return "super";
         if (o instanceof PySlice) return "slice";
         if (o instanceof PyCell c) return c.isBound() ? typeName(c.get()) : "cell";
+        if (o instanceof PyNotImplemented) return "NotImplementedType";
         if (o instanceof PyTraceback) return "traceback";
         if (o instanceof PyFrameInfo) return "frame";
         if (o instanceof PyCodeInfo) return "code";

@@ -41,6 +41,22 @@ public final class PyKey {
         if (obj instanceof PyBytes b) {
             return b.hashCode();
         }
+        if (obj instanceof PyInstance inst) {
+            PyObject hashFn = inst.pyClass().lookupMember("__hash__");
+            if (hashFn instanceof PyFunction || hashFn instanceof PyBuiltinFunction) {
+                PyCaller caller = PyCaller.current();
+                if (caller != null) {
+                    PyObject hv = caller.call(hashFn, new PyObject[]{inst});
+                    if (hv instanceof PyInt hi) return hi.value();
+                    if (hv instanceof PyBool hb) return hb.value() ? 1 : 0;
+                    if (hv instanceof BigInt bi) return bi.value().hashCode();
+                    throw PyErrors.error("TypeError", "__hash__ method should return an integer");
+                }
+            } else if (inst.pyClass().hasMember("__eq__") || hashFn instanceof PyNull) {
+                throw PyErrors.error("TypeError", "unhashable type: '" + inst.pyClass().name() + "'");
+            }
+            return System.identityHashCode(inst);
+        }
         if (obj instanceof PyFrozenSet fs) {
             return fs.hashCode();
         }

@@ -275,6 +275,8 @@ public final class BuiltinFunctions {
             return PyBool.of(isTruthy(args[0]));
         }));
 
+        define.accept("NotImplemented", org.example.jython3.runtime.PyNotImplemented.INSTANCE);
+
         // object()
         defineType.accept("object", PyBuiltinFunction.builtinType("object", args -> {
             checkArgCount("object", args, 0);
@@ -644,6 +646,12 @@ public final class BuiltinFunctions {
                     throw PyErrors.error("StopIteration", "");
                 }
                 if (o instanceof PyGenerator gen) return gen.next();
+                if (o instanceof PyInstance inst) {
+                    PyObject nextFn = inst.pyClass().lookupMember("__next__");
+                    if (nextFn != null) {
+                        return caller.call(nextFn, new PyObject[]{inst});
+                    }
+                }
                 throw PyErrors.error("TypeError", "'" + typeName(o) + "' object is not an iterator");
             } catch (InterpreterException ie) {
                 if (args.length == 2 && ie.getMessage().startsWith("StopIteration")) return args[1];
@@ -730,7 +738,8 @@ public final class BuiltinFunctions {
                     || o instanceof PyBoundMethod
                     || o instanceof PyClass
                     || o instanceof PyJavaClass
-                    || o instanceof PyJavaMethod;
+                    || o instanceof PyJavaMethod
+                    || (o instanceof PyInstance inst && inst.pyClass().hasMember("__call__"));
             return PyBool.of(ok);
         }));
 
@@ -1144,7 +1153,93 @@ public final class BuiltinFunctions {
         if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
             return PyIterator.fromJavaIterable(iterable, policy, null);
         }
+        if (o instanceof PyInstance inst) {
+            PyCaller caller = PyCaller.current();
+            if (caller != null) {
+                PyObject iterFn = inst.pyClass().lookupMember("__iter__");
+                if (iterFn != null) {
+                    PyObject itObj = caller.call(iterFn, new PyObject[]{inst});
+                    if (itObj instanceof PyIterator pit) return pit;
+                    if (itObj instanceof PyGenerator pgen) return PyIterator.fromGenerator(pgen);
+                    if (itObj instanceof PyInstance iterInst && iterInst.pyClass().hasMember("__next__")) {
+                        return customInstanceIterator(iterInst, caller);
+                    }
+                    throw PyErrors.error("TypeError", "iter() returned non-iterator of type '" + typeName(itObj) + "'");
+                }
+                if (inst.pyClass().hasMember("__next__")) {
+                    return customInstanceIterator(inst, caller);
+                }
+                PyObject getitem = inst.pyClass().lookupMember("__getitem__");
+                if (getitem != null) {
+                    return new PyIterator(new java.util.Iterator<PyObject>() {
+                        private int idx = 0;
+                        private PyObject buffered;
+                        private boolean hasBuffered = false;
+                        private boolean done = false;
+
+                        @Override public boolean hasNext() {
+                            if (hasBuffered) return true;
+                            if (done) return false;
+                            try {
+                                buffered = caller.call(getitem, new PyObject[]{inst, PyInt.of(idx++)});
+                                hasBuffered = true;
+                                return true;
+                            } catch (InterpreterException ie) {
+                                if ("IndexError".equals(ie.typeName()) || "StopIteration".equals(ie.typeName())) {
+                                    done = true;
+                                    return false;
+                                }
+                                done = true;
+                                throw ie;
+                            }
+                        }
+
+                        @Override public PyObject next() {
+                            if (!hasNext()) throw new java.util.NoSuchElementException();
+                            PyObject v = buffered;
+                            buffered = null;
+                            hasBuffered = false;
+                            return v;
+                        }
+                    });
+                }
+            }
+        }
         throw PyErrors.error("TypeError", "'" + typeName(o) + "' object is not iterable");
+    }
+
+    public static PyIterator customInstanceIterator(PyInstance iterInst, PyCaller caller) {
+        PyObject nextFn = iterInst.pyClass().lookupMember("__next__");
+        return new PyIterator(new java.util.Iterator<PyObject>() {
+            private PyObject buffered = null;
+            private boolean hasBuffered = false;
+            private boolean exhausted = false;
+
+            @Override public boolean hasNext() {
+                if (hasBuffered) return true;
+                if (exhausted) return false;
+                try {
+                    buffered = caller.call(nextFn, new PyObject[]{iterInst});
+                    hasBuffered = true;
+                    return true;
+                } catch (InterpreterException ie) {
+                    if ("StopIteration".equals(ie.typeName())) {
+                        exhausted = true;
+                        return false;
+                    }
+                    exhausted = true;
+                    throw ie;
+                }
+            }
+
+            @Override public PyObject next() {
+                if (!hasNext()) throw new java.util.NoSuchElementException();
+                PyObject v = buffered;
+                buffered = null;
+                hasBuffered = false;
+                return v;
+            }
+        });
     }
 
     private static PyObject map(PyCaller caller, org.example.jython3.security.JavaAccessPolicy policy, PyObject[] args) {
@@ -1352,6 +1447,7 @@ public final class BuiltinFunctions {
         if (obj instanceof PyProperty) return builtinTypes.get("property");
         if (obj instanceof PyStaticMethod) return builtinTypes.get("staticmethod");
         if (obj instanceof PyClassMethod) return builtinTypes.get("classmethod");
+        if (obj instanceof org.example.jython3.runtime.PyNotImplemented) return new PyStr("<class 'NotImplementedType'>");
         return new PyStr("<class '" + typeName(obj) + "'>");
     }
 

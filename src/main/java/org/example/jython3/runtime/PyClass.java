@@ -7,13 +7,14 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class PyClass implements PyObject {
     private final String name;
-    private final PyClass baseClass;
+    private PyClass baseClass;
     private final Map<String, PyObject> members;
     private final List<PyClass> bases = new ArrayList<>();
     private final Map<String, PyObject> memberCache = new ConcurrentHashMap<>();
@@ -93,6 +94,36 @@ public final class PyClass implements PyObject {
      * Invalidates member caches and increments the class version counter for this
      * class and all derived subclasses across the inheritance tree.
      */
+    public synchronized void setBases(List<PyClass> newBases) {
+        Objects.requireNonNull(newBases, "newBases");
+        Set<PyClass> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (PyClass b : newBases) {
+            if (b == null) throw PyErrors.error("TypeError", "__bases__ items must be classes");
+            if (!seen.add(b)) throw PyErrors.error("TypeError", "duplicate base class " + b.name());
+            if (b == this || b.isSubclassOf(this)) {
+                throw PyErrors.error("TypeError", "a __bases__ item causes an inheritance cycle");
+            }
+        }
+        List<PyClass> oldBases = new ArrayList<>(this.bases);
+        PyClass oldBaseClass = this.baseClass;
+        List<PyClass> oldMro = this.mro;
+        this.bases.clear();
+        this.bases.addAll(newBases);
+        this.baseClass = newBases.isEmpty() ? null : newBases.get(0);
+        try {
+            this.mro = computeC3Mro();
+        } catch (RuntimeException ex) {
+            this.bases.clear();
+            this.bases.addAll(oldBases);
+            this.baseClass = oldBaseClass;
+            this.mro = oldMro;
+            throw ex;
+        }
+        for (PyClass oldB : oldBases) oldB.subclasses.remove(this);
+        for (PyClass newB : newBases) newB.addSubclass(this);
+        invalidateHierarchy();
+    }
+
     public synchronized void invalidateHierarchy() {
         this.version++;
         this.memberCache.clear();

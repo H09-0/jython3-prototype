@@ -1713,6 +1713,12 @@ public class Jython3Interpreter implements AutoCloseable {
                         dict.put(key, val);
                     } else if (container instanceof PyByteArray ba) {
                         ba.setAt(key, val);
+                    } else if (container instanceof PyInstance inst) {
+                        PyObject setitem = inst.pyClass().lookupMember("__setitem__");
+                        if (setitem == null) {
+                            throw PyErrors.error("TypeError", "'" + inst.pyClass().name() + "' object does not support item assignment");
+                        }
+                        callPyCallable(setitem, new PyObject[]{inst, key, val});
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(container) + "' object does not support item assignment");
                     }
@@ -1726,7 +1732,23 @@ public class Jython3Interpreter implements AutoCloseable {
                     } else if (obj instanceof PyModule mod) {
                         mod.attrs().put(attr, val);
                     } else if (obj instanceof PyClass cls) {
-                        cls.setMember(attr, val);
+                        if ("__bases__".equals(attr)) {
+                            if (!(val instanceof PyTuple tup)) {
+                                throw PyErrors.error("TypeError", "can only assign tuple (not \"" + typeName(val) + "\") to __bases__");
+                            }
+                            var newBases = new ArrayList<PyClass>();
+                            for (PyObject item : tup.items()) {
+                                if (item instanceof PyClass baseCls) newBases.add(baseCls);
+                                else if (item instanceof PyBuiltinFunction bf && bf.isType() && "object".equals(bf.name())) {
+                                    // object is implicit
+                                } else {
+                                    throw PyErrors.error("TypeError", "__bases__ items must be classes, not " + typeName(item));
+                                }
+                            }
+                            cls.setBases(newBases);
+                        } else {
+                            cls.setMember(attr, val);
+                        }
                     } else if (obj instanceof PyJavaObject jo) {
                         jo.setMember(attr, val);
                     } else if (obj instanceof PyJavaClass jc) {
@@ -1765,6 +1787,12 @@ public class Jython3Interpreter implements AutoCloseable {
                     } else if (container instanceof PyDict dict) {
                         if (dict.remove(key) == null)
                             throw PyErrors.error("KeyError", String.valueOf(key));
+                    } else if (container instanceof PyInstance inst) {
+                        PyObject delitem = inst.pyClass().lookupMember("__delitem__");
+                        if (delitem == null) {
+                            throw PyErrors.error("TypeError", "'" + inst.pyClass().name() + "' object does not support item deletion");
+                        }
+                        callPyCallable(delitem, new PyObject[]{inst, key});
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(container) + "' object doesn't support item deletion");
                     }
@@ -1862,7 +1890,9 @@ public class Jython3Interpreter implements AutoCloseable {
                         double lv = toDouble(l);
                         stack.push(new PyFloat(lv / rv));
                     } else {
-                        throw PyErrors.error("TypeError", "unsupported operand types for /");
+                        PyObject dunder = ArithmeticOps.tryBinaryDunder(l, r, "__truediv__", "__rtruediv__");
+                        if (dunder != null) stack.push(dunder);
+                        else throw PyErrors.error("TypeError", "unsupported operand types for /");
                     }
                 }
                 case FLOOR_DIVIDE -> {
@@ -1894,6 +1924,10 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push(new BigInt(bi.value().negate()));
                     } else if (v instanceof PyFloat f) {
                         stack.push(new PyFloat(-f.value()));
+                    } else if (v instanceof PyInstance inst) {
+                        PyObject neg = inst.pyClass().lookupMember("__neg__");
+                        if (neg == null) throw PyErrors.error("TypeError", "bad operand type for unary -: '" + typeName(v) + "'");
+                        stack.push(callPyCallable(neg, new PyObject[]{inst}));
                     } else {
                         throw PyErrors.error("TypeError", "bad operand type for unary -: '" + typeName(v) + "'");
                     }
@@ -2497,6 +2531,15 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push(jc.newInstance(args));
                     } else if (callable instanceof PyJavaMethod jm) {
                         stack.push(jm.invoke(args));
+                    } else if (callable instanceof PyInstance inst) {
+                        PyObject callMember = inst.pyClass().lookupMember("__call__");
+                        if (callMember == null) {
+                            throw PyErrors.error("TypeError", "'" + typeName(callable) + "' object is not callable");
+                        }
+                        var callArgs = new PyObject[argc + 1];
+                        callArgs[0] = inst;
+                        System.arraycopy(args, 0, callArgs, 1, argc);
+                        stack.push(callPyCallable(callMember, callArgs));
                     } else {
                         throw PyErrors.error("TypeError", "'" + typeName(callable) + "' object is not callable");
                     }
@@ -2791,6 +2834,24 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push(new PyIterator(new ArrayList<>(fs.items()), 0));
                     } else if (o instanceof PyGenerator gen) {
                         stack.push(gen);
+                    } else if (o instanceof PyInstance inst) {
+                        PyObject iterFn = inst.pyClass().lookupMember("__iter__");
+                        if (iterFn != null) {
+                            PyObject itObj = callPyCallable(iterFn, new PyObject[]{inst});
+                            if (itObj instanceof PyIterator || itObj instanceof PyGenerator) {
+                                stack.push(itObj);
+                            } else if (itObj instanceof PyInstance iterInst && iterInst.pyClass().hasMember("__next__")) {
+                                stack.push(BuiltinFunctions.customInstanceIterator(iterInst, interpreterCaller));
+                            } else {
+                                throw PyErrors.error("TypeError", "iter() returned non-iterator of type '" + typeName(itObj) + "'");
+                            }
+                        } else if (inst.pyClass().hasMember("__next__")) {
+                            stack.push(BuiltinFunctions.customInstanceIterator(inst, interpreterCaller));
+                        } else if (inst.pyClass().hasMember("__getitem__")) {
+                            stack.push(new PyIterator(BuiltinFunctions.collectIterable(inst, javaAccessPolicy), 0));
+                        } else {
+                            throw PyErrors.error("TypeError", "'" + typeName(o) + "' is not iterable");
+                        }
                     } else if (o instanceof PyJavaObject jo && jo.object() instanceof Iterable<?> iterable) {
                         stack.push(PyIterator.fromJavaIterable(iterable, jo.policy(), currentContext));
                     } else {
@@ -3419,6 +3480,15 @@ public class Jython3Interpreter implements AutoCloseable {
         }
         if (callable instanceof PyJavaMethod jm) {
             return jm.invoke(posArgs);
+        }
+        if (callable instanceof PyInstance inst) {
+            PyObject callMember = inst.pyClass().lookupMember("__call__");
+            if (callMember != null) {
+                var callArgs = new PyObject[posArgs.length + 1];
+                callArgs[0] = inst;
+                System.arraycopy(posArgs, 0, callArgs, 1, posArgs.length);
+                return callPyCallableKw(callMember, callArgs, kwNames, kwValues);
+            }
         }
         if (callable instanceof PyFunction fn) {
             if (containsYield(fn.code())) {

@@ -91,7 +91,30 @@ public final class ArithmeticOps {
         } else if (isNumeric(l) && isNumeric(r)) {
             return new PyFloat(toDouble(l) + toDouble(r));
         }
-        throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
+        PyObject dunder = tryBinaryDunder(rawL, rawR, "__add__", "__radd__");
+        if (dunder != null) return dunder;
+        throw PyErrors.error("TypeError", "unsupported operand types for +: '" + typeName(rawL) + "' and '" + typeName(rawR) + "'");
+    }
+
+    public static PyObject tryBinaryDunder(PyObject l, PyObject r, String fwd, String rev) {
+        if (!(l instanceof PyInstance) && !(r instanceof PyInstance)) return null;
+        PyCaller caller = PyCaller.current();
+        if (caller == null) return null;
+        if (l instanceof PyInstance il) {
+            PyObject fn = il.pyClass().lookupMember(fwd);
+            if (fn != null) {
+                PyObject res = caller.call(fn, new PyObject[]{il, r});
+                if (res != PyNotImplemented.INSTANCE) return res;
+            }
+        }
+        if (r instanceof PyInstance ir && (l != r || !fwd.equals(rev))) {
+            PyObject fn = ir.pyClass().lookupMember(rev);
+            if (fn != null) {
+                PyObject res = caller.call(fn, new PyObject[]{ir, l});
+                if (res != PyNotImplemented.INSTANCE) return res;
+            }
+        }
+        return null;
     }
 
     public static PyObject subtract(PyObject rawL, PyObject rawR) {
@@ -121,6 +144,8 @@ public final class ArithmeticOps {
         if (PyOps.isSetLike(rawL) && PyOps.isSetLike(rawR)) {
             return setDifference(rawL, rawR);
         }
+        PyObject dunder = tryBinaryDunder(rawL, rawR, "__sub__", "__rsub__");
+        if (dunder != null) return dunder;
         throw PyErrors.error("TypeError",
                 "unsupported operand type(s) for -: '" + typeName(rawL) + "' and '" + typeName(rawR) + "'");
     }
@@ -369,7 +394,9 @@ public final class ArithmeticOps {
         } else if (isNumeric(l) && isNumeric(r)) {
             return new PyFloat(toDouble(l) * toDouble(r));
         }
-        throw PyErrors.error("TypeError", "unsupported operand types for arithmetic");
+        PyObject dunder = tryBinaryDunder(rawL, rawR, "__mul__", "__rmul__");
+        if (dunder != null) return dunder;
+        throw PyErrors.error("TypeError", "unsupported operand types for *: '" + typeName(rawL) + "' and '" + typeName(rawR) + "'");
     }
 
     public static PyObject bitwiseAnd(PyObject rawL, PyObject rawR) {
@@ -531,6 +558,8 @@ public final class ArithmeticOps {
             if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float floor division by zero");
             return new PyFloat(Math.floor(toDouble(l) / rv));
         }
+        PyObject dunder = tryBinaryDunder(rawL, rawR, "__floordiv__", "__rfloordiv__");
+        if (dunder != null) return dunder;
         throw PyErrors.error("TypeError", "unsupported operand types for //");
     }
 
@@ -551,6 +580,8 @@ public final class ArithmeticOps {
             if (rv == 0.0) throw PyErrors.error("ZeroDivisionError", "float modulo by zero");
             return new PyFloat(lv - Math.floor(lv / rv) * rv);
         }
+        PyObject dunder = tryBinaryDunder(rawL, rawR, "__mod__", "__rmod__");
+        if (dunder != null) return dunder;
         throw PyErrors.error("TypeError", "unsupported operand types for %");
     }
 
@@ -585,6 +616,8 @@ public final class ArithmeticOps {
         var l = unwrapBool(rawL);
         var r = unwrapBool(rawR);
         if (!isNumeric(l) || !isNumeric(r)) {
+            PyObject dunder = tryBinaryDunder(rawL, rawR, "__pow__", "__rpow__");
+            if (dunder != null) return dunder;
             throw PyErrors.error("TypeError", "unsupported operand types for **");
         }
         if ((l instanceof PyInt || l instanceof BigInt) && (r instanceof PyInt || r instanceof BigInt)) {
