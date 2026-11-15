@@ -29,13 +29,18 @@
 - **Comprehensions**: List (`[x for x in seq if cond]`), dict (`{k: v for ...}`), and set (`{x for ...}`) comprehensions.
 - **Functions & Scope**: `def`, `lambda`, default parameters, `*args`, `**kwargs`, keyword calls, lexical closures, `global`, `nonlocal` via `PyCell`, decorators, and generators (`yield` with `PyGenerator`).
 - **Assignments & Unpacking**: Unified `LValue` model (`NameTarget`, `AttributeTarget`, `SubscriptTarget`, `TupleTarget`) supporting chained assignment (`a = b = obj.x = expr`), tuple/sequence unpacking (`a, b = pair`, `for a, b in pairs:`), `del` (`del x`, `del obj.attr`, `del items[0]`), and single-evaluation augmented assignment (`x += 1`, `obj.value += 1`, `items[0] += 1`, `matrix[0][1] *= 2`).
-- **Control Flow & Exceptions**: `if`/`elif`/`else`, `while`, `for` (with tuple target unpacking), `break`/`continue` (with compile-time `SyntaxError` if outside loop), `assert`, `with` context managers (`__enter__`/`__exit__`), and full `try`/`except (A, B) as e`/`else`/`finally` unwinding across `return`, `break`, `continue`, and `raise` (preserving operand stack depth `ExceptHandler.stackDepth` and active exception context across arbitrary nesting).
+- **Control Flow & Exceptions**: `if`/`elif`/`else`, `while`, `for` (with tuple target unpacking), `break`/`continue` (with compile-time `SyntaxError` if outside loop), `assert`, `with` context managers (`__enter__`/`__exit__`, including `return`/`break`/`continue`/`raise` out of `with` inside functions), and full `try`/`except (A, B) as e`/`else`/`finally` unwinding across `return`, `break`, `continue`, and `raise` (preserving operand stack depth `ExceptHandler.stackDepth` and active exception context across arbitrary nesting).
+- **Compiler temporaries**: Synthetic slots (`$ret_val_N`, `$comp_list_N`, `$comp_dict_N`, `$comp_set_N`) use a `$` prefix that the lexer never accepts in identifiers, so they cannot collide with user variables, are deleted after use, and are excluded from closure capture.
+- **Re-entrant calls**: Python functions invoked from inside the VM (`__init__`, `__enter__`, `__exit__`, callbacks) run in a nested loop bounded by `baseDepth`; they never return into or unwind through the caller's frames, and caller state is restored even when the callee raises.
 - **OOP**: Classes, single & multiple inheritance, `super()` (0-arg and 2-arg), bound methods, version-guarded monomorphic inline caching (`LOAD_ATTR`) and hierarchy invalidation.
 
 ### Known Language Gaps
 - Async/await (`async def`, `await`).
 - Coroutine `.send()` / `.throw()` on suspended generator frames.
-- `raise ... from ...` explicit exception chaining (`__cause__`).
+- `raise ... from ...` explicit exception chaining (`__cause__`); `__context__` is recorded internally but not readable as a Python attribute.
+- `__name__` on classes/exception types (e.g. `type(e).__name__`).
+- Dict equality compares keys/values with Java equality (`{1: 0} == {1.0: 0}` may differ from CPython).
+- Re-entrant calls (`__init__`, `__enter__`, `__exit__`) do not push a `Frame`, so they are not counted toward `MAX_CALL_DEPTH` and are invisible to `nonlocal` lookup.
 - Dynamic `__bases__` mutation after class creation.
 
 ### Standard Library Modules

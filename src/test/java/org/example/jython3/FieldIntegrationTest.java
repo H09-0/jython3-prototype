@@ -724,4 +724,270 @@ public class FieldIntegrationTest {
                 org.example.jython3.runtime.InterpreterException.class,
                 () -> interp.eval("continue"));
     }
+
+    @Test
+    @DisplayName("try/finally edge cases: with-exits, else raise, synthetic-name isolation, context, frame hygiene")
+    void testTryFinallyEdgeCasesAndSyntheticNameIsolation() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            class CM:
+                def __init__(self, log, tag):
+                    self.log = log
+                    self.tag = tag
+                def __enter__(self):
+                    self.log.append("enter-" + self.tag)
+                    return self
+                def __exit__(self, t, v, tb):
+                    self.log.append("exit-" + self.tag)
+                    return False
+
+            # 1. return inside with runs __exit__ and outer finally, in order
+            def w_return(log):
+                try:
+                    with CM(log, "a"):
+                        return 7
+                finally:
+                    log.append("finally")
+            wl = []
+            assert w_return(wl) == 7
+            assert wl == ["enter-a", "exit-a", "finally"], wl
+
+            # 2. break / continue inside with run __exit__ every iteration
+            bl = []
+            for i in range(3):
+                with CM(bl, str(i)):
+                    if i == 0:
+                        continue
+                    if i == 1:
+                        break
+            assert bl == ["enter-0", "exit-0", "enter-1", "exit-1"], bl
+
+            # 3. nested with + for + return keeps iterator stack clean
+            def w_nested(log):
+                for a in [1, 2]:
+                    with CM(log, "o"):
+                        for b in [10, 20]:
+                            with CM(log, "i"):
+                                if b == 20:
+                                    return a + b
+            nl = []
+            assert w_nested(nl) == 21
+            assert nl == ["enter-o", "enter-i", "exit-i", "enter-i", "exit-i", "exit-o"], nl
+
+            # 4. exception raised in else still runs finally and propagates
+            el = []
+            try:
+                try:
+                    el.append("try")
+                except KeyError:
+                    el.append("except")
+                else:
+                    el.append("else")
+                    raise ValueError("from-else")
+                finally:
+                    el.append("finally")
+            except ValueError as ex:
+                el.append("outer:" + str(ex))
+            assert el == ["try", "else", "finally", "outer:from-else"], el
+
+            # 5. return inside finally while 'except ... as e' is active cancels nothing outside
+            def r_in_finally_with_as():
+                try:
+                    try:
+                        raise KeyError("k")
+                    except KeyError as e:
+                        raise ValueError("v")
+                    finally:
+                        return "fin-wins"
+                except Exception:
+                    return "should-not-propagate"
+            assert r_in_finally_with_as() == "fin-wins"
+            # the 'as' target is unbound after the handler
+            def as_cleanup():
+                try:
+                    raise KeyError("k")
+                except KeyError as e:
+                    pass
+                try:
+                    return e
+                except NameError:
+                    return "unbound"
+            assert as_cleanup() == "unbound"
+
+            # 6. user names that match legacy temporary prefixes are not clobbered
+            def user_ret_name():
+                __ret_val_0 = 42
+                seen = []
+                def inner():
+                    try:
+                        return 1
+                    finally:
+                        seen.append("x")
+                try:
+                    return inner() + 0
+                finally:
+                    seen.append(__ret_val_0)
+            assert user_ret_name() == 1
+
+            def user_ret_name_visible():
+                __ret_val_0 = 42
+                out = []
+                try:
+                    return 1
+                finally:
+                    out.append(__ret_val_0)
+                    assert out == [42], out
+
+            assert user_ret_name_visible() == 1
+
+            __comp_list_0 = "user-module-value"
+            squares = [x * x for x in range(4)]
+            assert squares == [0, 1, 4, 9]
+            assert __comp_list_0 == "user-module-value"
+
+            def comp_names():
+                __comp_list_0 = "fn"
+                __comp_dict_1 = "fd"
+                __comp_set_2 = "fs"
+                a = [i for i in range(3)]
+                b = {i: i for i in range(2)}
+                c = {i for i in range(2)}
+                return (__comp_list_0, __comp_dict_1, __comp_set_2, a, b, c)
+            assert comp_names() == ("fn", "fd", "fs", [0, 1, 2], {0: 0, 1: 1}, {0, 1})
+
+            # set value equality (regression uncovered by the assertion above)
+            assert {0, 1} == {1, 0}
+            assert not ({0, 1} != {1, 0})
+            assert {0} != {1}
+            assert {1, 2} != {1}
+            assert {1} == {1.0}
+            assert ({"a"},) == ({"a"},)
+
+            # nested comprehensions inside lambdas inside comprehensions keep independent accumulators
+            fns = [lambda n=k: [j + n for j in range(2)] for k in range(3)]
+            assert [f() for f in fns] == [[0, 1], [1, 2], [2, 3]]
+
+            # 7. Java exception inside try/finally in a hot loop leaves frame/stack clean
+            from java.util import ArrayList
+            jl = ArrayList()
+            fin = 0
+            caught = 0
+            for _ in range(500):
+                try:
+                    try:
+                        total = 1 + (2 * jl.get(5))
+                    finally:
+                        fin += 1
+                except Exception:
+                    caught += 1
+            assert fin == 500 and caught == 500
+            assert [1, 2, 3][1] + (4 * 5) == 22
+
+            edge_ok = True
+            """);
+        assertEquals(PyBool.TRUE, interp.getGlobal("edge_ok"));
+
+        // Synthetic temporaries never leak into globals after successful runs.
+        interp.eval("leak_probe = [v for v in range(3)]");
+        for (String name : new String[]{"$comp_list_0", "$ret_val_0"}) {
+            org.junit.jupiter.api.Assertions.assertNull(interp.getGlobal(name), name + " leaked");
+        }
+
+        // __context__ is recorded when finally raises while an exception is pending.
+        var ie = org.junit.jupiter.api.Assertions.assertThrows(
+                org.example.jython3.runtime.InterpreterException.class,
+                () -> interp.eval("""
+                    try:
+                        raise KeyError("first")
+                    finally:
+                        raise ValueError("second")
+                    """));
+        var pe = org.junit.jupiter.api.Assertions.assertInstanceOf(
+                org.example.jython3.runtime.PyException.class, ie.value());
+        assertEquals("ValueError", pe.typeName());
+        org.junit.jupiter.api.Assertions.assertNotNull(pe.context(), "finally-raised exception keeps pending one as __context__");
+        assertEquals("KeyError", pe.context().typeName());
+
+        // break/continue outside a loop surface as SyntaxError.
+        var se = org.junit.jupiter.api.Assertions.assertThrows(
+                org.example.jython3.runtime.InterpreterException.class,
+                () -> interp.eval("break"));
+        assertEquals("SyntaxError", se.typeName());
+    }
+
+    @Test
+    @DisplayName("Re-entrant Python calls (__init__/__enter__/__exit__) never return into or unwind the caller's frames")
+    void testReentrantCallsPreserveCallerFrame() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            class CM:
+                def __init__(self, log):
+                    self.log = log
+                def __enter__(self):
+                    self.log.append("enter")
+                    return 5
+                def __exit__(self, t, v, tb):
+                    self.log.append("exit:" + ("KeyError" if isinstance(v, KeyError) else str(t)))
+                    return False
+
+            # with inside a function: body, exit and code after the block all run
+            def plain(log):
+                log.append("start")
+                with CM(log) as v:
+                    log.append("body" + str(v))
+                log.append("end")
+                return "done"
+            pl = []
+            assert plain(pl) == "done", pl
+            assert pl == ["start", "enter", "body5", "exit:None", "end"], pl
+
+            # with inside nested function calls (depth > 1 on the call stack)
+            def outer(log):
+                return inner(log) + 1
+            def inner(log):
+                with CM(log):
+                    return 10
+            ol = []
+            assert outer(ol) == 11, ol
+            assert ol == ["enter", "exit:None"], ol
+
+            # exception inside with inside a function propagates to the caller's handler
+            def raising(log):
+                with CM(log):
+                    raise KeyError("boom")
+            rl = []
+            try:
+                raising(rl)
+                rl.append("not-reached")
+            except KeyError:
+                rl.append("caught")
+            assert rl == ["enter", "exit:KeyError", "caught"], rl
+
+            # exception raised by __init__ called from a function is catchable in that function
+            class Bad:
+                def __init__(self):
+                    raise ValueError("init failed")
+            def make_bad():
+                try:
+                    Bad()
+                    return "no"
+                except ValueError:
+                    return "caught-in-caller"
+            assert make_bad() == "caught-in-caller"
+
+            # caller locals are intact after a re-entrant call that raised
+            def locals_intact():
+                a = 1
+                b = [2]
+                try:
+                    Bad()
+                except ValueError:
+                    pass
+                return a + b[0]
+            assert locals_intact() == 3
+
+            reentrant_ok = True
+            """);
+        assertEquals(PyBool.TRUE, interp.getGlobal("reentrant_ok"));
+    }
 }

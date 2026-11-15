@@ -333,4 +333,42 @@ public class CoreDifferentialTest {
         assertMatchesCPython("finally_with_bitwise",
                 "log = []\ndef f(x):\n    try:\n        x &= 3\n        return (1 << 100) | x\n    finally:\n        log.append(1 | 2)\nres = f(7)\nprint(res, log)");
     }
+
+    private static final String CM_CLASS =
+            "class CM:\n"
+            + "    def __init__(self, log, tag):\n"
+            + "        self.log = log\n"
+            + "        self.tag = tag\n"
+            + "    def __enter__(self):\n"
+            + "        self.log.append('enter-' + self.tag)\n"
+            + "        return self\n"
+            + "    def __exit__(self, t, v, tb):\n"
+            + "        self.log.append('exit-' + self.tag)\n"
+            + "        return False\n";
+
+    @Test
+    void testWithInsideFunctionsDifferential() {
+        assertMatchesCPython("with_in_function_runs_to_end", CM_CLASS
+                + "def f(log):\n    log.append('start')\n    with CM(log, 'a'):\n        log.append('body')\n    log.append('end')\n    return 1\n"
+                + "l = []\nprint(f(l), l)");
+        assertMatchesCPython("with_return_then_finally", CM_CLASS
+                + "def f(log):\n    try:\n        with CM(log, 'a'):\n            return 7\n    finally:\n        log.append('finally')\n"
+                + "l = []\nprint(f(l), l)");
+        assertMatchesCPython("with_break_continue_exit_each_time", CM_CLASS
+                + "l = []\nfor i in range(3):\n    with CM(l, str(i)):\n        if i == 0:\n            continue\n        if i == 1:\n            break\nprint(l)");
+        assertMatchesCPython("with_nested_return_in_loops", CM_CLASS
+                + "def f(log):\n    for a in [1, 2]:\n        with CM(log, 'o'):\n            for b in [10, 20]:\n                with CM(log, 'i'):\n                    if b == 20:\n                        return a + b\n"
+                + "l = []\nprint(f(l), l)");
+        assertMatchesCPython("with_exception_propagates_through_function", CM_CLASS
+                + "def f(log):\n    with CM(log, 'a'):\n        raise KeyError('boom')\n"
+                + "l = []\ntry:\n    f(l)\nexcept KeyError:\n    l.append('caught')\nprint(l)");
+        assertMatchesCPython("else_raise_runs_finally",
+                "l = []\ntry:\n    try:\n        l.append('try')\n    except KeyError:\n        l.append('except')\n    else:\n        l.append('else')\n        raise ValueError('e')\n    finally:\n        l.append('finally')\nexcept ValueError:\n    l.append('outer')\nprint(l)");
+    }
+
+    @Test
+    void testSetEqualityDifferential() {
+        assertMatchesCPython("set_equality",
+                "print({0, 1} == {1, 0}, {0} != {1}, {1, 2} == {1}, {1} == {1.0}, ({'a'},) == ({'a'},))");
+    }
 }
