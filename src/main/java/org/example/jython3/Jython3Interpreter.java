@@ -849,6 +849,16 @@ public class Jython3Interpreter {
 
     // ─── ANTLR compilation with Python Indentation Stream ─────────────────
 
+    /** Compiles Python source without executing it (used by validation/debug tools). */
+    public CompiledCode compileSource(String src) throws InterpreterException {
+        return compile(src);
+    }
+
+    /** Returns a human-readable bytecode listing for {@code src} and nested code units. */
+    public String disassemble(String src) throws InterpreterException {
+        return org.example.jython3.compile.BytecodeDisassembler.disassemble(compile(src));
+    }
+
     private CompiledCode compile(String src) throws InterpreterException {
         if (src.length() > executionLimits.maxSourceLength()) {
             throw PyErrors.error("ValueError", "Source text exceeds maximum allowed length: " + executionLimits.maxSourceLength());

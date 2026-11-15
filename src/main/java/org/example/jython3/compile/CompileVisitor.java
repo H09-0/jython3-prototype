@@ -1299,14 +1299,15 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
 
         // Exception handler path
         b.patch(pushIdx, b.size());
-        b.emit(OpCode.WITH_EXCEPT_EXIT);   // calls __exit__(type,val,tb); result on stack
+        b.emit(OpCode.WITH_EXCEPT_EXIT);   // calls __exit__(type,val,tb); pushes True or [exc, False]
         int suppressJump = b.size();
         b.emitRaw(OpCode.JUMP_IF_TRUE_OR_POP, 0); // suppress if __exit__ returned True
         b.emit(OpCode.RERAISE);
+        // Suppressed path still has True on TOS; pop it so stack depth matches normal exit.
+        b.patch(suppressJump, b.size());
+        b.emit(OpCode.POP_TOP);
 
-        int afterWith = b.size();
-        b.patch(jumpAfter, afterWith);
-        b.patch(suppressJump, afterWith);
+        b.patch(jumpAfter, b.size());
     }
 
     // ── lambda ────────────────────────────────────────────────────────────────
