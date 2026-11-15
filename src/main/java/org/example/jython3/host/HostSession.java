@@ -2,7 +2,10 @@ package org.example.jython3.host;
 
 import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyObject;
+import org.example.jython3.security.DenyAllPolicy;
 import org.example.jython3.security.ExecutionContext;
+import org.example.jython3.security.JavaAccessPolicy;
+import org.example.jython3.security.PolicySanitizer;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -31,6 +34,7 @@ public final class HostSession implements AutoCloseable {
     private static final int MAX_FAILURE_RECORDS = 256;
 
     private final CapabilitySet capabilities;
+    private final JavaAccessPolicy javaAccessPolicy;
     private final HostAuditLog auditLog = new HostAuditLog();
     private final Set<AutoCloseable> managedResources = new LinkedHashSet<>();
     private final Deque<CallbackFailure> callbackFailures = new ArrayDeque<>(16);
@@ -46,9 +50,16 @@ public final class HostSession implements AutoCloseable {
     private final Set<AutoCloseable> activeTimers = new LinkedHashSet<>();
 
     public HostSession(CapabilitySet capabilities, CallbackInvoker callbackInvoker) {
+        this(capabilities, callbackInvoker, DenyAllPolicy.INSTANCE);
+    }
+
+    public HostSession(CapabilitySet capabilities, CallbackInvoker callbackInvoker, JavaAccessPolicy javaAccessPolicy) {
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.callbackInvoker = Objects.requireNonNull(callbackInvoker, "callbackInvoker");
+        this.javaAccessPolicy = Objects.requireNonNull(javaAccessPolicy, "javaAccessPolicy");
     }
+
+    public JavaAccessPolicy javaAccessPolicy() { return javaAccessPolicy; }
 
     public CapabilitySet capabilities() { return capabilities; }
 
@@ -227,6 +238,11 @@ public final class HostSession implements AutoCloseable {
         if (ctx != null && ctx.isCancelled()) {
             throw PyErrors.error("KeyboardInterrupt", "Execution cancelled by host");
         }
+        PyObject safeCallable = PolicySanitizer.sanitize(callable, javaAccessPolicy, this);
+        PyObject[] safeArgs = new PyObject[args != null ? args.length : 0];
+        for (int i = 0; i < safeArgs.length; i++) {
+            safeArgs[i] = PolicySanitizer.sanitize(args[i], javaAccessPolicy, this);
+        }
         synchronized (this) {
             if (activeCallbackDepth >= capabilities.maxCallbackDepth()) {
                 throw PyErrors.error("RecursionError",
@@ -235,7 +251,7 @@ public final class HostSession implements AutoCloseable {
             activeCallbackDepth++;
         }
         try {
-            return callbackInvoker.invoke(callable, args);
+            return callbackInvoker.invoke(safeCallable, safeArgs);
         } finally {
             synchronized (this) {
                 activeCallbackDepth--;

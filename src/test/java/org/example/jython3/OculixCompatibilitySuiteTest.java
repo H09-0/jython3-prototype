@@ -92,6 +92,7 @@ class OculixCompatibilitySuiteTest {
                     "targets", List.of("arm64", "x64")
             ));
             rt.bindHandle("editor", PyHostHandle.builder("oculix.Editor")
+                    .bindSession(rt.hostSession())
                     .prop("status", () -> new PyStr(editorStatus.get()), v -> editorStatus.set(v.toString()))
                     .method("trigger_build", new PyBuiltinFunction("trigger_build", args -> {
                         return PyInt.of(buildCount.incrementAndGet());
@@ -130,15 +131,15 @@ class OculixCompatibilitySuiteTest {
             assertEquals(0, toolkit.openWindowCount());
             assertEquals(0, rt.hostSession().managedResourceCount());
 
-            rt.bindHandle("stale_win", oldWin instanceof PyHostHandle h ? h : null);
             InterpreterException staleErr = assertThrows(InterpreterException.class,
-                    () -> rt.eval("stale_win.show()"));
+                    () -> rt.bindHandle("stale_win", oldWin instanceof PyHostHandle h ? h : null));
             assertEquals("RuntimeError", staleErr.typeName());
 
             // Verify mid-script cancellation from host thread
             CountDownLatch started = new CountDownLatch(1);
             AtomicBoolean cancelled = new AtomicBoolean(false);
             rt.bindHandle("sync_probe", PyHostHandle.builder("oculix.Probe")
+                    .bindSession(rt.hostSession())
                     .method("signal", new PyBuiltinFunction("signal", args -> {
                         started.countDown();
                         return org.example.jython3.runtime.PyNull.INSTANCE;

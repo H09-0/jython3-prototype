@@ -63,10 +63,20 @@ public final class HostAppBridge implements AutoCloseable {
 
     /**
      * Binds an explicitly whitelisted opaque {@link PyHostHandle} for host model
-     * reads/updates without exposing Java reflection.
+     * reads/updates without exposing Java reflection. Rejects handles that belong
+     * to another {@link HostSession} or come from an invalidated epoch.
      */
     public void bindHandle(String name, PyHostHandle handle) {
-        interpreter.setGlobal(name, Objects.requireNonNull(handle, "handle"));
+        Objects.requireNonNull(handle, "handle");
+        HostSession session = interpreter.hostSession();
+        if (handle.session() != session) {
+            session.auditLog().recordDenied(HostCapability.EVENTS, "bind_handle", name,
+                    "handle belongs to different or missing HostSession");
+            throw PyErrors.error("SecurityError",
+                    "host capability handle '" + handle.handleTypeName() + "' cannot cross or bypass session boundaries");
+        }
+        session.requireValidEpoch(handle.sessionEpoch(), handle.handleTypeName());
+        interpreter.setGlobal(name, handle);
     }
 
     public void runScript(String source, String name) {

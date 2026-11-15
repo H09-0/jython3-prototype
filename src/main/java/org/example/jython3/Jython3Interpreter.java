@@ -395,7 +395,8 @@ public class Jython3Interpreter implements AutoCloseable {
         this.exceptionTypes = Objects.requireNonNull(exceptionTypes, "exceptionTypes");
         this.hostSession = new HostSession(
                 capabilities != null ? capabilities : CapabilitySet.none(),
-                this::invokeHostCallback);
+                this::invokeHostCallback,
+                this.javaAccessPolicy);
         this.interpreterCaller = new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
                 return callPyCallable(callable, args);

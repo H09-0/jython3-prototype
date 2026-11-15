@@ -70,6 +70,7 @@ class VersionedEmbeddingApiTest {
             for (int cycle = 0; cycle < 100; cycle++) {
                 rt.bindModelData("cfg", Map.of("cycle", cycle, "steps", List.of(10, 20)));
                 rt.bindHandle("host_view", PyHostHandle.builder("oculix.View")
+                        .bindSession(rt.hostSession())
                         .prop("text", () -> new PyStr(lastHostText.get()), v -> lastHostText.set(v.toString()))
                         .method("ping", new PyBuiltinFunction("ping", a -> new PyStr("ok")))
                         .build());

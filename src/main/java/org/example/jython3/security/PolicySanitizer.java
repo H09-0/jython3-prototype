@@ -2,9 +2,12 @@ package org.example.jython3.security;
 
 import org.example.jython3.bridge.JavaBridge;
 import org.example.jython3.host.HostSession;
+import org.example.jython3.runtime.PyBoundMethod;
+import org.example.jython3.runtime.PyCell;
 import org.example.jython3.runtime.PyClass;
 import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyErrors;
+import org.example.jython3.runtime.PyFrozenSet;
 import org.example.jython3.runtime.PyFunction;
 import org.example.jython3.runtime.PyGenerator;
 import org.example.jython3.runtime.PyHostHandle;
@@ -15,6 +18,8 @@ import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
 import org.example.jython3.runtime.PyNull;
 import org.example.jython3.runtime.PyObject;
+import org.example.jython3.runtime.PySet;
+import org.example.jython3.runtime.PyTuple;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,9 +49,9 @@ public final class PolicySanitizer {
         if (seen != null) return seen;
 
         if (val instanceof PyHostHandle hh) {
-            if (hh.session() != null && hh.session() != targetSession) {
+            if (targetSession == null || hh.session() == null || hh.session() != targetSession) {
                 throw PyErrors.error("SecurityError",
-                        "host capability handle '" + hh.handleTypeName() + "' cannot cross interpreter boundaries");
+                        "host capability handle '" + hh.handleTypeName() + "' cannot cross or bypass session boundaries");
             }
             return val;
         }
@@ -74,6 +79,45 @@ public final class PolicySanitizer {
             for (PyObject item : list.items()) {
                 sanitizedItems.add(sanitize(item, policy, targetSession, visited));
             }
+            return res;
+        }
+        if (val instanceof PyTuple tuple) {
+            var sanitizedItems = new ArrayList<PyObject>(tuple.size());
+            for (PyObject item : tuple.items()) {
+                sanitizedItems.add(sanitize(item, policy, targetSession, visited));
+            }
+            var res = new PyTuple(sanitizedItems);
+            visited.put(val, res);
+            return res;
+        }
+        if (val instanceof PySet set) {
+            var res = new PySet();
+            visited.put(val, res);
+            for (PyObject item : set.items()) {
+                res.add(sanitize(item, policy, targetSession, visited));
+            }
+            return res;
+        }
+        if (val instanceof PyFrozenSet fset) {
+            var sanitizedItems = new ArrayList<PyObject>(fset.size());
+            for (PyObject item : fset.items()) {
+                sanitizedItems.add(sanitize(item, policy, targetSession, visited));
+            }
+            var res = new PyFrozenSet(sanitizedItems);
+            visited.put(val, res);
+            return res;
+        }
+        if (val instanceof PyCell cell) {
+            var res = new PyCell(null);
+            visited.put(val, res);
+            res.set(sanitize(cell.get(), policy, targetSession, visited));
+            return res;
+        }
+        if (val instanceof PyBoundMethod bm) {
+            var inst = (PyInstance) sanitize(bm.instance(), policy, targetSession, visited);
+            var fn = (PyFunction) sanitize(bm.fn(), policy, targetSession, visited);
+            var res = new PyBoundMethod(inst, fn);
+            visited.put(val, res);
             return res;
         }
         if (val instanceof PyDict dict) {

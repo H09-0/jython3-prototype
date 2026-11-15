@@ -78,6 +78,7 @@ class HostCapabilityTest {
         try (var interp = Jython3Interpreter.restricted()) {
             final String[] label = {"init"};
             PyHostHandle handle = PyHostHandle.builder("ui.MockWidget")
+                    .bindSession(interp.hostSession())
                     .prop("text", () -> new PyStr(label[0]), v -> label[0] = v.toString())
                     .method("ping", new PyBuiltinFunction("ping", args -> PyInt.of(42)))
                     .build();

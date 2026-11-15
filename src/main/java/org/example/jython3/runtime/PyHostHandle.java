@@ -34,21 +34,17 @@ public final class PyHostHandle implements PyObject {
                          Map<String, Supplier<PyObject>> getters,
                          Map<String, Consumer<PyObject>> setters) {
         this.typeName = Objects.requireNonNull(typeName, "typeName");
-        this.session = session;
+        this.session = Objects.requireNonNull(session, "session");
         this.sessionEpoch = sessionEpoch;
-        if (session != null) {
-            var wrapped = new LinkedHashMap<String, PyBuiltinFunction>(methods.size());
-            for (var e : methods.entrySet()) {
-                PyBuiltinFunction orig = e.getValue();
-                wrapped.put(e.getKey(), new PyBuiltinFunction(orig.name(), (args, kwargs) -> {
-                    session.requireValidEpoch(sessionEpoch, typeName);
-                    return orig.callWithKw(args, kwargs);
-                }));
-            }
-            this.methods = Collections.unmodifiableMap(wrapped);
-        } else {
-            this.methods = Collections.unmodifiableMap(new LinkedHashMap<>(methods));
+        var wrapped = new LinkedHashMap<String, PyBuiltinFunction>(methods.size());
+        for (var e : methods.entrySet()) {
+            PyBuiltinFunction orig = e.getValue();
+            wrapped.put(e.getKey(), new PyBuiltinFunction(orig.name(), (args, kwargs) -> {
+                session.requireValidEpoch(sessionEpoch, typeName);
+                return orig.callWithKw(args, kwargs);
+            }));
         }
+        this.methods = Collections.unmodifiableMap(wrapped);
         this.getters = Collections.unmodifiableMap(new LinkedHashMap<>(getters));
         this.setters = Collections.unmodifiableMap(new LinkedHashMap<>(setters));
     }
@@ -59,10 +55,10 @@ public final class PyHostHandle implements PyObject {
 
     public HostSession session() { return session; }
 
+    public long sessionEpoch() { return sessionEpoch; }
+
     private void checkValid() {
-        if (session != null) {
-            session.requireValidEpoch(sessionEpoch, typeName);
-        }
+        session.requireValidEpoch(sessionEpoch, typeName);
     }
 
     public boolean hasAttr(String name) {
@@ -131,6 +127,10 @@ public final class PyHostHandle implements PyObject {
         }
 
         public PyHostHandle build() {
+            if (session == null) {
+                throw new IllegalStateException(
+                        "PyHostHandle '" + typeName + "' must be bound to a HostSession via bindSession()");
+            }
             return new PyHostHandle(typeName, session, sessionEpoch, methods, getters, setters);
         }
     }

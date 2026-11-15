@@ -52,6 +52,7 @@ class OculixCinnamonIntegrationTest {
                     "targets", List.of(10, 25, 50)
             ));
             bridge.bindHandle("app_state", PyHostHandle.builder("host.AppState")
+                    .bindSession(bridge.interpreter().hostSession())
                     .prop("status", () -> new PyStr(hostStatus.get()), v -> hostStatus.set(v.toString()))
                     .method("increment", new PyBuiltinFunction("increment", a -> PyInt.of(hostCounter.incrementAndGet())))
                     .build());
@@ -101,6 +102,7 @@ class OculixCinnamonIntegrationTest {
 
             // 2. Cancelling a script mid-event interrupts cleanly without corrupting bridge
             bridge.bindHandle("cancel_gate", PyHostHandle.builder("host.CancelGate")
+                    .bindSession(bridge.interpreter().hostSession())
                     .method("trip", new PyBuiltinFunction("trip", a -> {
                         bridge.cancelRunningScript();
                         return PyNull.INSTANCE;
