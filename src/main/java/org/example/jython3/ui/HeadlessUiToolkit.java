@@ -453,6 +453,7 @@ public final class HeadlessUiToolkit implements UiToolkit, AutoCloseable {
                             session.invokeCallback(callback);
                         } catch (RuntimeException ex) {
                             stop();
+                            session.recordCallbackFailure(id, ex);
                         }
                     }
                 });

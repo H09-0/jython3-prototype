@@ -228,6 +228,26 @@ class HeadlessUiTest {
             interp.resetExecutionState();
             assertEquals(0, toolkit.activeTimerCount());
             assertNull(interp.getGlobal("ticks"));
+
+            // Failing async timer callback stops timer, audits error, and notifies host error handler
+            AtomicReference<Throwable> seenAsyncErr = new AtomicReference<>();
+            interp.hostSession().setCallbackErrorHandler((src, err) -> seenAsyncErr.set(err));
+            interp.eval("""
+                import ui
+                def bad_tick():
+                    raise ValueError("timer-boom")
+                t_bad = ui.Timer(10, bad_tick)
+                t_bad.start()
+                """);
+            Thread.sleep(80);
+            assertEquals(0, toolkit.activeTimerCount(), "failing timer must stop itself");
+            var recorded = interp.hostSession().callbackFailures();
+            assertEquals(1, recorded.size());
+            assertEquals("ValueError",
+                    org.junit.jupiter.api.Assertions.assertInstanceOf(InterpreterException.class, recorded.get(0).error()).typeName());
+            assertEquals(recorded.get(0).error(), seenAsyncErr.get());
+            assertTrue(interp.hostSession().auditLog().entries().stream()
+                    .anyMatch(e -> !e.allowed() && "async_callback_error".equals(e.action())));
         }
 
         // Creator-owned HeadlessDispatcher cannot have its thread ownership hijacked from another thread

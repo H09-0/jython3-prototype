@@ -4,11 +4,15 @@ import org.example.jython3.runtime.PyErrors;
 import org.example.jython3.runtime.PyObject;
 import org.example.jython3.security.ExecutionContext;
 
+import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 
 /**
  * Per-interpreter host session binding {@link CapabilitySet}, {@link HostAuditLog},
@@ -21,10 +25,16 @@ public final class HostSession implements AutoCloseable {
         PyObject invoke(PyObject callable, PyObject... args);
     }
 
+    public record CallbackFailure(Instant timestamp, String sourceId, Throwable error) {}
+
+    private static final int MAX_FAILURE_RECORDS = 256;
+
     private final CapabilitySet capabilities;
     private final HostAuditLog auditLog = new HostAuditLog();
     private final Set<AutoCloseable> managedResources = new LinkedHashSet<>();
+    private final Deque<CallbackFailure> callbackFailures = new ArrayDeque<>(16);
     private final CallbackInvoker callbackInvoker;
+    private volatile BiConsumer<String, Throwable> callbackErrorHandler;
     private volatile ExecutionContext activeContext;
     private volatile boolean closed = false;
     private int activeCallbackDepth = 0;
@@ -43,6 +53,29 @@ public final class HostSession implements AutoCloseable {
     public HostAuditLog auditLog() { return auditLog; }
 
     public boolean isClosed() { return closed; }
+
+    public void setCallbackErrorHandler(BiConsumer<String, Throwable> handler) {
+        this.callbackErrorHandler = handler;
+    }
+
+    public void recordCallbackFailure(String sourceId, Throwable error) {
+        String msg = error != null ? error.toString() : "unknown";
+        auditLog.recordDenied(HostCapability.EVENTS, "async_callback_error", sourceId, msg);
+        synchronized (this) {
+            if (callbackFailures.size() >= MAX_FAILURE_RECORDS) {
+                callbackFailures.removeFirst();
+            }
+            callbackFailures.addLast(new CallbackFailure(Instant.now(), sourceId, error));
+        }
+        BiConsumer<String, Throwable> handler = this.callbackErrorHandler;
+        if (handler != null) {
+            handler.accept(sourceId, error);
+        }
+    }
+
+    public synchronized List<CallbackFailure> callbackFailures() {
+        return new ArrayList<>(callbackFailures);
+    }
 
     public void bindContext(ExecutionContext context) { this.activeContext = context; }
 
@@ -196,6 +229,7 @@ public final class HostSession implements AutoCloseable {
             managedResources.clear();
             activeWindows.clear();
             activeTimers.clear();
+            callbackFailures.clear();
             windowCount = 0;
             timerCount = 0;
         }

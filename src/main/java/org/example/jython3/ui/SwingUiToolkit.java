@@ -304,7 +304,12 @@ public final class SwingUiToolkit implements UiToolkit {
             this.intervalMs = intervalMs;
             this.timer = new Timer(intervalMs, e -> {
                 if (session.isClosed()) { stop(); return; }
-                session.invokeCallback(callback);
+                try {
+                    session.invokeCallback(callback);
+                } catch (RuntimeException ex) {
+                    stop();
+                    session.recordCallbackFailure(id, ex);
+                }
             });
         }
 
