@@ -13,5 +13,6 @@ public enum HostCapability {
     FILESYSTEM,
     PROCESS,
     NETWORK,
-    CONTROL
+    CONTROL,
+    THREADS
 }

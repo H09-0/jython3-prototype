@@ -95,6 +95,7 @@ import org.example.jython3.security.PolicySanitizer;
 import org.example.jython3.stdlib.BuiltinFunctions;
 import org.example.jython3.stdlib.BuiltinMethodDispatcher;
 import org.example.jython3.stdlib.BuiltinModules;
+import org.example.jython3.stdlib.modules.ThreadingModule;
 import org.example.jython3.ui.HeadlessUiToolkit;
 import org.example.jython3.ui.UiToolkit;
 
@@ -115,7 +116,7 @@ public class Jython3Interpreter implements AutoCloseable {
     private record AttrCacheEntry(PyClass cachedClass, long cachedClassVersion, PyObject cachedMember) {}
 
     // ─── Module Loader & Cache ───────────────────────────────────────────
-    private final ModuleLoader moduleLoader = new ModuleLoader();
+    private final ModuleLoader moduleLoader;
 
     public void addModulePath(java.nio.file.Path dir) {
         moduleLoader.addSearchPath(dir);
@@ -126,7 +127,7 @@ public class Jython3Interpreter implements AutoCloseable {
     }
     // ─── Bytecode Cache ──────────────────────────────────────────────────
     private static final int MAX_CACHE_SIZE = 2048;
-    private final Map<String, CompiledCode> bytecodeCache = new ConcurrentHashMap<>();
+    private final Map<String, CompiledCode> bytecodeCache;
     /** Gate for every Java class, constructor, method, and field access. */
     private final JavaAccessPolicy javaAccessPolicy;
     /** Gate for host file system, environment, and disk module execution. */
@@ -140,7 +141,7 @@ public class Jython3Interpreter implements AutoCloseable {
     private volatile boolean enforceLimits = false;
     private volatile boolean closed = false;
     private final HostSession hostSession;
-    private final ControlRegistry controlRegistry = new ControlRegistry();
+    private final ControlRegistry controlRegistry;
     private UiToolkit uiToolkit = new HeadlessUiToolkit();
 
     /** Requests cooperative cancellation of the currently running evaluation/generator. */
@@ -151,8 +152,8 @@ public class Jython3Interpreter implements AutoCloseable {
     }
 
     /** Built-in functions and standard types template for module initialization. */
-    private final Map<String, PyObject> builtinSymbols = new HashMap<>();
-    private final Map<String, PyBuiltinFunction> builtinTypes = new HashMap<>();
+    private final Map<String, PyObject> builtinSymbols;
+    private final Map<String, PyBuiltinFunction> builtinTypes;
     private final PyCaller interpreterCaller;
 
     public void clearCache() {
@@ -259,8 +260,8 @@ public class Jython3Interpreter implements AutoCloseable {
     }
 
     // ─── Runtime state ────────────────────────────────────────────────────
-    private final Map<String, PyObject> globals = new HashMap<>();
-    private Map<String, PyObject> currentGlobals = globals;
+    private final Map<String, PyObject> globals;
+    private Map<String, PyObject> currentGlobals;
     private FastStack stack;
     private Map<String, PyObject> currentLocals;
     /** Set of variable names declared `global` in the current function frame. */
@@ -334,7 +335,12 @@ public class Jython3Interpreter implements AutoCloseable {
      * Grants the standard Java allowlist and permissive host OS access.
      */
     public static Jython3Interpreter trusted() {
-        return new Jython3Interpreter(AllowlistPolicy.trusted(), HostAccessPolicy.PERMISSIVE, ExecutionLimits.TRUSTED);
+        return new Jython3Interpreter(
+                AllowlistPolicy.trusted(),
+                HostAccessPolicy.PERMISSIVE,
+                ExecutionLimits.TRUSTED,
+                ExceptionTypeRegistry.standard(),
+                CapabilitySet.of(org.example.jython3.host.HostCapability.THREADS));
     }
 
     /**
@@ -398,11 +404,41 @@ public class Jython3Interpreter implements AutoCloseable {
         this.hostAccessPolicy = Objects.requireNonNull(hostAccessPolicy, "hostAccessPolicy");
         this.executionLimits = Objects.requireNonNull(executionLimits, "executionLimits");
         this.exceptionTypes = Objects.requireNonNull(exceptionTypes, "exceptionTypes");
+        this.moduleLoader = new ModuleLoader();
+        this.bytecodeCache = new ConcurrentHashMap<>();
+        this.controlRegistry = new ControlRegistry();
+        this.builtinSymbols = new ConcurrentHashMap<>();
+        this.builtinTypes = new ConcurrentHashMap<>();
+        this.globals = new ConcurrentHashMap<>();
+        this.currentGlobals = this.globals;
         this.hostSession = new HostSession(
                 capabilities != null ? capabilities : CapabilitySet.none(),
                 this::invokeHostCallback,
                 this.javaAccessPolicy);
-        this.interpreterCaller = new PyCaller() {
+        this.interpreterCaller = createCaller();
+        registerBuiltins();
+    }
+
+    /** Child-worker constructor sharing globals/session/caches with isolated per-thread VM stacks. */
+    private Jython3Interpreter(Jython3Interpreter parent) {
+        this.javaAccessPolicy = parent.javaAccessPolicy;
+        this.hostAccessPolicy = parent.hostAccessPolicy;
+        this.executionLimits = parent.executionLimits;
+        this.exceptionTypes = parent.exceptionTypes;
+        this.moduleLoader = parent.moduleLoader;
+        this.bytecodeCache = parent.bytecodeCache;
+        this.controlRegistry = parent.controlRegistry;
+        this.uiToolkit = parent.uiToolkit;
+        this.builtinSymbols = parent.builtinSymbols;
+        this.builtinTypes = parent.builtinTypes;
+        this.globals = parent.globals;
+        this.currentGlobals = parent.globals;
+        this.hostSession = parent.hostSession;
+        this.interpreterCaller = createCaller();
+    }
+
+    private PyCaller createCaller() {
+        return new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
                 return callPyCallable(callable, args);
             }
@@ -462,7 +498,65 @@ public class Jython3Interpreter implements AutoCloseable {
                 return currentLocals != null ? currentLocals : globals;
             }
         };
-        registerBuiltins();
+    }
+
+    private ThreadingModule.SpawnedThread spawnVirtualThread(
+            PyObject target, PyObject[] posArgs, Map<String, PyObject> kwArgs, String name, boolean daemon) {
+        final ExecutionContext parentCtx = this.currentContext;
+        final Jython3Interpreter worker = new Jython3Interpreter(this);
+        final var failureRef = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        final Thread[] threadRef = new Thread[1];
+        final AutoCloseable cleanup = () -> {
+            worker.cancel();
+            Thread t = threadRef[0];
+            if (t != null && t.isAlive()) {
+                t.interrupt();
+                try { t.join(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+        };
+        hostSession.acquireThreadSlot(cleanup, name);
+
+        Thread vThread = Thread.ofVirtual().name(name).unstarted(() -> {
+            ExceptionTypeRegistry prevTypes = ExceptionTypeRegistry.install(worker.exceptionTypes);
+            PyCaller prevCaller = PyCaller.CURRENT.get();
+            PyCaller.CURRENT.set(worker.interpreterCaller);
+            try {
+                worker.stack = new FastStack();
+                worker.currentGlobals = worker.globals;
+                worker.currentLocals = worker.globals;
+                worker.currentContext = new ExecutionContext(worker.executionLimits, parentCtx);
+                worker.enforceLimits = worker.currentContext.hasActiveLimits();
+                worker.interpreterCaller.callWithKw(target, posArgs, kwArgs);
+            } catch (Throwable t) {
+                failureRef.set(t);
+                hostSession.recordCallbackFailure("thread:" + name, t);
+            } finally {
+                worker.currentContext = null;
+                worker.enforceLimits = false;
+                if (prevCaller != null) PyCaller.CURRENT.set(prevCaller);
+                else PyCaller.CURRENT.remove();
+                ExceptionTypeRegistry.restore(prevTypes);
+                hostSession.releaseThreadSlot(cleanup);
+            }
+        });
+        threadRef[0] = vThread;
+
+        return new ThreadingModule.SpawnedThread() {
+            @Override public String name() { return vThread.getName(); }
+            @Override public long ident() { return vThread.threadId(); }
+            @Override public boolean isAlive() { return vThread.isAlive(); }
+            @Override public void start() { vThread.start(); }
+            @Override public void join(long timeoutMs) {
+                try {
+                    if (timeoutMs < 0) vThread.join();
+                    else if (timeoutMs > 0) vThread.join(timeoutMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw PyErrors.error("KeyboardInterrupt", "Interrupted joining thread '" + name + "'");
+                }
+            }
+            @Override public Throwable failure() { return failureRef.get(); }
+        };
     }
 
     private static PyClass findDefiningClass(PyClass start, PyFunction targetFn) {
@@ -3182,6 +3276,7 @@ public class Jython3Interpreter implements AutoCloseable {
             case "random" -> BuiltinModules.random();
             case "ui" -> BuiltinModules.ui(hostSession, uiToolkit);
             case "control" -> BuiltinModules.control(hostSession, controlRegistry, uiToolkit);
+            case "threading" -> BuiltinModules.threading(hostSession, this::spawnVirtualThread);
             default     -> null;
         };
         if (mod != null) {

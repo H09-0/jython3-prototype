@@ -46,8 +46,10 @@ public final class HostSession implements AutoCloseable {
     private int activeCallbackDepth = 0;
     private int windowCount = 0;
     private int timerCount = 0;
+    private int threadCount = 0;
     private final Set<AutoCloseable> activeWindows = new LinkedHashSet<>();
     private final Set<AutoCloseable> activeTimers = new LinkedHashSet<>();
+    private final Set<AutoCloseable> activeThreads = new LinkedHashSet<>();
 
     public HostSession(CapabilitySet capabilities, CallbackInvoker callbackInvoker) {
         this(capabilities, callbackInvoker, DenyAllPolicy.INSTANCE);
@@ -179,6 +181,33 @@ public final class HostSession implements AutoCloseable {
         return timerCount;
     }
 
+    public synchronized int activeThreadCount() {
+        return threadCount;
+    }
+
+    public synchronized void acquireThreadSlot(AutoCloseable threadHandle, String threadName) {
+        if (closed) {
+            throw PyErrors.error("SecurityError", "host session is closed");
+        }
+        int maxT = capabilities.maxThreads();
+        if (threadCount >= maxT) {
+            auditLog.recordDenied(HostCapability.THREADS, "spawn_thread", threadName, "maxThreads=" + maxT);
+            throw PyErrors.error("RuntimeError", "maximum thread quota (" + maxT + ") exceeded");
+        }
+        threadCount++;
+        if (threadHandle != null) {
+            activeThreads.add(threadHandle);
+            managedResources.add(threadHandle);
+        }
+    }
+
+    public synchronized void releaseThreadSlot(AutoCloseable threadHandle) {
+        if (threadHandle != null && activeThreads.remove(threadHandle)) {
+            threadCount = Math.max(0, threadCount - 1);
+            managedResources.remove(threadHandle);
+        }
+    }
+
     public synchronized void acquireWindowSlot(AutoCloseable window, String title) {
         if (closed) throw PyErrors.error("SecurityError", "host session is closed");
         int maxW = capabilities.maxWindows();
@@ -268,9 +297,11 @@ public final class HostSession implements AutoCloseable {
             managedResources.clear();
             activeWindows.clear();
             activeTimers.clear();
+            activeThreads.clear();
             callbackFailures.clear();
             windowCount = 0;
             timerCount = 0;
+            threadCount = 0;
         }
         for (int i = toClose.size() - 1; i >= 0; i--) {
             safeClose(toClose.get(i));

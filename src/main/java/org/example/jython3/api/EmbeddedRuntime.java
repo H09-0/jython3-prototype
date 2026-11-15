@@ -40,7 +40,8 @@ public final class EmbeddedRuntime implements AutoCloseable {
             "lazy-generators",
             "yield-from",
             "callback-timeout-watchdog",
-            "audit-log"
+            "audit-log",
+            "virtual-threads"
     );
 
     private final HostAppBridge bridge;

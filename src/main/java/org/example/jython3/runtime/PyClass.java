@@ -9,16 +9,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class PyClass implements PyObject {
     private final String name;
     private final PyClass baseClass;
     private final Map<String, PyObject> members;
     private final List<PyClass> bases = new ArrayList<>();
-    private final Map<String, PyObject> memberCache = new HashMap<>();
+    private final Map<String, PyObject> memberCache = new ConcurrentHashMap<>();
     private final Set<PyClass> subclasses = Collections.newSetFromMap(new WeakHashMap<>());
     private List<PyClass> mro;
-    private long version = 1;
+    private volatile long version = 1;
 
     /**
      * Marks the root of the exception hierarchy. Every class that has this
@@ -78,7 +79,7 @@ public final class PyClass implements PyObject {
      * Invalidates member caches and increments the class version counter for this
      * class and all derived subclasses across the inheritance tree.
      */
-    public void invalidateHierarchy() {
+    public synchronized void invalidateHierarchy() {
         this.version++;
         this.memberCache.clear();
         for (PyClass sub : subclasses) {
@@ -86,12 +87,12 @@ public final class PyClass implements PyObject {
         }
     }
 
-    public void setMember(String attr, PyObject val) {
+    public synchronized void setMember(String attr, PyObject val) {
         members.put(attr, val);
         invalidateHierarchy();
     }
 
-    public PyObject removeMember(String attr) {
+    public synchronized PyObject removeMember(String attr) {
         PyObject removed = members.remove(attr);
         invalidateHierarchy();
         return removed;

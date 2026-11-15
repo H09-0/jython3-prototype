@@ -25,6 +25,7 @@ public final class CapabilitySet {
     private final int maxTimers;
     private final int maxListenersPerNode;
     private final int maxCallbackDepth;
+    private final int maxThreads;
     private final Duration callbackTimeout;
 
     private CapabilitySet(Builder b) {
@@ -37,6 +38,7 @@ public final class CapabilitySet {
         this.maxTimers = b.maxTimers;
         this.maxListenersPerNode = b.maxListenersPerNode;
         this.maxCallbackDepth = b.maxCallbackDepth;
+        this.maxThreads = b.maxThreads;
         this.callbackTimeout = b.callbackTimeout;
     }
 
@@ -80,6 +82,7 @@ public final class CapabilitySet {
     public int maxTimers() { return maxTimers; }
     public int maxListenersPerNode() { return maxListenersPerNode; }
     public int maxCallbackDepth() { return maxCallbackDepth; }
+    public int maxThreads() { return maxThreads; }
     public Duration callbackTimeout() { return callbackTimeout; }
 
     public static final class Builder {
@@ -92,6 +95,7 @@ public final class CapabilitySet {
         private int maxTimers = 16;
         private int maxListenersPerNode = 32;
         private int maxCallbackDepth = 16;
+        private int maxThreads = 16;
         private Duration callbackTimeout = Duration.ofMillis(500);
 
         public Builder allowHardwareAdapters(boolean allow) {
@@ -152,6 +156,12 @@ public final class CapabilitySet {
         public Builder maxCallbackDepth(int maxCallbackDepth) {
             if (maxCallbackDepth < 1) throw new IllegalArgumentException("maxCallbackDepth < 1");
             this.maxCallbackDepth = maxCallbackDepth;
+            return this;
+        }
+
+        public Builder maxThreads(int maxThreads) {
+            if (maxThreads < 0) throw new IllegalArgumentException("maxThreads < 0");
+            this.maxThreads = maxThreads;
             return this;
         }
 

@@ -14,6 +14,7 @@ import org.example.jython3.stdlib.modules.OsModule;
 import org.example.jython3.stdlib.modules.RandomModule;
 import org.example.jython3.stdlib.modules.ReModule;
 import org.example.jython3.stdlib.modules.SysModule;
+import org.example.jython3.stdlib.modules.ThreadingModule;
 import org.example.jython3.stdlib.modules.TimeModule;
 import org.example.jython3.stdlib.modules.UiModule;
 import org.example.jython3.ui.UiToolkit;
@@ -39,5 +40,8 @@ public final class BuiltinModules {
     public static PyModule ui(HostSession session, UiToolkit toolkit) { return UiModule.create(session, toolkit); }
     public static PyModule control(HostSession session, ControlRegistry registry, UiToolkit toolkit) {
         return ControlModule.create(session, registry, toolkit);
+    }
+    public static PyModule threading(HostSession session, ThreadingModule.ThreadSpawner spawner) {
+        return ThreadingModule.create(session, spawner);
     }
 }
