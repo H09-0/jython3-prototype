@@ -24,7 +24,7 @@ For completed historical releases, see [CHANGELOG.md](../CHANGELOG.md).
 ## Upcoming Language & Platform Phases
 
 ### Language Conformance Expansion
-- [ ] Generator expressions `(x for x in seq)` and lazy generator frame suspension with `.send()`, `.throw()`, and `.close()`.
+- [ ] Generator coroutine `.send()`, `.throw()`, `.close()`, and `yield from` delegation.
 - [ ] PEP 3110 exception-target deletion on `raise` exit paths inside `except ... as e:` without `finally`.
 - [ ] Dynamic 3-argument `type(name, bases, dict)` and MRO / `__bases__` mutation support.
 - [ ] Set bitwise operators (`|`, `&`, `-`, `^`) and `frozenset`.
