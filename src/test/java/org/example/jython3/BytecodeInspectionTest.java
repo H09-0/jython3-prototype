@@ -52,9 +52,9 @@ class BytecodeInspectionTest {
                 return total, squares, d, s, lambda k: k + total
             """;
         CompiledCode code = interp.compileSource(complex);
-        BytecodeValidator.validate(code);
-
         String dis = interp.disassemble(complex);
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                () -> BytecodeValidator.validate(code), dis);
         assertTrue(dis.contains("=== <module> ==="), dis);
         assertTrue(dis.contains("=== fn ==="), dis);
         assertTrue(dis.contains("PUSH_EXCEPT_HANDLER"), dis);
@@ -95,7 +95,21 @@ class BytecodeInspectionTest {
                     if i == 2:
                         raise ValueError("suppressed")
                     seen.append(i * 10)
-            ok = seen == [1, 10, 2, 3, 30]
+
+            # Regression: exception while evaluating except-clause type with finally in a for loop
+            fin_seen = []
+            for i in [1, 2]:
+                try:
+                    try:
+                        raise KeyError("orig")
+                    except (1 // 0):
+                        pass
+                    finally:
+                        fin_seen.append(i)
+                except ZeroDivisionError:
+                    fin_seen.append("z")
+
+            ok = seen == [1, 10, 2, 3, 30] and fin_seen == [1, "z", 2, "z"]
             """);
         assertEquals(PyBool.TRUE, interp.getGlobal("ok"), String.valueOf(interp.getGlobal("seen")));
     }

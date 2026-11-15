@@ -834,12 +834,22 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         }
 
         // No clause matched (or exception in else / clause match): run finally, then propagate.
+        if (!clauseMatchErrorPatches.isEmpty()) {
+            int skipStub = b.size();
+            b.emitRaw(OpCode.JUMP, 0);
+            int matchErrorStub = b.size();
+            for (int mp : clauseMatchErrorPatches) {
+                b.patch(mp, matchErrorStub);
+            }
+            // Evaluating except-clause type raised while the original exception was still on
+            // the stack; drop the original exception underneath the new one before finally.
+            b.emit(OpCode.ROT_TWO);
+            b.emit(OpCode.POP_TOP);
+            b.patch(skipStub, b.size());
+        }
         int unmatchedFinallyPc = b.size();
         if (elsePushIdx >= 0) {
             b.patch(elsePushIdx, unmatchedFinallyPc);
-        }
-        for (int mp : clauseMatchErrorPatches) {
-            b.patch(mp, unmatchedFinallyPc);
         }
         emitExceptionalFinallyAndReraise(scope);
 
