@@ -187,6 +187,43 @@ public class Jython3Interpreter {
     /** Maximum call stack depth – prevents StackOverflowError from deep recursion. */
     private static final int MAX_CALL_DEPTH = 500;
 
+    /**
+     * Python call depth that is not represented on {@link #callStack}: one level per
+     * nested {@code run()} (re-entrant calls such as {@code __init__}, {@code __enter__},
+     * {@code __exit__}, class bodies, generator draining, isolated module execution),
+     * plus any caller frames temporarily hidden when an isolated run clears
+     * {@code callStack}. Counted toward {@link #MAX_CALL_DEPTH} so recursion through
+     * these paths raises {@code RecursionError} instead of overflowing the Java stack.
+     */
+    private int nestedDepth = 0;
+
+    private int callDepth() { return callStack.size() + nestedDepth; }
+
+    private void checkCallDepth() {
+        if (callDepth() >= MAX_CALL_DEPTH) {
+            throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
+        }
+    }
+
+    /**
+     * Runs {@code code} in a nested interpreter loop. Accounts the nesting in
+     * {@link #nestedDepth}, and converts a JVM stack overflow (possible when the host
+     * thread has a small stack) into a Python {@code RecursionError} at this boundary
+     * so it never escapes to the embedding application as a raw {@link StackOverflowError}.
+     */
+    private void runNested(CompiledCode code, int hiddenFrames) {
+        checkCallDepth();
+        int added = hiddenFrames + 1;
+        nestedDepth += added;
+        try {
+            run(code);
+        } catch (StackOverflowError overflow) {
+            throw PyErrors.error("RecursionError", "maximum recursion depth exceeded (host stack exhausted)");
+        } finally {
+            nestedDepth -= added;
+        }
+    }
+
     // ─── Runtime state ────────────────────────────────────────────────────
     private final Map<String, PyObject> globals = new HashMap<>();
     private Map<String, PyObject> currentGlobals = globals;
@@ -500,6 +537,7 @@ public class Jython3Interpreter {
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
+            nestedDepth = 0;
             yieldCollector = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
@@ -552,6 +590,7 @@ public class Jython3Interpreter {
             exceptStack = new ArrayDeque<>();
             activeExceptions = new ArrayDeque<>();
             callStack.clear();
+            nestedDepth = 0;
             yieldCollector = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
@@ -588,6 +627,7 @@ public class Jython3Interpreter {
         currentLocals = globals;
         if (stack != null) stack.clear();
         callStack.clear();
+        nestedDepth = 0;
         exceptStack.clear();
         activeExceptions.clear();
         yieldCollector = null;
@@ -627,7 +667,7 @@ public class Jython3Interpreter {
             currentFunction = null;
             currentFile = filename != null ? filename : "<module>";
             currentLine = 0;
-            run(code);
+            runNested(code, savedCallStack.size());
         } finally {
             stack = savedStack;
             currentLocals = savedLocals;
@@ -673,7 +713,7 @@ public class Jython3Interpreter {
             currentFunc = fn.name();
             currentFunction = fn;
             yieldCollector = collected;
-            run(fn.code());
+            runNested(fn.code(), savedFrames.size());
         } finally {
             yieldCollector = savedCollector;
             callStack.clear();
@@ -1234,14 +1274,22 @@ public class Jython3Interpreter {
                     }
 
                     // Execute class suite in an isolated scope to collect members
+                    // The class body gets its own operand stack and handler stack: a handler
+                    // belonging to the enclosing code must never be popped by the nested loop.
                     var classLocals = new HashMap<String, PyObject>();
                     var savedLocals = currentLocals;
                     var savedStack = stack;
-                    currentLocals = classLocals;
-                    stack = new FastStack();
-                    run(codeWrap.code());
-                    currentLocals = savedLocals;
-                    stack = savedStack;
+                    var savedExceptStack = exceptStack;
+                    try {
+                        currentLocals = classLocals;
+                        stack = new FastStack();
+                        exceptStack = new ArrayDeque<>();
+                        runNested(codeWrap.code(), 0);
+                    } finally {
+                        currentLocals = savedLocals;
+                        stack = savedStack;
+                        exceptStack = savedExceptStack;
+                    }
 
                     var pyClass = new PyClass(className, bases.isEmpty() ? null : bases.get(0), classLocals, bases);
                     if (currentLocals != null) {
@@ -1278,7 +1326,7 @@ public class Jython3Interpreter {
                             var genLocals = bindArgs(fn, callArgs, kwNames, kwValues);
                             stack.push(new PyGenerator(fn, genLocals));
                         } else {
-                            if (callStack.size() >= MAX_CALL_DEPTH) {
+                            if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
@@ -1315,7 +1363,7 @@ public class Jython3Interpreter {
                         }
                     } else if (callable instanceof PyFunction fn) {
                         // Regular function call with keyword args — uses inline call path
-                        if (callStack.size() >= MAX_CALL_DEPTH) {
+                        if (callDepth() >= MAX_CALL_DEPTH) {
                             throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                         }
                         callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
@@ -1351,7 +1399,7 @@ public class Jython3Interpreter {
                             var genLocals = bindArgs(fn, callArgs, null, null);
                             stack.push(new PyGenerator(fn, genLocals));
                         } else {
-                            if (callStack.size() >= MAX_CALL_DEPTH) {
+                            if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
@@ -1394,7 +1442,7 @@ public class Jython3Interpreter {
                             var genLocals = bindArgs(fn, args, null, null);
                             stack.push(new PyGenerator(fn, genLocals));
                         } else {
-                            if (callStack.size() >= MAX_CALL_DEPTH) {
+                            if (callDepth() >= MAX_CALL_DEPTH) {
                                 throw PyErrors.error("RecursionError", "maximum recursion depth exceeded");
                             }
                             callStack.push(new Frame(code, pc + 1, currentLocals, stack, exceptStack,
@@ -2073,7 +2121,7 @@ public class Jython3Interpreter {
                 globalCells = null;
                 currentFunc = fn.name();
                 currentFunction = fn;
-                run(fn.code());
+                runNested(fn.code(), 0);
                 return stack.isEmpty() ? new PyNull() : stack.pop();
             } finally {
                 // Always restore the caller's frame state, including when the callee raises.
