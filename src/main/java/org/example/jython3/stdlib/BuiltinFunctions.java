@@ -616,6 +616,9 @@ public final class BuiltinFunctions {
             if (args[0] instanceof PyGenerator) {
                 return PyBool.of("send".equals(name) || "throw".equals(name) || "close".equals(name));
             }
+            if (args[0] instanceof org.example.jython3.runtime.PyHostHandle hh) {
+                return PyBool.of(hh.hasAttr(name));
+            }
             return PyBool.FALSE;
         }));
 
@@ -664,6 +667,9 @@ public final class BuiltinFunctions {
                 } catch (InterpreterException ie) {
                     if (!"AttributeError".equals(ie.typeName())) throw ie;
                 }
+            } else if (args[0] instanceof org.example.jython3.runtime.PyHostHandle hh) {
+                PyObject val = hh.getAttr(name);
+                if (val != null) return val;
             } else if (args[0] instanceof PyJavaObject jo) {
                 try {
                     return jo.getMember(name);
@@ -699,6 +705,10 @@ public final class BuiltinFunctions {
             }
             if (args[0] instanceof PyModule mod) {
                 mod.attrs().put(s.value(), args[2]);
+                return new PyNull();
+            }
+            if (args[0] instanceof org.example.jython3.runtime.PyHostHandle hh) {
+                hh.setAttr(s.value(), args[2]);
                 return new PyNull();
             }
             throw PyErrors.error("AttributeError", "cannot set attribute on '" + typeName(args[0]) + "'");
@@ -926,6 +936,8 @@ public final class BuiltinFunctions {
                     "issubset", "issuperset", "symmetric_difference", "union");
         } else if (o instanceof PyGenerator) {
             Collections.addAll(names, "close", "send", "throw");
+        } else if (o instanceof org.example.jython3.runtime.PyHostHandle hh) {
+            names.addAll(hh.attrNames());
         } else if (o instanceof PyStr) {
             Collections.addAll(names, "count", "endswith", "find", "isalnum", "isalpha", "isdigit", "join", "lower", "replace", "split", "startswith", "strip", "upper");
         } else if (o instanceof PyFunction || o instanceof PyBuiltinFunction || o instanceof PyBoundMethod) {

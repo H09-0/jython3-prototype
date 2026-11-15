@@ -7,5 +7,6 @@ public sealed interface PyObject permits
         PyList, PyTuple, PySet, PyFrozenSet, PyDict, PyIterator, PyModule, PyBuiltinFunction, PyFloat, PyException,
         PyCompiledCodeWrapper, PyGenerator, PySlice, PyCell,
         PyTraceback, PyFrameInfo, PyCodeInfo,
+        PyHostHandle,
         PyJavaClass, PyJavaObject, PyJavaMethod,
         PyJavaPackage {}

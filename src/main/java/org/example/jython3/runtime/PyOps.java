@@ -161,6 +161,7 @@ public final class PyOps {
                 case PyTraceback tb -> true;
                 case PyFrameInfo fr -> true;
                 case PyCodeInfo co -> true;
+                case PyHostHandle hh -> true;
         };
     }
 
@@ -216,6 +217,7 @@ public final class PyOps {
         if (a instanceof PyClass || a instanceof PyException || a instanceof PyFunction
                 || a instanceof PyBuiltinFunction
                 || a instanceof PyInstance || a instanceof PyModule
+                || a instanceof PyHostHandle
                 || a instanceof PyTraceback || a instanceof PyFrameInfo || a instanceof PyCodeInfo) {
             return a == b;
         }
@@ -353,6 +355,7 @@ public final class PyOps {
             case PyTraceback tb -> "traceback";
             case PyFrameInfo fr -> "frame";
             case PyCodeInfo co -> "code";
+            case PyHostHandle hh -> hh.handleTypeName();
         };
     }
 

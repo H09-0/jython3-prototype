@@ -82,6 +82,9 @@ import org.example.jython3.security.ExecutionContext;
 import org.example.jython3.security.ExecutionLimits;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.security.JavaAccessPolicy;
+import org.example.jython3.host.CapabilitySet;
+import org.example.jython3.host.HostSession;
+import org.example.jython3.runtime.PyHostHandle;
 import org.example.jython3.security.PolicySanitizer;
 import org.example.jython3.stdlib.BuiltinFunctions;
 import org.example.jython3.stdlib.BuiltinMethodDispatcher;
@@ -98,7 +101,7 @@ import static org.example.jython3.runtime.PyOps.toDouble;
 import static org.example.jython3.runtime.PyOps.toInt;
 import static org.example.jython3.runtime.PyOps.typeName;
 
-public class Jython3Interpreter {
+public class Jython3Interpreter implements AutoCloseable {
 
     // ─── Inline Caches ───────────────────────────────────────────────────
     private record AttrCacheEntry(PyClass cachedClass, long cachedClassVersion, PyObject cachedMember) {}
@@ -127,6 +130,8 @@ public class Jython3Interpreter {
     /** Active execution context tracking consumption across frames. */
     private volatile ExecutionContext currentContext;
     private volatile boolean enforceLimits = false;
+    private volatile boolean closed = false;
+    private final HostSession hostSession;
 
     /** Requests cooperative cancellation of the currently running evaluation/generator. */
     public void cancel() {
@@ -367,10 +372,25 @@ public class Jython3Interpreter {
                               HostAccessPolicy hostAccessPolicy,
                               ExecutionLimits executionLimits,
                               ExceptionTypeRegistry exceptionTypes) {
+        this(javaAccessPolicy, hostAccessPolicy, executionLimits, exceptionTypes, CapabilitySet.none());
+    }
+
+    /**
+     * Creates an interpreter with explicit access policies, resource limits,
+     * exception-type registry, and deny-by-default host {@link CapabilitySet}.
+     */
+    public Jython3Interpreter(JavaAccessPolicy javaAccessPolicy,
+                              HostAccessPolicy hostAccessPolicy,
+                              ExecutionLimits executionLimits,
+                              ExceptionTypeRegistry exceptionTypes,
+                              CapabilitySet capabilities) {
         this.javaAccessPolicy = Objects.requireNonNull(javaAccessPolicy, "javaAccessPolicy");
         this.hostAccessPolicy = Objects.requireNonNull(hostAccessPolicy, "hostAccessPolicy");
         this.executionLimits = Objects.requireNonNull(executionLimits, "executionLimits");
         this.exceptionTypes = Objects.requireNonNull(exceptionTypes, "exceptionTypes");
+        this.hostSession = new HostSession(
+                capabilities != null ? capabilities : CapabilitySet.none(),
+                this::invokeHostCallback);
         this.interpreterCaller = new PyCaller() {
             @Override public PyObject call(PyObject callable, PyObject[] args) {
                 return callPyCallable(callable, args);
@@ -458,6 +478,75 @@ public class Jython3Interpreter {
     /** The policy this interpreter applies to Java access. */
     public JavaAccessPolicy javaAccessPolicy() {
         return javaAccessPolicy;
+    }
+
+    /** The capability-gated host session owned by this interpreter. */
+    public HostSession hostSession() {
+        return hostSession;
+    }
+
+    public boolean isClosed() {
+        return closed;
+    }
+
+    /**
+     * Invokes a Python callback from a host UI/event/timer/control adapter with
+     * thread-safe context installation, bounded callback timeout/limits, and cleanup.
+     */
+    public synchronized PyObject invokeHostCallback(PyObject callable, PyObject... args) {
+        if (closed) {
+            throw PyErrors.error("RuntimeError", "interpreter is closed");
+        }
+        ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
+        PyCaller previousCaller = PyCaller.CURRENT.get();
+        PyCaller.CURRENT.set(interpreterCaller);
+        ExecutionContext prevCtx = currentContext;
+        boolean prevEnforce = enforceLimits;
+        boolean installedFreshContext = false;
+        try {
+            if (currentContext == null) {
+                var cbLimits = ExecutionLimits.builder()
+                        .maxInstructions(executionLimits.maxInstructions())
+                        .timeout(hostSession.capabilities().callbackTimeout())
+                        .maxSourceLength(executionLimits.maxSourceLength())
+                        .maxCollectionSize(executionLimits.maxCollectionSize())
+                        .maxStringLength(executionLimits.maxStringLength())
+                        .maxExponent(executionLimits.maxExponent())
+                        .build();
+                currentContext = new ExecutionContext(cbLimits);
+                enforceLimits = currentContext.hasActiveLimits();
+                hostSession.bindContext(currentContext);
+                installedFreshContext = true;
+                if (stack == null) stack = new FastStack();
+                if (currentGlobals == null) currentGlobals = globals;
+                if (currentLocals == null) currentLocals = globals;
+            }
+            return callPyCallable(callable, args != null ? args : new PyObject[0]);
+        } finally {
+            if (installedFreshContext) {
+                hostSession.bindContext(prevCtx);
+                currentContext = prevCtx;
+                enforceLimits = prevEnforce;
+            }
+            if (previousCaller != null) {
+                PyCaller.CURRENT.set(previousCaller);
+            } else {
+                PyCaller.CURRENT.remove();
+            }
+            ExceptionTypeRegistry.restore(previousTypes);
+        }
+    }
+
+    @Override
+    public void close() {
+        closed = true;
+        cancel();
+        hostSession.close();
+        globals.clear();
+        moduleLoader.clear();
+        freeStacks.clear();
+        freeExceptStacks.clear();
+        freeActiveExceptions.clear();
     }
 
     /** The exception classes owned by this interpreter. */
@@ -687,6 +776,7 @@ public class Jython3Interpreter {
      * {@code filename}.
      */
     public void eval(String source, String filename) {
+        if (closed) throw PyErrors.error("RuntimeError", "interpreter is closed");
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
         PyCaller previousCaller = PyCaller.CURRENT.get();
         PyCaller.CURRENT.set(interpreterCaller);
@@ -702,6 +792,7 @@ public class Jython3Interpreter {
             activeGenerator = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
+            hostSession.bindContext(currentContext);
             currentFile = filename;
             currentFunc = "<module>";
             currentFunction = null;
@@ -721,6 +812,7 @@ public class Jython3Interpreter {
                 executionTime += System.nanoTime() - execStart;
             }
         } finally {
+            hostSession.bindContext(null);
             activeGenerator = null;
             currentContext = null;
             enforceLimits = false;
@@ -744,6 +836,7 @@ public class Jython3Interpreter {
      * Executes precompiled bytecode directly, attributing traceback frames to {@code filename}.
      */
     public void evalCode(CompiledCode code, String filename) {
+        if (closed) throw PyErrors.error("RuntimeError", "interpreter is closed");
         ExceptionTypeRegistry previousTypes = ExceptionTypeRegistry.install(exceptionTypes);
         PyCaller previousCaller = PyCaller.CURRENT.get();
         PyCaller.CURRENT.set(interpreterCaller);
@@ -759,6 +852,7 @@ public class Jython3Interpreter {
             activeGenerator = null;
             currentContext = new ExecutionContext(executionLimits);
             enforceLimits = currentContext.hasActiveLimits();
+            hostSession.bindContext(currentContext);
             currentFile = filename;
             currentFunc = "<module>";
             currentFunction = null;
@@ -772,6 +866,7 @@ public class Jython3Interpreter {
                 executionTime += System.nanoTime() - execStart;
             }
         } finally {
+            hostSession.bindContext(null);
             activeGenerator = null;
             currentContext = null;
             enforceLimits = false;
@@ -789,6 +884,7 @@ public class Jython3Interpreter {
      * without reconstructing the interpreter or re-registering policies.
      */
     public void resetExecutionState() {
+        hostSession.reset();
         globals.clear();
         moduleLoader.clear();
         registerBuiltins();
@@ -1302,6 +1398,8 @@ public class Jython3Interpreter {
                         cls.setMember(attr, val);
                     } else if (obj instanceof PyJavaObject jo) {
                         jo.setMember(attr, val);
+                    } else if (obj instanceof PyHostHandle hh) {
+                        hh.setAttr(attr, val);
                     } else {
                         throw PyErrors.error("AttributeError", "cannot set attribute on '" + typeName(obj) + "'");
                     }
@@ -2301,6 +2399,16 @@ public class Jython3Interpreter {
                         stack.push("__class__".equals(attr)
                                 ? BuiltinFunctions.typeOf(gen, builtinTypes)
                                 : BuiltinMethodDispatcher.generatorMethod(gen, attr));
+                    } else if (obj instanceof PyHostHandle hh) {
+                        if ("__class__".equals(attr)) {
+                            stack.push(BuiltinFunctions.typeOf(hh, builtinTypes));
+                        } else {
+                            PyObject val = hh.getAttr(attr);
+                            if (val == null) {
+                                throw PyErrors.error("AttributeError", "'" + hh.handleTypeName() + "' object has no attribute '" + attr + "'");
+                            }
+                            stack.push(val);
+                        }
                     } else if ("__class__".equals(attr)) {
                         stack.push(BuiltinFunctions.typeOf(obj, builtinTypes));
                     } else {
@@ -2668,6 +2776,7 @@ public class Jython3Interpreter {
         if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy);
         if (obj instanceof PyFrozenSet fs) return BuiltinMethodDispatcher.frozenSetMethod(fs, attr, javaAccessPolicy);
         if (obj instanceof PyGenerator gen) return BuiltinMethodDispatcher.generatorMethod(gen, attr);
+        if (obj instanceof PyHostHandle hh) return hh.getAttr(attr);
         if (obj instanceof PyStr s)     return BuiltinMethodDispatcher.strMethod(s, attr);
         return null;
     }
