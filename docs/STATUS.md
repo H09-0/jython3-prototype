@@ -46,8 +46,15 @@
 - **Security model boundary**: In-process `JavaAccessPolicy` and `HostAccessPolicy` provide defense-in-depth gating, not a complete sandbox against adversarial host-JVM / native / side-channel escapes. Run untrusted code inside OS process/container isolation.
 
 ### Standard Library Modules
-- Java-backed built-in modules: `math`, `sys` (`argv`, `path`, `modules`, `version`, `platform`, `maxsize`, `exit`), `os` (policy-gated), `io` (policy-gated), `json` (strict RFC 8259 parser raising `JSONDecodeError`, cycle detection), `re`, `time`, `random`.
+- Java-backed built-in modules: `math`, `sys` (`argv`, `path`, `modules`, `version`, `platform`, `maxsize`, `exit`), `os` (policy-gated), `io` (policy-gated), `json` (strict RFC 8259 parser raising `JSONDecodeError`, cycle detection), `re`, `time`, `random`, `ui` (capability-gated), `control` (capability-gated).
 - Pure-Python modules (`modules/`): `collections` (`Counter`, `defaultdict`, `deque`), `functools` (`reduce`, `partial`, `lru_cache`) — subject to `HostAccessPolicy.canImportFromDisk`.
+
+### Host Capabilities, Embedded UI & Control Layer
+- **Deny-by-default Capability API (`org.example.jython3.host`)**: `HostCapability` (`UI`, `EVENTS`, `INPUT`, `TIMER`, `FILESYSTEM`, `PROCESS`, `NETWORK`, `CONTROL`), immutable `CapabilitySet` (per-device/per-command allowlists, `maxWindows`, `maxTimers`, `maxListenersPerNode`, `maxCallbackDepth`, `callbackTimeout`), bounded `HostAuditLog`, and `HostSession` bound to `ExecutionContext` with deterministic teardown on `resetExecutionState()` / `close()`.
+- **Reflection-free opaque handles (`PyHostHandle`)**: Exposes only whitelisted properties and methods to Python; never exposes raw JVM objects, `Class.forName`, or reflection.
+- **UI & Event Dispatch (`org.example.jython3.ui`)**: `UiToolkit` and `UiDispatcher` abstractions (`Window`, `Button`, `Label`, `TextField`, `Panel`, `Timer`, `Event`) with `HeadlessUiToolkit` (CI-safe), `SwingUiToolkit` (EDT-safe), and `JavaFxUiAdapter` (`FxDispatcher` for JavaFX Application Thread dispatch with bounded sync timeout and off-thread mutation rejection).
+- **Simulated Control (`org.example.jython3.control`)**: `ControlRegistry`, `ControlDevice`, `SimulatedDevice`, and `control` module (`Controller`, `Command`, `State`, `Event`, `Timer`) with audit logging.
+- **Host Embedding Bridge (`HostAppBridge`)**: Safe model data conversion + `PyHostHandle` binding, mid-event script cancellation, and clean interpreter restarts (475 tests passing green).
 
 ### Performance & Java Bridge
 - Array-backed `FastStack` + pooled frame stacks/handler deques, pre-boxed immutable `CompiledCode.pyConstPool`, small-int caching, zero-overhead positional `bindArgs` fast path, precomputed `hasYield` flag.

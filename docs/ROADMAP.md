@@ -33,6 +33,7 @@ For completed historical releases, see [CHANGELOG.md](../CHANGELOG.md).
 - [ ] GIL-free execution architecture leveraging Java's memory model.
 
 ### Ecosystem & Packaging
-- [ ] Embedded `Jython3Interpreter` engine integration in Oculix IDE.
+- [x] Capability-gated host UI (`HeadlessUiToolkit`, `SwingUiToolkit`, `JavaFxUiAdapter`), restricted `control` APIs, and `HostAppBridge` for Oculix/Cinnamon embedding.
+- [ ] Direct `openjfx` widget factory bundle for Oculix IDE desktop UI panels.
 - [ ] Standalone Maven Central artifact (`org.example.jython3:jython3-core`).
 - [ ] Native executable packaging with GraalVM Native Image.

@@ -56,3 +56,5 @@ The project adheres to the uniform four-stage definitions established in `docs/A
 | **`re`** | **T1** | `search(pattern, str)`, `findall(pattern, str)` backed by `java.util.regex` |
 | **`time`** | **T2** | `time()`, `time_ns()`, `sleep(secs)`, `monotonic()`, `perf_counter()` |
 | **`random`** | **T2** | `random()`, `randint(a, b)`, `choice(seq)`, `seed(n)` (per-instance isolation) |
+| **`ui`** | **T1** | Capability-gated `Window`, `Button`, `Label`, `TextField`, `Panel`, `Timer`, `Event` via opaque `PyHostHandle`s over `HeadlessUiToolkit`, `SwingUiToolkit` (EDT), and `JavaFxUiAdapter` (FX Application Thread) |
+| **`control`** | **T1** | Capability-gated `Controller`, `Command`, `State`, `Event`, `Timer` over `ControlRegistry` / `SimulatedDevice` with per-device/command allowlists and `HostAuditLog` |

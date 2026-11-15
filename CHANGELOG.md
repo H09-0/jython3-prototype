@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **Capability-Based Host API, Embedded UI & Control Layer (`org.example.jython3.host`, `.ui`, `.control`)**:
+  - Added deny-by-default `HostCapability` (`UI`, `EVENTS`, `INPUT`, `TIMER`, `FILESYSTEM`, `PROCESS`, `NETWORK`, `CONTROL`), `CapabilitySet`, `HostAuditLog`, `HostSession`, opaque reflection-free `PyHostHandle`, and `HostAppBridge` for Oculix/Cinnamon embedding (`HostCapabilityTest`, `OculixCinnamonIntegrationTest`).
+  - Added `UiToolkit` / `UiDispatcher` abstractions, `HeadlessUiToolkit`, `SwingUiToolkit` (EDT), `JavaFxUiAdapter` (`FxDispatcher`), and `ui` module (`Window`, `Button`, `Label`, `TextField`, `Panel`, `Timer`, `Event`) with thread-affinity checks, callback timeouts, and automatic teardown on `resetExecutionState()` / `close()` (`HeadlessUiTest`).
+  - Added `ControlDevice`, `SimulatedDevice`, `ControlRegistry`, and `control` module (`Controller`, `Command`, `State`, `Event`, `Timer`) with per-device/per-command allowlists and audit logging (`HostCapabilitiesSecurityTest`; also fixed `isJavaRootPackage` to cover `sun.*`/`jdk.*` and `HeadlessUiToolkit` `maxTimers` accounting; 475 total tests passing green).
 - **PEP 380 `yield from` & Generator `.send()` / `.throw()` / `.close()` (`OpCode.YIELD_FROM`, `Jython3.g4`, `PyGenerator`, `Jython3Interpreter`)**:
   - Added `yield` expressions (`x = yield y`, `(yield y) + 1`) and `yield from expr` delegation across iterables and sub-generators (`YIELD_FROM`), forwarding `.send()`, `.throw()`, `.close()`, and capturing sub-generator `return` values.
   - Implemented `generator.send(val)`, `generator.throw(exc_type[, val])`, and `generator.close()` (`GeneratorExit` unwinding + `RuntimeError: generator ignored GeneratorExit`), with full `BytecodeValidator` and CPython differential verification (`GeneratorControlAndYieldFromTest`).
