@@ -14,12 +14,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class PyClass implements PyObject {
     private final String name;
-    private PyClass baseClass;
+    private volatile PyClass baseClass;
     private final Map<String, PyObject> members;
     private final List<PyClass> bases = new ArrayList<>();
     private final Map<String, PyObject> memberCache = new ConcurrentHashMap<>();
-    private final Set<PyClass> subclasses = Collections.newSetFromMap(new WeakHashMap<>());
-    private List<PyClass> mro;
+    private final Set<PyClass> subclasses = Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+    private volatile List<PyClass> mro;
     private volatile long version = 1;
     private volatile boolean hasProperties;
 
@@ -77,7 +77,7 @@ public final class PyClass implements PyObject {
     public String name() { return name; }
     public PyClass baseClass() { return baseClass; }
     public Map<String, PyObject> members() { return Collections.unmodifiableMap(members); }
-    public List<PyClass> getBases() { return bases; }
+    public synchronized List<PyClass> getBases() { return List.copyOf(bases); }
     public List<PyClass> mro() { return mro; }
 
     public long version() {
@@ -125,10 +125,14 @@ public final class PyClass implements PyObject {
     }
 
     public synchronized void invalidateHierarchy() {
-        this.version++;
         this.memberCache.clear();
         this.hasProperties = computeHasProperties();
-        for (PyClass sub : subclasses) {
+        this.version++;
+        List<PyClass> subsSnapshot;
+        synchronized (subclasses) {
+            subsSnapshot = new ArrayList<>(subclasses);
+        }
+        for (PyClass sub : subsSnapshot) {
             sub.invalidateHierarchy();
         }
     }
@@ -210,8 +214,9 @@ public final class PyClass implements PyObject {
     public PyObject lookupMember(String attr) {
         PyObject cached = memberCache.get(attr);
         if (cached != null) return cached;
+        List<PyClass> snapMro = this.mro;
         PyObject val = null;
-        for (PyClass cls : mro) {
+        for (PyClass cls : snapMro) {
             val = cls.members.get(attr);
             if (val != null) break;
         }
@@ -237,8 +242,8 @@ public final class PyClass implements PyObject {
      */
     public boolean isExceptionType() {
         if (exceptionRoot) return true;
-        for (PyClass base : bases) {
-            if (base.isExceptionType()) return true;
+        for (PyClass cls : this.mro) {
+            if (cls.exceptionRoot) return true;
         }
         return false;
     }
@@ -251,14 +256,8 @@ public final class PyClass implements PyObject {
     public boolean isSubclassOf(PyClass ancestor) {
         if (ancestor == null) return false;
         if (this == ancestor || this.baseClass == ancestor) return true;
-        Set<PyClass> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        ArrayDeque<PyClass> pending = new ArrayDeque<>();
-        pending.add(this);
-        while (!pending.isEmpty()) {
-            PyClass current = pending.removeFirst();
-            if (!seen.add(current)) continue;
-            if (current == ancestor) return true;
-            pending.addAll(current.bases);
+        for (PyClass cls : this.mro) {
+            if (cls == ancestor) return true;
         }
         return false;
     }
