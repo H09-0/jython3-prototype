@@ -124,8 +124,15 @@ public class Jython3Interpreter {
     /** Execution limits (instruction count, timeout, pre-allocation thresholds). */
     private final ExecutionLimits executionLimits;
     /** Active execution context tracking consumption across frames. */
-    private ExecutionContext currentContext;
-    private boolean enforceLimits = false;
+    private volatile ExecutionContext currentContext;
+    private volatile boolean enforceLimits = false;
+
+    /** Requests cooperative cancellation of the currently running evaluation/generator. */
+    public void cancel() {
+        ExecutionContext ctx = currentContext;
+        if (ctx != null) ctx.cancel();
+        this.enforceLimits = true;
+    }
 
     /** Built-in functions and standard types template for module initialization. */
     private final Map<String, PyObject> builtinSymbols = new HashMap<>();
@@ -701,6 +708,9 @@ public class Jython3Interpreter {
                 executionTime += System.nanoTime() - execStart;
             }
         } finally {
+            activeGenerator = null;
+            currentContext = null;
+            enforceLimits = false;
             if (previousCaller != null) {
                 PyCaller.CURRENT.set(previousCaller);
             } else {
@@ -749,6 +759,9 @@ public class Jython3Interpreter {
                 executionTime += System.nanoTime() - execStart;
             }
         } finally {
+            activeGenerator = null;
+            currentContext = null;
+            enforceLimits = false;
             if (previousCaller != null) {
                 PyCaller.CURRENT.set(previousCaller);
             } else {
