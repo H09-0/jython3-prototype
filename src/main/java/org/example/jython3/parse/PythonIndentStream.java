@@ -170,8 +170,10 @@ public class PythonIndentStream implements TokenSource {
         return spaces;
     }
 
-    private static Token createToken(int type, String text, Token ref) {
-        var ct = new CommonToken(type, text);
+    private Token createToken(int type, String text, Token ref) {
+        var source = new org.antlr.v4.runtime.misc.Pair<TokenSource, CharStream>(this, lexer.getInputStream());
+        var ct = new CommonToken(source, type, Token.DEFAULT_CHANNEL, -1, -1);
+        ct.setText(text);
         if (ref != null) {
             ct.setLine(ref.getLine());
             ct.setCharPositionInLine(ref.getCharPositionInLine());

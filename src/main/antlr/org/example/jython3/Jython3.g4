@@ -267,7 +267,8 @@ param_item
  * Supports: positional, keyword (name=val), *splat, **splatKw.
  */
 arg_list
-    : arg_item (COMMA arg_item)* COMMA?
+    : gen_expr
+    | arg_item (COMMA arg_item)* COMMA?
     ;
 
 arg_item
@@ -303,6 +304,7 @@ expr
     | expr OR expr                                         # OrExpr
     | expr IF expr ELSE expr                               # TernaryExpr
     | LAMBDA param_list? COLON expr                        # LambdaExpr
+    | LPAREN gen_expr RPAREN                               # GenExpr
     | LPAREN expr RPAREN                                   # Paren
     | LPAREN expr_list? RPAREN                             # TupleLiteral
     | LBRACK expr FOR ID IN expr (IF expr)? RBRACK         # ListComp
@@ -344,6 +346,19 @@ dict_entries
 
 dict_entry
     : expr COLON expr
+    ;
+
+/** Lazy generator expression: expr (for target in iter [if cond]*)+ */
+gen_expr
+    : expr comp_for+
+    ;
+
+comp_for
+    : FOR target_list IN expr comp_if*
+    ;
+
+comp_if
+    : IF expr
     ;
 
 cmp_op
