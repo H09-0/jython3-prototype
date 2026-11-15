@@ -25,8 +25,18 @@ public final class OsModule {
     public static PyModule create(HostAccessPolicy hostPolicy) {
         Map<String, PyObject> attrs = new HashMap<>();
 
-        attrs.put("getcwd",  fn("getcwd",  args -> new PyStr(System.getProperty("user.dir"))));
-        attrs.put("getpid",  fn("getpid",  args -> PyInt.of((int) ProcessHandle.current().pid())));
+        attrs.put("getcwd",  fn("getcwd",  args -> {
+            if (!hostPolicy.canListDirectory(Path.of("."))) {
+                throw PyErrors.error("SecurityError", "access to current working directory is restricted");
+            }
+            return new PyStr(System.getProperty("user.dir"));
+        }));
+        attrs.put("getpid",  fn("getpid",  args -> {
+            if (!hostPolicy.canReadEnvironment()) {
+                throw PyErrors.error("SecurityError", "access to process information is restricted");
+            }
+            return PyInt.of((int) ProcessHandle.current().pid());
+        }));
         attrs.put("sep",     new PyStr(File.separator));
         attrs.put("pathsep", new PyStr(File.pathSeparator));
         attrs.put("name",    new PyStr("java"));
