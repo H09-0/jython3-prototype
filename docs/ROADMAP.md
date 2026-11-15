@@ -13,10 +13,10 @@ For completed historical releases, see [CHANGELOG.md](../CHANGELOG.md).
 - [x] **Step 2**: Array-backed `FastStack`, small-int caching (`PyInt.of`), `O(1)` generator check (`hasYield`), zero-overhead positional `bindArgs`.
 - [x] **Step 3**: Version-guarded monomorphic inline caching (`LOAD_ATTR`), `PyClass.lookupMember` hierarchy cache with recursive invalidation, zero-allocation `PyDict` lookups, ASCII/BMP `PyStr` slicing fast-path.
 - [x] **Step 4**: Policy-scoped `JavaBridge` overload/constructor caching, reflection method discovery caching, and pre-compiled `TypeConverter` plans.
+- [x] **Step 5**: `MethodHandle` invocation in `JavaBridge`, pre-boxed `CompiledCode` literal pools, and pooled VM frame stacks/handler deques (preserving per-call security policy enforcement).
 
 ### Upcoming Performance Steps
-- [ ] **Step 5**: `MethodHandle` / `invokedynamic` dispatch in hot VM and Java Bridge execution paths (preserving per-call security policy enforcement).
-- [ ] **Step 6**: Tier-1 JIT bytecode-to-JVM compilation for hot Python functions.
+- [ ] **Step 6**: Tier-1 JIT bytecode-to-JVM compilation (`invokedynamic` / `ClassFile` API) for hot Python functions.
 - [ ] **Step 7**: Primitive unboxing / specialized numeric and homogeneous collection representations.
 
 ---
@@ -24,10 +24,10 @@ For completed historical releases, see [CHANGELOG.md](../CHANGELOG.md).
 ## Upcoming Language & Platform Phases
 
 ### Language Conformance Expansion
-- [ ] Tuple unpacking directly inside `for` loop headers (`for a, b in seq:`).
-- [ ] Explicit exception chaining (`raise ... from ...` with `__cause__` formatting).
-- [ ] Lazy generator frame suspension with `.send()`, `.throw()`, and `.close()`.
-- [ ] Dynamic MRO / `__bases__` mutation support.
+- [ ] Generator expressions `(x for x in seq)` and lazy generator frame suspension with `.send()`, `.throw()`, and `.close()`.
+- [ ] PEP 3110 exception-target deletion on `raise` exit paths inside `except ... as e:` without `finally`.
+- [ ] Dynamic 3-argument `type(name, bases, dict)` and MRO / `__bases__` mutation support.
+- [ ] Set bitwise operators (`|`, `&`, `-`, `^`) and `frozenset`.
 
 ### Virtual Threads & Concurrency
 - [ ] Native support for Java 21+ Virtual Threads (Project Loom).

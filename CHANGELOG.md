@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.11.0-alpha] - 2026-11-14
 ### Added
+- **Full Python `__traceback__` & Chained Exception Rendering (`PyTraceback`, `PyFrameInfo`, `PyCodeInfo`)**:
+  - Exposed `exc.__traceback__` (`tb_next`, `tb_lineno`, `tb_lasti`, `tb_frame.f_code.co_name`/`co_filename`, `tb_frame.f_lineno`), passed live `exc_tb` to `with.__exit__(exc_type, exc_val, exc_tb)`, preserved inner frames across `RERAISE`/`RAISE_ACTIVE` (`try/finally`, `with`, `except` mismatch, bare `raise`), propagated implicit `__context__` to runtime errors (`ZeroDivisionError`, `IndexError`, `JavaException`) raised inside `except`/`finally`/callees, unwrapped `InterpreterException` inside `PyErrors.fromJava` (`InvocationTargetException`), and rendered chained `cause`/`context` tracebacks.
+- **Unified Python Type Identity (`PyBuiltinFunction.builtinType`)**:
+  - Updated `type(obj)` and `obj.__class__` to return canonical type objects (`int`, `str`, `float`, `bool`, `list`, `dict`, `tuple`, `set`, `type`, `object`, `NoneType`, `function`, `builtin_function_or_method`, `method`, `generator`, `iterator`, `module`, `slice`, `traceback`, `frame`, `code`, and `PyClass` for instances/exceptions); unified `isinstance`, `issubclass`, `hasattr`, `getattr`, and `__name__` (`TypeIdentityTest`).
+- **Set Methods, Iteration & Numeric Key Hardening**:
+  - Added `GET_ITER` support for `PySet`, implemented `set.remove`, `set.discard`, `set.pop`, `set.clear`, `set.copy`, `set.union`, `set.intersection`, `set.difference`, `set.update`, rejected `PySlice` as unhashable in `PyKey`, fixed `BigInt` vs `PyBool` equality without `OverflowError` (`10**400 == True`), and fixed `PyBoundMethod` equality.
+- **Core Built-ins & Call-Site Unpacking (`CALL_FUNCTION_EX`)**:
+  - Added `all`, `any`, `callable`, `delattr`, `vars`, `dir`; upgraded `repr` (string quoting/escapes and `PyException`), `enumerate` (iterables + `start` + tuples), `zip` (iterables + tuples), `map`, `filter`, and `sum` (iterators + `start` + `BigInt`); wired `CALL_FUNCTION_EX`, `LIST_EXTEND`, and `DICT_MERGE` for `*args` and `**kwargs` unpacking at call sites (`BuiltinsTest`).
+- **Grammar & Compiler Edge Cases (`ParserEdgeCasesTest`)**:
+  - Replaced `call_stmt` with `expr_stmt` (allowing expression statements starting with `[` or `{`), implemented single-evaluation short-circuiting chained comparisons (`1 < x < 10`, `0 == 0 == 0`, `1 in [1, 2] == True`), fixed `not` precedence below comparisons, added multi-item `with a as x, b as y:`, and `yield rhs_tuple`.
+- **Bytecode Disassembler & Static Stack Validator (`BytecodeDisassembler`, `BytecodeValidator`)**:
+  - Added `Jython3Interpreter.disassemble(src)` and static jump/pool/stack-depth verification (`BytecodeInspectionTest`); caught and fixed stack leaks on `with` suppression (`POP_TOP`) and `except <expr>` evaluation failure inside `try/finally`.
+- **Policy-Aware Dotted Module Loader & Pure-Python Stdlib (`ModuleLoader`, `modules/collections.py`, `modules/functools.py`)**:
+  - Extracted `ModuleLoader` supporting dotted packages (`__init__.py` boundaries), `sys.path`/`sys.modules`, `__name__`/`__file__`/`__package__`, `from mod import *` (`__all__`), symlink-escape and path-traversal rejection (`SecurityError`), circular `from ... import ...` detection, and pure-Python `collections` (`Counter`, `defaultdict`, `deque`) and `functools` (`reduce`, `partial`, `lru_cache`).
 - **Python-visible exception metadata & `raise ... from ...` (`PyException`, `RAISE_FROM`)**:
   - Exposed `__context__`, `__cause__`, `__suppress_context__`, `args`, and `__class__` on `PyException` via `LOAD_ATTR`, `getattr`, and `hasattr`.
   - Added grammar and `RAISE_FROM` opcode for `raise exc from cause` and `raise exc from None` (instantiating exception classes, validating `BaseException` inheritance with `TypeError`, setting `__cause__` and `__suppress_context__ = True`, and preserving implicit `__context__`).
@@ -55,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Benchmark Smoke Tests & Conformance Suite**: Added `BenchmarkSmokeTest` and `NonlocalAndBuiltinFixesTest` (365 automated tests passing green).
 
 ### Fixed
+- **JavaBridge Hardening & `MethodHandle` Dispatch (`JavaBridge`, `PyJavaMethod`, `PyJavaClass`, `PyJavaObject`, `PyErrors`)**:
+  - Enforced `JavaAccessPolicy` inside `findBestMethod`, added varargs resolution/packing, functional-interface callback proxies (preserving policy, caller state, tracebacks, and recursion limits), public-interface method resolution for non-public JDK classes (`Arrays$ArrayList`), empty-attribute `AttributeError` guard, `StackOverflowError` -> `RecursionError` mapping in `PyErrors.fromJava`, and `MethodHandle` (`asFixedArity().asSpreader(...)`) invocation (`JavaBridgeHardeningTest`).
+- **Generator Frame Isolation & VM Micro-Optimizations**:
+  - Saved/restored `globalCells`, `currentGlobals`, `currentFile`, and `outerActiveContexts` in `runGeneratorWithLocals`, prevented `NullPointerException` on `next(g)` after generator exception, explicitly rejected `send`/`throw`/`close` with `NotImplementedError`, pre-boxed `CompiledCode.pyConstPool`, and pooled frame stacks/handler deques (reducing `fib(24)` heap delta by ~55%; 441 total tests passing green).
 - **Python hash/eq semantics for dict and set (`PyOps`, `PySet`, `PyKey`, `BUILD_DICT`/`BUILD_SET`)**:
   - `dict == dict` used Java map equality, so `{1: 0} == {1.0: 0}`, `{True: 1} == {1: 1}`, `{"a": 1} == {"a": 1.0}` and `{10**20: 1} == {1e20: 1}` were `False`; now delegates to `PyDict.equals` (PyKey key lookup + `pyEquals` values).
   - `x in dict` used a Java `containsKey`, so `1.0 in {1: 0}` was `False`; now uses `PyDict.containsKey` (PyKey).
