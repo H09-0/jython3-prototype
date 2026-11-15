@@ -221,74 +221,64 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     private void emitStore(LValue target) {
-        switch (target) {
-            case LValue.NameTarget nt -> b.emit(OpCode.STORE_FAST, nt.name());
-            case LValue.AttributeTarget at -> {
-                visit(at.objectExpr());
-                b.emit(OpCode.ROT_TWO);
-                b.emit(OpCode.STORE_ATTR, at.attribute());
-            }
-            case LValue.SubscriptTarget st -> {
-                visit(st.containerExpr());
-                visit(st.indexExpr());
-                b.emit(OpCode.ROT_THREE);
-                b.emit(OpCode.STORE_SUBSCR);
-            }
-            case LValue.TupleTarget tt -> {
-                b.emitRaw(OpCode.UNPACK_SEQUENCE, tt.elements().size());
-                for (LValue elem : tt.elements()) {
-                    emitStore(elem);
-                }
+        if (target instanceof LValue.NameTarget nt) {
+            b.emit(OpCode.STORE_FAST, nt.name());
+        } else if (target instanceof LValue.AttributeTarget at) {
+            visit(at.objectExpr());
+            b.emit(OpCode.ROT_TWO);
+            b.emit(OpCode.STORE_ATTR, at.attribute());
+        } else if (target instanceof LValue.SubscriptTarget st) {
+            visit(st.containerExpr());
+            visit(st.indexExpr());
+            b.emit(OpCode.ROT_THREE);
+            b.emit(OpCode.STORE_SUBSCR);
+        } else if (target instanceof LValue.TupleTarget tt) {
+            b.emitRaw(OpCode.UNPACK_SEQUENCE, tt.elements().size());
+            for (LValue elem : tt.elements()) {
+                emitStore(elem);
             }
         }
     }
 
     private void emitAugAssign(LValue target, Jython3Parser.ExprContext rhsExpr, OpCode binaryOp) {
-        switch (target) {
-            case LValue.NameTarget nt -> {
-                b.emit(OpCode.LOAD_FAST, nt.name());
-                visit(rhsExpr);
-                b.emit(binaryOp);
-                b.emit(OpCode.STORE_FAST, nt.name());
-            }
-            case LValue.AttributeTarget at -> {
-                visit(at.objectExpr());                     // [obj] (evaluated once)
-                b.emit(OpCode.DUP_TOP);                     // [obj, obj]
-                b.emit(OpCode.LOAD_ATTR, at.attribute());   // [obj, old_val]
-                visit(rhsExpr);                             // [obj, old_val, rhs]
-                b.emit(binaryOp);                           // [obj, new_val]
-                b.emit(OpCode.STORE_ATTR, at.attribute());  // []
-            }
-            case LValue.SubscriptTarget st -> {
-                visit(st.containerExpr());                  // [container] (evaluated once)
-                visit(st.indexExpr());                      // [container, key] (evaluated once)
-                b.emit(OpCode.DUP_TOP_TWO);                 // [container, key, container, key]
-                b.emit(OpCode.BINARY_SUBSCR);               // [container, key, old_val]
-                visit(rhsExpr);                             // [container, key, old_val, rhs]
-                b.emit(binaryOp);                           // [container, key, new_val]
-                b.emit(OpCode.STORE_SUBSCR);                // []
-            }
-            case LValue.TupleTarget tt ->
-                throw new CompileError("illegal target for augmented assignment");
+        if (target instanceof LValue.NameTarget nt) {
+            b.emit(OpCode.LOAD_FAST, nt.name());
+            visit(rhsExpr);
+            b.emit(binaryOp);
+            b.emit(OpCode.STORE_FAST, nt.name());
+        } else if (target instanceof LValue.AttributeTarget at) {
+            visit(at.objectExpr());                     // [obj] (evaluated once)
+            b.emit(OpCode.DUP_TOP);                     // [obj, obj]
+            b.emit(OpCode.LOAD_ATTR, at.attribute());   // [obj, old_val]
+            visit(rhsExpr);                             // [obj, old_val, rhs]
+            b.emit(binaryOp);                           // [obj, new_val]
+            b.emit(OpCode.STORE_ATTR, at.attribute());  // []
+        } else if (target instanceof LValue.SubscriptTarget st) {
+            visit(st.containerExpr());                  // [container] (evaluated once)
+            visit(st.indexExpr());                      // [container, key] (evaluated once)
+            b.emit(OpCode.DUP_TOP_TWO);                 // [container, key, container, key]
+            b.emit(OpCode.BINARY_SUBSCR);               // [container, key, old_val]
+            visit(rhsExpr);                             // [container, key, old_val, rhs]
+            b.emit(binaryOp);                           // [container, key, new_val]
+            b.emit(OpCode.STORE_SUBSCR);                // []
+        } else if (target instanceof LValue.TupleTarget) {
+            throw new CompileError("illegal target for augmented assignment");
         }
     }
 
     private void emitDelete(LValue target) {
-        switch (target) {
-            case LValue.NameTarget nt -> b.emit(OpCode.DELETE_FAST, nt.name());
-            case LValue.AttributeTarget at -> {
-                visit(at.objectExpr());
-                b.emit(OpCode.DELETE_ATTR, at.attribute());
-            }
-            case LValue.SubscriptTarget st -> {
-                visit(st.containerExpr());
-                visit(st.indexExpr());
-                b.emit(OpCode.DELETE_SUBSCR);
-            }
-            case LValue.TupleTarget tt -> {
-                for (LValue elem : tt.elements()) {
-                    emitDelete(elem);
-                }
+        if (target instanceof LValue.NameTarget nt) {
+            b.emit(OpCode.DELETE_FAST, nt.name());
+        } else if (target instanceof LValue.AttributeTarget at) {
+            visit(at.objectExpr());
+            b.emit(OpCode.DELETE_ATTR, at.attribute());
+        } else if (target instanceof LValue.SubscriptTarget st) {
+            visit(st.containerExpr());
+            visit(st.indexExpr());
+            b.emit(OpCode.DELETE_SUBSCR);
+        } else if (target instanceof LValue.TupleTarget tt) {
+            for (LValue elem : tt.elements()) {
+                emitDelete(elem);
             }
         }
     }

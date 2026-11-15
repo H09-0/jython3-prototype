@@ -217,12 +217,21 @@ public class JavaBridge {
     public static PyObject resolveClassOrPackage(String fullName, JavaAccessPolicy policy) {
         if (!policy.canAccessClass(fullName)) throw denied(fullName);
 
-        try {
-            Class<?> clazz = Class.forName(fullName);
-            return new PyJavaClass(clazz, policy);
-        } catch (ClassNotFoundException e) {
-            throw PyErrors.error("ImportError", "cannot import '" + fullName + "'");
+        String candidate = fullName;
+        while (true) {
+            if (!policy.canAccessClass(candidate)) throw denied(candidate);
+            try {
+                Class<?> clazz = Class.forName(candidate);
+                return new PyJavaClass(clazz, policy);
+            } catch (ClassNotFoundException e) {
+                int lastDot = candidate.lastIndexOf('.');
+                if (lastDot < 0) {
+                    break;
+                }
+                candidate = candidate.substring(0, lastDot) + '$' + candidate.substring(lastDot + 1);
+            }
         }
+        throw PyErrors.error("ImportError", "cannot import '" + fullName + "'");
     }
 
     private static boolean isLikelyPackage(String name) {

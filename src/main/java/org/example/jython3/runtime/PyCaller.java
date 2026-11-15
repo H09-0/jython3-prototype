@@ -3,6 +3,7 @@ package org.example.jython3.runtime;
 import org.example.jython3.security.ExecutionContext;
 import org.example.jython3.security.ExecutionLimits;
 
+import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
 
@@ -49,6 +50,21 @@ public interface PyCaller {
     /** Returns the active frame's local scope (or globals at module level) if available. */
     default Map<String, PyObject> currentScope() {
         return null;
+    }
+
+    /** Returns the active interpreter's global scope if available. */
+    default Map<String, PyObject> globalsScope() {
+        return currentScope();
+    }
+
+    /** Returns the active stdout stream for print/input output. */
+    default PrintStream out() {
+        return System.out;
+    }
+
+    /** Returns the active stderr stream. */
+    default PrintStream err() {
+        return System.err;
     }
 
     /** Returns the active interpreter's execution limits. */

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * Policy-aware, symlink-safe file module and package loader.
@@ -39,15 +40,46 @@ public final class ModuleLoader {
     private final Map<String, ModuleEntry> cache = new ConcurrentHashMap<>();
     private final PyDict sysModules = new PyDict();
     private final PyList sysPath = new PyList(new ArrayList<>());
+    private final List<Consumer<Path>> importListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public ModuleLoader() {
         addSearchPath(Path.of("modules"));
     }
 
+    public void addImportListener(Consumer<Path> listener) {
+        if (listener != null) importListeners.add(listener);
+    }
+
     public synchronized void addSearchPath(Path dir) {
         Objects.requireNonNull(dir, "dir");
-        searchPaths.add(dir);
-        sysPath.items().add(new PyStr(dir.toString()));
+        if (!searchPaths.contains(dir)) {
+            searchPaths.add(dir);
+            sysPath.items().add(new PyStr(dir.toString()));
+        }
+    }
+
+    public synchronized void insertSearchPath(int index, Path dir) {
+        Objects.requireNonNull(dir, "dir");
+        int idx = Math.max(0, Math.min(index, searchPaths.size()));
+        searchPaths.remove(dir);
+        searchPaths.add(idx, dir);
+        String s = dir.toString();
+        sysPath.items().removeIf(p -> p instanceof PyStr ps && ps.value().equals(s));
+        int sysIdx = Math.max(0, Math.min(idx, sysPath.items().size()));
+        sysPath.items().add(sysIdx, new PyStr(s));
+    }
+
+    public synchronized void removeSearchPath(Path dir) {
+        if (dir == null) return;
+        searchPaths.remove(dir);
+        String s = dir.toString();
+        sysPath.items().removeIf(p -> p instanceof PyStr ps && ps.value().equals(s));
+    }
+
+    public void invalidate(String name) {
+        if (name == null) return;
+        cache.remove(name);
+        sysModules.remove(new PyStr(name));
     }
 
     public synchronized List<Path> searchPaths() {
@@ -166,6 +198,12 @@ public final class ModuleLoader {
         try {
             runner.execute(module, resolved.realFile(), content, moduleScope);
             cache.put(fullName, new ModuleEntry(module, ModuleState.LOADED));
+            for (Consumer<Path> listener : importListeners) {
+                try {
+                    listener.accept(resolved.realFile());
+                } catch (RuntimeException ignored) {
+                }
+            }
             return module;
         } catch (RuntimeException ex) {
             cache.remove(fullName);
@@ -223,6 +261,17 @@ public final class ModuleLoader {
             if (Files.exists(modFile, LinkOption.NOFOLLOW_LINKS)) {
                 Path realFile = verifyContainedRegularFile(modFile, realRoot, fullName, hostPolicy);
                 return new ResolvedModule(realFile, false);
+            }
+
+            // 3. OculiX/Sikuli bundle directory: leaf.sikuli/leaf.py
+            Path sikuliDir = curDir.resolve(leaf + ".sikuli");
+            if (Files.exists(sikuliDir, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(sikuliDir)
+                    && Files.isDirectory(sikuliDir)) {
+                Path sikuliScript = sikuliDir.resolve(leaf + ".py");
+                if (Files.exists(sikuliScript, LinkOption.NOFOLLOW_LINKS)) {
+                    Path realFile = verifyContainedRegularFile(sikuliScript, realRoot, fullName, hostPolicy);
+                    return new ResolvedModule(realFile, false);
+                }
             }
         }
         return null;

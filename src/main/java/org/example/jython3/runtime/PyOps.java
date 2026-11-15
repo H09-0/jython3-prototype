@@ -92,33 +92,31 @@ public final class PyOps {
     }
 
     public static double toDouble(PyObject o) {
-        return switch (o) {
-            case PyInt i -> i.value();
-            case BigInt bi -> {
-                double d = bi.value().doubleValue();
-                if (Double.isInfinite(d)) {
-                    throw PyErrors.error("OverflowError", "int too large to convert to float");
-                }
-                yield d;
+        if (o instanceof PyInt i) return i.value();
+        if (o instanceof BigInt bi) {
+            double d = bi.value().doubleValue();
+            if (Double.isInfinite(d)) {
+                throw PyErrors.error("OverflowError", "int too large to convert to float");
             }
-            case PyFloat f -> f.value();
-            case PyBool b -> b.value() ? 1.0 : 0.0;
-            case PyStr s -> {
-                String str = s.value().trim();
-                if (str.equalsIgnoreCase("nan") || str.equalsIgnoreCase("+nan") || str.equalsIgnoreCase("-nan")) {
-                    yield Double.NaN;
-                }
-                if (str.equalsIgnoreCase("inf") || str.equalsIgnoreCase("+inf") || str.equalsIgnoreCase("infinity") || str.equalsIgnoreCase("+infinity")) {
-                    yield Double.POSITIVE_INFINITY;
-                }
-                if (str.equalsIgnoreCase("-inf") || str.equalsIgnoreCase("-infinity")) {
-                    yield Double.NEGATIVE_INFINITY;
-                }
-                try { yield Double.parseDouble(str); }
-                catch (NumberFormatException e) { throw PyErrors.error("ValueError", "could not convert string to float: '" + s.value() + "'"); }
+            return d;
+        }
+        if (o instanceof PyFloat f) return f.value();
+        if (o instanceof PyBool b) return b.value() ? 1.0 : 0.0;
+        if (o instanceof PyStr s) {
+            String str = s.value().trim();
+            if (str.equalsIgnoreCase("nan") || str.equalsIgnoreCase("+nan") || str.equalsIgnoreCase("-nan")) {
+                return Double.NaN;
             }
-            default -> throw PyErrors.error("TypeError", "expected number, got " + typeName(o));
-        };
+            if (str.equalsIgnoreCase("inf") || str.equalsIgnoreCase("+inf") || str.equalsIgnoreCase("infinity") || str.equalsIgnoreCase("+infinity")) {
+                return Double.POSITIVE_INFINITY;
+            }
+            if (str.equalsIgnoreCase("-inf") || str.equalsIgnoreCase("-infinity")) {
+                return Double.NEGATIVE_INFINITY;
+            }
+            try { return Double.parseDouble(str); }
+            catch (NumberFormatException e) { throw PyErrors.error("ValueError", "could not convert string to float: '" + s.value() + "'"); }
+        }
+        throw PyErrors.error("TypeError", "expected number, got " + typeName(o));
     }
 
     public static int toInt(PyObject o) {
@@ -129,43 +127,20 @@ public final class PyOps {
     }
 
     public static boolean isTruthy(PyObject v) {
-        return switch (v) {
-            case PyBool b -> b.value();
-            case PyInt i -> i.value() != 0;
-            case BigInt bi -> !bi.value().equals(java.math.BigInteger.ZERO);
-            case PyStr s -> !s.value().isEmpty();
-            case PyNull n -> false;
-            case PyFunction f -> true;
-            case PyClass c -> true;
-            case PyInstance inst -> true;
-            case PyBoundMethod bm -> true;
-            case PyList l -> !l.items().isEmpty();
-            case PyTuple t -> !t.items().isEmpty();
-            case PySet s -> !s.isEmpty();
-            case PyFrozenSet fs -> !fs.isEmpty();
-            case PyDict d -> d.size() > 0;
-            case PyIterator it -> true;
-            case PyFloat f -> f.value() != 0.0;
-            case PyModule m -> true;
-            case PyBuiltinFunction bf -> true;
-            case PyException e -> true;
-            case PyCompiledCodeWrapper cw -> true;
-            case PyJavaObject jo -> jo.object() != null;
-            case PyJavaClass jc -> true;
-            case PyJavaMethod jm -> true;
-            case PyJavaPackage jp -> true;
-                case PyGenerator g -> true;
-                case PySuper s -> true;
-                case PySlice sl -> true;
-                case PyCell c -> c.isBound() && isTruthy(c.get());
-                case PyTraceback tb -> true;
-                case PyFrameInfo fr -> true;
-                case PyCodeInfo co -> true;
-                case PyHostHandle hh -> true;
-                case PyProperty pr -> true;
-                case PyStaticMethod sm -> true;
-                case PyClassMethod cm -> true;
-        };
+        if (v instanceof PyBool b) return b.value();
+        if (v instanceof PyInt i) return i.value() != 0;
+        if (v instanceof BigInt bi) return !bi.value().equals(java.math.BigInteger.ZERO);
+        if (v instanceof PyStr s) return !s.value().isEmpty();
+        if (v instanceof PyNull) return false;
+        if (v instanceof PyList l) return !l.items().isEmpty();
+        if (v instanceof PyTuple t) return !t.items().isEmpty();
+        if (v instanceof PySet s) return !s.isEmpty();
+        if (v instanceof PyFrozenSet fs) return !fs.isEmpty();
+        if (v instanceof PyDict d) return d.size() > 0;
+        if (v instanceof PyFloat f) return f.value() != 0.0;
+        if (v instanceof PyJavaObject jo) return jo.object() != null;
+        if (v instanceof PyCell c) return c.isBound() && isTruthy(c.get());
+        return v != null;
     }
 
     public static boolean pyEquals(PyObject a, PyObject b) {
@@ -326,43 +301,41 @@ public final class PyOps {
     }
 
     public static String typeName(PyObject o) {
-        return switch (o) {
-            case PyInt i -> "int";
-            case BigInt bi -> "int";
-            case PyFloat f -> "float";
-            case PyStr s -> "str";
-            case PyBool b -> "bool";
-            case PyNull n -> "NoneType";
-            case PyList l -> "list";
-            case PyTuple t -> "tuple";
-            case PySet s -> "set";
-            case PyFrozenSet fs -> "frozenset";
-            case PyDict d -> "dict";
-            case PyFunction f -> "function";
-            case PyClass c -> "type";
-            case PyInstance inst -> inst.pyClass().name();
-            case PyBoundMethod bm -> "method";
-            case PyBuiltinFunction bf -> bf.isType() ? "type" : "builtin_function_or_method";
-            case PyModule m -> "module";
-            case PyIterator it -> "iterator";
-            case PyException e -> e.typeName();
-            case PyCompiledCodeWrapper cw -> "code";
-            case PyJavaClass jc -> "JavaClass(" + jc.clazz().getSimpleName() + ")";
-            case PyJavaObject jo -> "JavaObject(" + (jo.object() == null ? "null" : jo.object().getClass().getSimpleName()) + ")";
-            case PyJavaMethod jm -> "JavaMethod(" + jm.name() + ")";
-            case PyJavaPackage jp -> "JavaPackage(" + jp.packageName() + ")";
-            case PyGenerator g -> "generator";
-            case PySuper s -> "super";
-            case PySlice sl -> "slice";
-            case PyCell c -> c.isBound() ? typeName(c.get()) : "cell";
-            case PyTraceback tb -> "traceback";
-            case PyFrameInfo fr -> "frame";
-            case PyCodeInfo co -> "code";
-            case PyHostHandle hh -> hh.handleTypeName();
-            case PyProperty pr -> "property";
-            case PyStaticMethod sm -> "staticmethod";
-            case PyClassMethod cm -> "classmethod";
-        };
+        if (o instanceof PyInt || o instanceof BigInt) return "int";
+        if (o instanceof PyFloat) return "float";
+        if (o instanceof PyStr) return "str";
+        if (o instanceof PyBool) return "bool";
+        if (o instanceof PyNull) return "NoneType";
+        if (o instanceof PyList) return "list";
+        if (o instanceof PyTuple) return "tuple";
+        if (o instanceof PySet) return "set";
+        if (o instanceof PyFrozenSet) return "frozenset";
+        if (o instanceof PyDict) return "dict";
+        if (o instanceof PyFunction) return "function";
+        if (o instanceof PyClass) return "type";
+        if (o instanceof PyInstance inst) return inst.pyClass().name();
+        if (o instanceof PyBoundMethod) return "method";
+        if (o instanceof PyBuiltinFunction bf) return bf.isType() ? "type" : "builtin_function_or_method";
+        if (o instanceof PyModule) return "module";
+        if (o instanceof PyIterator) return "iterator";
+        if (o instanceof PyException e) return e.typeName();
+        if (o instanceof PyCompiledCodeWrapper) return "code";
+        if (o instanceof PyJavaClass jc) return "JavaClass(" + jc.clazz().getSimpleName() + ")";
+        if (o instanceof PyJavaObject jo) return "JavaObject(" + (jo.object() == null ? "null" : jo.object().getClass().getSimpleName()) + ")";
+        if (o instanceof PyJavaMethod jm) return "JavaMethod(" + jm.name() + ")";
+        if (o instanceof PyJavaPackage jp) return "JavaPackage(" + jp.packageName() + ")";
+        if (o instanceof PyGenerator) return "generator";
+        if (o instanceof PySuper) return "super";
+        if (o instanceof PySlice) return "slice";
+        if (o instanceof PyCell c) return c.isBound() ? typeName(c.get()) : "cell";
+        if (o instanceof PyTraceback) return "traceback";
+        if (o instanceof PyFrameInfo) return "frame";
+        if (o instanceof PyCodeInfo) return "code";
+        if (o instanceof PyHostHandle hh) return hh.handleTypeName();
+        if (o instanceof PyProperty) return "property";
+        if (o instanceof PyStaticMethod) return "staticmethod";
+        if (o instanceof PyClassMethod) return "classmethod";
+        return o == null ? "NoneType" : o.getClass().getSimpleName();
     }
 
     public static void checkArgCount(String name, PyObject[] args, int expected) {

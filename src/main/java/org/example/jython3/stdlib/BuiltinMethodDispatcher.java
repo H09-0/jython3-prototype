@@ -362,7 +362,7 @@ public final class BuiltinMethodDispatcher {
             case "pop" -> new PyBuiltinFunction("list.pop", args -> {
                 if (list.items().isEmpty()) throw PyErrors.error("IndexError", "pop from empty list");
                 if (args.length > 0) { int i = toInt(args[0]); if (i < 0) i += list.items().size(); return list.items().remove(i); }
-                return list.items().removeLast();
+                return list.items().remove(list.items().size() - 1);
             });
             case "extend" -> new PyBuiltinFunction("list.extend", args -> {
                 checkArgCount("list.extend", args, 1);

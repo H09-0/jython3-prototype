@@ -57,8 +57,8 @@ class ScopedWorkspaceRaceTest {
         Path leaf = insideSub.resolve("leaf.txt");
         Path swapPath = ws.resolve("swap");
 
-        try (var exec = Executors.newSingleThreadExecutor();
-             var rt = EmbeddedRuntime.builder().capabilities(caps).build()) {
+        var exec = Executors.newSingleThreadExecutor();
+        try (var rt = EmbeddedRuntime.builder().capabilities(caps).build()) {
             rt.registerDevice(new ScopedWorkspaceAdapter("ws", ws, rt.hostSession(), false));
 
             var racer = exec.submit(() -> {
@@ -115,6 +115,8 @@ class ScopedWorkspaceRaceTest {
             // Outside file MUST remain completely untouched!
             assertEquals("ORIGINAL_SECRET", Files.readString(outsideTarget));
             assertTrue(securityRejects.get() > 0 || successfulInsideOps.get() >= 0);
+        } finally {
+            exec.shutdownNow();
         }
     }
 }

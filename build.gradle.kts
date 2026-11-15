@@ -2,7 +2,11 @@ plugins {
     java
     application
     antlr
+    `maven-publish`
 }
+
+group = "io.github.h09-0"
+version = "1.0.0-beta"
 
 repositories {
     mavenCentral()
@@ -12,6 +16,11 @@ java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
     }
+    withSourcesJar()
+}
+
+tasks.withType<org.gradle.api.tasks.bundling.Jar>().configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 dependencies {
@@ -80,4 +89,13 @@ tasks.register<Sync>("installLocal") {
     dependsOn(tasks.installDist)
     from("${layout.buildDirectory.get()}/install/${project.name}")
     into("${System.getProperty("user.home")}/.local/share/jython3")
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            artifactId = "jython3"
+            from(components["java"])
+        }
+    }
 }

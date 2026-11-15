@@ -122,6 +122,46 @@ public class Jython3Interpreter implements AutoCloseable {
         moduleLoader.addSearchPath(dir);
     }
 
+    public void insertModulePath(int index, java.nio.file.Path dir) {
+        moduleLoader.insertSearchPath(index, dir);
+    }
+
+    public void removeModulePath(java.nio.file.Path dir) {
+        moduleLoader.removeSearchPath(dir);
+    }
+
+    public void addImportListener(java.util.function.Consumer<java.nio.file.Path> listener) {
+        moduleLoader.addImportListener(listener);
+    }
+
+    public PyList sysPath() {
+        return moduleLoader.sysPath();
+    }
+
+    public PyDict sysModules() {
+        return moduleLoader.sysModules();
+    }
+
+    public void setArgv(List<String> argv) {
+        PyModule sysMod = resolveBuiltinModule("sys");
+        if (sysMod != null && sysMod.attrs().get("argv") instanceof PyList pyArgv) {
+            pyArgv.items().clear();
+            if (argv != null) {
+                for (String arg : argv) {
+                    pyArgv.items().add(new PyStr(arg != null ? arg : ""));
+                }
+            }
+        }
+    }
+
+    public PyModule reloadModule(String name) {
+        if (name == null || name.isEmpty()) {
+            throw PyErrors.error("ImportError", "cannot reload empty module name");
+        }
+        moduleLoader.invalidate(name);
+        return loadDiskModule(name);
+    }
+
     public java.util.List<java.nio.file.Path> moduleSearchPaths() {
         return moduleLoader.searchPaths();
     }
@@ -143,6 +183,26 @@ public class Jython3Interpreter implements AutoCloseable {
     private final HostSession hostSession;
     private final ControlRegistry controlRegistry;
     private UiToolkit uiToolkit = new HeadlessUiToolkit();
+    private volatile java.io.PrintStream stdoutOverride = null;
+    private volatile java.io.PrintStream stderrOverride = null;
+
+    public void setOut(java.io.PrintStream out) {
+        this.stdoutOverride = out;
+    }
+
+    public void setErr(java.io.PrintStream err) {
+        this.stderrOverride = err;
+    }
+
+    public java.io.PrintStream out() {
+        java.io.PrintStream s = this.stdoutOverride;
+        return s != null ? s : System.out;
+    }
+
+    public java.io.PrintStream err() {
+        java.io.PrintStream s = this.stderrOverride;
+        return s != null ? s : System.err;
+    }
 
     /** Requests cooperative cancellation of the currently running evaluation/generator. */
     public void cancel() {
@@ -497,6 +557,18 @@ public class Jython3Interpreter implements AutoCloseable {
             @Override public java.util.Map<String, PyObject> currentScope() {
                 return currentLocals != null ? currentLocals : globals;
             }
+
+            @Override public java.util.Map<String, PyObject> globalsScope() {
+                return currentGlobals != null ? currentGlobals : globals;
+            }
+
+            @Override public java.io.PrintStream out() {
+                return Jython3Interpreter.this.out();
+            }
+
+            @Override public java.io.PrintStream err() {
+                return Jython3Interpreter.this.err();
+            }
         };
     }
 
@@ -749,8 +821,29 @@ public class Jython3Interpreter implements AutoCloseable {
         } catch (SystemExit e) {
             throw e;
         } catch (InterpreterException e) {
-            System.err.println(formatTraceback(e, "<stdin>", source));
+            err().println(formatTraceback(e, "<stdin>", source));
         }
+    }
+
+    /**
+     * Read and execute a Python script file, attributing traceback frames to
+     * {@code scriptPath} and setting {@code __file__} and {@code __name__}.
+     */
+    public synchronized void evalFile(java.nio.file.Path scriptPath) {
+        Objects.requireNonNull(scriptPath, "scriptPath");
+        if (!hostAccessPolicy.canExecFile(scriptPath)) {
+            throw PyErrors.error("SecurityError", "execution of file '" + scriptPath + "' is restricted");
+        }
+        String src;
+        try {
+            src = java.nio.file.Files.readString(scriptPath, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            throw PyErrors.error("IOError", "cannot open '" + scriptPath + "': " + e.getMessage());
+        }
+        String absPath = scriptPath.toAbsolutePath().toString();
+        globals.put("__file__", new PyStr(absPath));
+        globals.put("__name__", new PyStr("__main__"));
+        eval(src, absPath);
     }
 
     /**
@@ -1574,6 +1667,8 @@ public class Jython3Interpreter implements AutoCloseable {
                         cls.setMember(attr, val);
                     } else if (obj instanceof PyJavaObject jo) {
                         jo.setMember(attr, val);
+                    } else if (obj instanceof PyJavaClass jc) {
+                        jc.setMember(attr, val);
                     } else if (obj instanceof PyHostHandle hh) {
                         hh.setAttr(attr, val);
                     } else {
@@ -1759,7 +1854,7 @@ public class Jython3Interpreter implements AutoCloseable {
                 }
 
                 // ── I/O ──
-                case PRINT -> System.out.println(pyPrintStr(stack.pop()));
+                case PRINT -> out().println(pyPrintStr(stack.pop()));
                 case PRINT_MULTI -> {
                     PyList list = (PyList) stack.pop();
                     var sb = new StringBuilder();
@@ -1767,7 +1862,7 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (i > 0) sb.append(' ');
                         sb.append(pyPrintStr(list.items().get(i)));
                     }
-                    System.out.println(sb);
+                    out().println(sb);
                 }
 
                 // ── Control flow ──
@@ -2232,14 +2327,18 @@ public class Jython3Interpreter implements AutoCloseable {
                 // ── Data structures ──
                 case BUILD_LIST -> {
                     int n = ai;
+                    var arr = new PyObject[n];
+                    for (int i = n - 1; i >= 0; i--) arr[i] = stack.pop();
                     var items = new ArrayList<PyObject>(n);
-                    for (int i = 0; i < n; i++) items.addFirst(stack.pop());
+                    Collections.addAll(items, arr);
                     stack.push(new PyList(items));
                 }
                 case BUILD_TUPLE -> {
                     int n = ai;
+                    var arr = new PyObject[n];
+                    for (int i = n - 1; i >= 0; i--) arr[i] = stack.pop();
                     var items = new ArrayList<PyObject>(n);
-                    for (int i = 0; i < n; i++) items.addFirst(stack.pop());
+                    Collections.addAll(items, arr);
                     stack.push(new PyTuple(items));
                 }
                 case BUILD_DICT -> {
@@ -2452,7 +2551,12 @@ public class Jython3Interpreter implements AutoCloseable {
                             } else if ("__class__".equals(attr)) {
                                 stack.push((cls == BuiltinFunctions.OBJECT_CLASS) ? builtinTypes.get("object") : cls);
                             } else {
-                                throw PyErrors.error("AttributeError", "'" + cls.name() + "' object has no attribute '" + attr + "'");
+                                PyObject getattrFn = cls.lookupMember("__getattr__");
+                                if (getattrFn instanceof PyFunction || getattrFn instanceof PyBuiltinFunction) {
+                                    stack.push(callPyCallable(getattrFn, new PyObject[]{inst, new PyStr(attr)}));
+                                } else {
+                                    throw PyErrors.error("AttributeError", "'" + cls.name() + "' object has no attribute '" + attr + "'");
+                                }
                             }
                         }
                     } else if (obj instanceof PyClass cls) {
@@ -3147,6 +3251,17 @@ public class Jython3Interpreter implements AutoCloseable {
             if ("*".equals(item)) {
                 if (pkg.contains(".") && isJavaRootPackage(pkg.substring(0, pkg.indexOf('.')))
                         || isJavaRootPackage(pkg)) {
+                    try {
+                        PyObject resolved = JavaBridge.resolveClassOrPackage(pkg, javaAccessPolicy);
+                        if (resolved instanceof PyJavaClass jc) {
+                            for (var entry : jc.accessibleStaticMembers().entrySet()) {
+                                bindImportedName(entry.getKey(), entry.getValue());
+                            }
+                            return;
+                        }
+                    } catch (InterpreterException ie) {
+                        if (!"ImportError".equals(ie.typeName())) throw ie;
+                    }
                     throw PyErrors.error("ImportError", "'import *' from Java package is not supported");
                 }
                 PyModule mod = loadDiskModule(pkg);
@@ -3267,13 +3382,15 @@ public class Jython3Interpreter implements AutoCloseable {
         if (cached != null) return cached;
         PyModule mod = switch (name) {
             case "math" -> BuiltinModules.math();
-            case "sys"  -> BuiltinModules.sys(moduleLoader.sysPath(), moduleLoader.sysModules());
+            case "sys"  -> BuiltinModules.sys(moduleLoader.sysPath(), moduleLoader.sysModules(),
+                    this::out, this::err);
             case "os"   -> BuiltinModules.os(hostAccessPolicy);
             case "io"   -> BuiltinModules.io(hostAccessPolicy);
             case "json" -> BuiltinModules.json();
             case "re"   -> BuiltinModules.re();
             case "time" -> BuiltinModules.time();
             case "random" -> BuiltinModules.random();
+            case "importlib" -> createImportlibModule();
             case "ui" -> BuiltinModules.ui(hostSession, uiToolkit);
             case "control" -> BuiltinModules.control(hostSession, controlRegistry, uiToolkit);
             case "threading" -> BuiltinModules.threading(hostSession, this::spawnVirtualThread);
@@ -3291,6 +3408,33 @@ public class Jython3Interpreter implements AutoCloseable {
 
     private boolean containsYield(CompiledCode code) {
         return code != null && code.hasYield();
+    }
+
+    private static boolean isBuiltinModuleName(String name) {
+        return switch (name) {
+            case "math", "sys", "os", "io", "json", "re", "time", "random", "importlib", "ui", "control" -> true;
+            default -> false;
+        };
+    }
+
+    private PyModule createImportlibModule() {
+        var attrs = new HashMap<String, PyObject>();
+        attrs.put("reload", new PyBuiltinFunction("reload", args -> {
+            checkArgCount("reload", args, 1);
+            if (!(args[0] instanceof PyModule mod)) {
+                throw PyErrors.error("TypeError", "reload() argument must be a module");
+            }
+            String modName = mod.name();
+            if (isBuiltinModuleName(modName)) {
+                return mod;
+            }
+            PyModule reloaded = reloadModule(modName);
+            mod.attrs().clear();
+            mod.attrs().putAll(reloaded.attrs());
+            moduleLoader.sysModules().put(new PyStr(modName), mod);
+            return mod;
+        }));
+        return new PyModule("importlib", attrs);
     }
 
     private static boolean isJavaRootPackage(String name) {

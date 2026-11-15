@@ -146,7 +146,8 @@ class OculixCompatibilitySuiteTest {
                     }))
                     .build());
 
-            try (var exec = Executors.newSingleThreadExecutor()) {
+            var exec = Executors.newSingleThreadExecutor();
+            try {
                 Future<?> f = exec.submit(() -> {
                     InterpreterException ex = assertThrows(InterpreterException.class, () ->
                             rt.eval("sync_probe.signal()\nwhile True:\n    pass\n"));
@@ -156,6 +157,8 @@ class OculixCompatibilitySuiteTest {
                 rt.cancel();
                 f.get(5, TimeUnit.SECONDS);
                 assertTrue(cancelled.get());
+            } finally {
+                exec.shutdownNow();
             }
 
             // Host runtime remains usable after cancellation + restart

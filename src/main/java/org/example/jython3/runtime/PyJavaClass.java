@@ -68,6 +68,62 @@ public record PyJavaClass(Class<?> clazz, JavaAccessPolicy policy) implements Py
                 "Java class '" + clazz.getName() + "' has no attribute '" + name + "'");
     }
 
+    public void setMember(String name, PyObject val) {
+        if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
+        if (name == null || name.isEmpty()) {
+            throw PyErrors.error("AttributeError", "cannot set empty attribute on Java class");
+        }
+        try {
+            Field f = clazz.getField(name);
+            if (Modifier.isStatic(f.getModifiers()) && Modifier.isPublic(f.getModifiers()) && !f.isSynthetic()) {
+                if (!policy.canWriteField(clazz.getName(), name)) {
+                    throw JavaBridge.denied("field '" + name + "'");
+                }
+                if (Modifier.isFinal(f.getModifiers())) {
+                    throw PyErrors.error("AttributeError",
+                            "cannot set final static field '" + name + "' on Java class '" + clazz.getName() + "'");
+                }
+                Object javaVal = JavaBridge.toJavaObject(val, f.getType(), policy);
+                f.set(null, javaVal);
+                return;
+            }
+        } catch (NoSuchFieldException | IllegalAccessException ignored) {
+        }
+        throw PyErrors.error("AttributeError",
+                "Java class '" + clazz.getName() + "' has no writable static attribute '" + name + "'");
+    }
+
+    public java.util.Map<String, PyObject> accessibleStaticMembers() {
+        if (!policy.canAccessClass(clazz.getName())) throw JavaBridge.denied(clazz.getName());
+        var result = new java.util.LinkedHashMap<String, PyObject>();
+        for (Field f : clazz.getFields()) {
+            if (Modifier.isStatic(f.getModifiers()) && Modifier.isPublic(f.getModifiers()) && !f.isSynthetic()) {
+                if (policy.canReadField(clazz.getName(), f.getName())) {
+                    try {
+                        result.put(f.getName(), JavaBridge.toPyObject(f.get(null), policy));
+                    } catch (IllegalAccessException | InterpreterException ignored) {
+                    }
+                }
+            }
+        }
+        for (Method m : clazz.getMethods()) {
+            if (Modifier.isStatic(m.getModifiers()) && Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
+                String mName = m.getName();
+                if (!result.containsKey(mName) && policy.canCallMethod(
+                        clazz.getName(), mName, JavaDescriptors.of(m.getParameterTypes()))) {
+                    result.put(mName, new PyJavaMethod(null, clazz, mName,
+                            JavaBridge.getStaticMethodsNamed(clazz, mName), policy));
+                }
+            }
+        }
+        for (Class<?> inner : clazz.getClasses()) {
+            if (Modifier.isPublic(inner.getModifiers()) && policy.canAccessClass(inner.getName())) {
+                result.put(inner.getSimpleName(), new PyJavaClass(inner, policy));
+            }
+        }
+        return result;
+    }
+
     private List<Method> permit(List<Method> methods, String name) {
         return methods.stream()
                 .filter(m -> policy.canCallMethod(

@@ -205,9 +205,10 @@ public final class BuiltinFunctions {
                     }
                 }
             } else {
-                System.out.print(output);
+                java.io.PrintStream out = caller != null ? caller.out() : System.out;
+                out.print(output);
                 if (flush) {
-                    System.out.flush();
+                    out.flush();
                 }
             }
             return new PyNull();
@@ -1054,10 +1055,27 @@ public final class BuiltinFunctions {
                 for (String n : names) res.add(new PyStr(n));
                 return new PyList(res);
             }
-            return dirObject(args[0]);
+            return dirObject(args[0], javaPolicy);
+        }));
+        define.accept("globals", new PyBuiltinFunction("globals", args -> {
+            checkArgCount("globals", args, 0);
+            Map<String, PyObject> scope = caller.globalsScope();
+            if (scope == null) {
+                throw PyErrors.error("RuntimeError", "globals() is not available here");
+            }
+            return scopeToDict(scope);
+        }));
+        define.accept("locals", new PyBuiltinFunction("locals", args -> {
+            checkArgCount("locals", args, 0);
+            Map<String, PyObject> scope = caller.currentScope();
+            if (scope == null) {
+                throw PyErrors.error("RuntimeError", "locals() is not available here");
+            }
+            return scopeToDict(scope);
         }));
         define.accept("input", new PyBuiltinFunction("input", args -> {
-            if (args.length > 0 && args[0] instanceof PyStr s) System.out.print(s.value());
+            java.io.PrintStream out = caller != null ? caller.out() : System.out;
+            if (args.length > 0 && args[0] instanceof PyStr s) out.print(s.value());
             try {
                 var reader = new java.io.BufferedReader(new java.io.InputStreamReader(System.in));
                 String line = reader.readLine();
@@ -1182,7 +1200,7 @@ public final class BuiltinFunctions {
         return d;
     }
 
-    private static PyList dirObject(PyObject o) {
+    private static PyList dirObject(PyObject o, org.example.jython3.security.JavaAccessPolicy policy) {
         var names = new java.util.TreeSet<String>();
         names.add("__class__");
         if (o instanceof PyInstance inst) {
@@ -1223,6 +1241,30 @@ public final class BuiltinFunctions {
             Collections.addAll(names, "count", "endswith", "find", "isalnum", "isalpha", "isdigit", "join", "lower", "replace", "split", "startswith", "strip", "upper");
         } else if (o instanceof PyFunction || o instanceof PyBuiltinFunction || o instanceof PyBoundMethod) {
             names.add("__name__");
+        } else if (o instanceof PyJavaObject jo && jo.object() != null) {
+            Class<?> clazz = jo.object().getClass();
+            if (policy == null || policy.canAccessClass(clazz.getName())) {
+                for (java.lang.reflect.Method m : clazz.getMethods()) {
+                    if (java.lang.reflect.Modifier.isPublic(m.getModifiers()) && !m.isSynthetic()) {
+                        if (policy == null || policy.canCallMethod(clazz.getName(), m.getName(),
+                                org.example.jython3.security.JavaDescriptors.of(m.getParameterTypes()))) {
+                            names.add(m.getName());
+                        }
+                    }
+                }
+                for (java.lang.reflect.Field f : clazz.getFields()) {
+                    if (java.lang.reflect.Modifier.isPublic(f.getModifiers()) && !f.isSynthetic()) {
+                        if (policy == null || policy.canReadField(clazz.getName(), f.getName())) {
+                            names.add(f.getName());
+                        }
+                    }
+                }
+            }
+        } else if (o instanceof PyJavaClass jc) {
+            Class<?> clazz = jc.clazz();
+            if (policy == null || policy.canAccessClass(clazz.getName())) {
+                names.addAll(jc.accessibleStaticMembers().keySet());
+            }
         }
         var res = new ArrayList<PyObject>(names.size());
         for (String n : names) res.add(new PyStr(n));
