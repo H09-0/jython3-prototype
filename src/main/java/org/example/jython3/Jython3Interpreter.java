@@ -3012,6 +3012,13 @@ public class Jython3Interpreter implements AutoCloseable {
         if (obj instanceof PyFrozenSet fs) return BuiltinMethodDispatcher.frozenSetMethod(fs, attr, javaAccessPolicy);
         if (obj instanceof PyGenerator gen) return BuiltinMethodDispatcher.generatorMethod(gen, attr);
         if (obj instanceof PyHostHandle hh) return hh.getAttr(attr);
+        if (obj instanceof PyJavaObject jo) {
+            try {
+                return jo.getMember(attr);
+            } catch (InterpreterException ignored) {
+                return null;
+            }
+        }
         if (obj instanceof PyStr s)     return BuiltinMethodDispatcher.strMethod(s, attr);
         return null;
     }
