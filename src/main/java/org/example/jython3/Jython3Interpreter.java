@@ -1483,12 +1483,15 @@ public class Jython3Interpreter {
                     var savedLocals = currentLocals;
                     var savedStack = stack;
                     var savedExceptStack = exceptStack;
+                    var savedActiveGen = activeGenerator;
                     try {
                         currentLocals = classLocals;
                         stack = new FastStack();
                         exceptStack = new ArrayDeque<>();
+                        activeGenerator = null;
                         runNested(codeWrap.code(), 0);
                     } finally {
+                        activeGenerator = savedActiveGen;
                         currentLocals = savedLocals;
                         stack = savedStack;
                         exceptStack = savedExceptStack;
@@ -2491,6 +2494,7 @@ public class Jython3Interpreter {
             var savedFile = currentFile;
             var savedGlobals = currentGlobals;
             var savedGlobalCells = globalCells;
+            var savedActiveGen = activeGenerator;
             PyException outerCtx = currentContextException();
             if (outerCtx != null) outerActiveContexts.addLast(outerCtx);
 
@@ -2503,11 +2507,13 @@ public class Jython3Interpreter {
                 exceptStack = borrowedExcept = borrowExceptStack();
                 activeExceptions = borrowedActive = borrowActiveExceptions();
                 globalCells = null;
+                activeGenerator = null;
                 currentFunc = fn.name();
                 currentFunction = fn;
                 runNested(fn.code(), 0);
                 return stack.isEmpty() ? new PyNull() : stack.pop();
             } finally {
+                activeGenerator = savedActiveGen;
                 if (outerCtx != null) outerActiveContexts.removeLast();
                 recycleStack(borrowedStack);
                 recycleExceptStack(borrowedExcept);

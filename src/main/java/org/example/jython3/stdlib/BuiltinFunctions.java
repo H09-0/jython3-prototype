@@ -455,20 +455,21 @@ public final class BuiltinFunctions {
         // zip(*iterables)
         define.accept("zip", new PyBuiltinFunction("zip", args -> {
             if (args.length == 0) return new PyList(new ArrayList<>());
-            List<List<PyObject>> seqs = new ArrayList<>(args.length);
-            int minLen = Integer.MAX_VALUE;
+            List<PyIterator> iters = new ArrayList<>(args.length);
             for (PyObject a : args) {
-                List<PyObject> items = collectIterable(a, javaPolicy);
-                seqs.add(items);
-                minLen = Math.min(minLen, items.size());
+                iters.add(toIterator(a, javaPolicy));
             }
-            var result = new ArrayList<PyObject>(minLen);
-            for (int i = 0; i < minLen; i++) {
-                var tupleItems = new ArrayList<PyObject>(seqs.size());
-                for (var s : seqs) tupleItems.add(s.get(i));
+            var result = new ArrayList<PyObject>();
+            while (true) {
+                var tupleItems = new ArrayList<PyObject>(iters.size());
+                for (PyIterator it : iters) {
+                    if (!it.hasNext()) {
+                        return new PyList(result);
+                    }
+                    tupleItems.add(it.next());
+                }
                 result.add(new PyTuple(tupleItems));
             }
-            return new PyList(result);
         }));
 
         // map(func, iterable)
