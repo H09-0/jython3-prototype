@@ -189,6 +189,19 @@ public final class PyOps {
         if (a instanceof PyDict ad && b instanceof PyDict bd) {
             return ad.map().equals(bd.map());
         }
+        if (a instanceof PySet sa && b instanceof PySet sb) {
+            if (sa.size() != sb.size()) return false;
+            for (PyObject x : sa.items()) {
+                if (sb.items().contains(x)) continue;
+                // Fall back to Python equality (e.g. 1 == 1.0) when Java hashing differs
+                boolean found = false;
+                for (PyObject y : sb.items()) {
+                    if (pyEquals(x, y)) { found = true; break; }
+                }
+                if (!found) return false;
+            }
+            return true;
+        }
         return false;
     }
 
