@@ -738,6 +738,10 @@ public class Jython3Interpreter {
         int[] bc = code.bytecode();
         Object[] pool = code.constPool();
         int pc = 0;
+        // Frames below this depth belong to an enclosing run() invocation (re-entrant
+        // calls from callPyCallableKw: __init__, __enter__/__exit__, builtins calling back
+        // into Python). This loop must never return into, or unwind through, them.
+        final int baseDepth = callStack.size();
 
         outer: while (pc < bc.length) {
             if (enforceLimits) {
@@ -1423,7 +1427,7 @@ public class Jython3Interpreter {
                     if (yieldCollector != null) {
                         // Draining a generator: record the value and keep executing.
                         yieldCollector.add(rv);
-                    } else if (callStack.isEmpty()) {
+                    } else if (callStack.size() <= baseDepth) {
                         stack.push(rv);
                         return;
                     } else {
@@ -1447,7 +1451,7 @@ public class Jython3Interpreter {
                 }
                 case RETURN_VALUE -> {
                     PyObject rv = stack.pop();
-                    if (callStack.isEmpty()) { stack.push(rv); return; }
+                    if (callStack.size() <= baseDepth) { stack.push(rv); return; }
                     Frame cf = callStack.pop();
                     code = cf.code();
                     bc = code.bytecode();
@@ -1923,10 +1927,11 @@ public class Jython3Interpreter {
                     pc = h.exceptPc();
                     continue outer;
                 }
-                // No handler in this frame: record it and unwind one level.
+                // No handler in this frame: record it and unwind one level
+                // (but never into frames owned by an enclosing run()).
                 ie.setLocation(currentFile, currentLine, currentFunc);
                 ie.addFrame(currentFile, currentLine, currentFunc);
-                while (!callStack.isEmpty()) {
+                while (callStack.size() > baseDepth) {
                     Frame cf = callStack.pop();
                     code = cf.code();
                     bc = code.bytecode();
@@ -2056,24 +2061,33 @@ public class Jython3Interpreter {
             var savedFunc = currentFunc;
             var savedFunction = currentFunction;
             var savedLine = currentLine;
+            var savedFile = currentFile;
+            var savedGlobals = currentGlobals;
+            var savedGlobalCells = globalCells;
 
-            currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
-            stack = new FastStack();
-            exceptStack = new ArrayDeque<>();
-            activeExceptions = new ArrayDeque<>();
-            currentFunc = fn.name();
-            currentFunction = fn;
-            run(fn.code());
-            PyObject result = stack.isEmpty() ? new PyNull() : stack.pop();
-
-            stack = savedStack;
-            currentLocals = savedLocals;
-            exceptStack = savedExcept;
-            activeExceptions = savedActive;
-            currentFunc = savedFunc;
-            currentFunction = savedFunction;
-            currentLine = savedLine;
-            return result;
+            try {
+                currentLocals = bindArgs(fn, posArgs, kwNames, kwValues);
+                stack = new FastStack();
+                exceptStack = new ArrayDeque<>();
+                activeExceptions = new ArrayDeque<>();
+                globalCells = null;
+                currentFunc = fn.name();
+                currentFunction = fn;
+                run(fn.code());
+                return stack.isEmpty() ? new PyNull() : stack.pop();
+            } finally {
+                // Always restore the caller's frame state, including when the callee raises.
+                stack = savedStack;
+                currentLocals = savedLocals;
+                exceptStack = savedExcept;
+                activeExceptions = savedActive;
+                currentFunc = savedFunc;
+                currentFunction = savedFunction;
+                currentLine = savedLine;
+                currentFile = savedFile;
+                currentGlobals = savedGlobals;
+                globalCells = savedGlobalCells;
+            }
         }
         throw PyErrors.error("TypeError", "'" + typeName(callable) + "' object is not callable");
     }
