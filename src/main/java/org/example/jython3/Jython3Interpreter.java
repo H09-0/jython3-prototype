@@ -1368,7 +1368,7 @@ public class Jython3Interpreter {
                     } else if (callable instanceof PyJavaMethod jm) {
                         stack.push(jm.invoke(args));
                     } else {
-                        throw PyErrors.error("TypeError", "'" + callable + "' is not callable");
+                        throw PyErrors.error("TypeError", "'" + typeName(callable) + "' object is not callable");
                     }
                 }
                 case YIELD_VALUE -> {
@@ -2005,7 +2005,7 @@ public class Jython3Interpreter {
             currentLine = savedLine;
             return result;
         }
-        throw PyErrors.error("TypeError", "'" + callable + "' is not callable");
+        throw PyErrors.error("TypeError", "'" + typeName(callable) + "' object is not callable");
     }
 
     /**

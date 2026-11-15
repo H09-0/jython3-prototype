@@ -161,10 +161,9 @@ execfile_stmt
     : EXECFILE LPAREN expr RPAREN
     ;
 
-/** Standalone function call: name(args) or expr.method(args) */
+/** Standalone function or callable expression call: expr(args) */
 call_stmt
-    : ID LPAREN arg_list? RPAREN
-    | expr DOT ID LPAREN arg_list? RPAREN
+    : expr LPAREN arg_list? RPAREN
     ;
 
 /** global name, name, ... */
@@ -286,7 +285,7 @@ arg_item
  */
 expr
     : expr LBRACK slice_item RBRACK                        # Subscript
-    | expr DOT ID LPAREN arg_list? RPAREN                  # AttrCall
+    | expr LPAREN arg_list? RPAREN                         # CallExpr
     | expr DOT ID                                          # AttrAccess
     | <assoc=right> expr POWER expr                        # Power
     | SUB expr                                             # UnaryMinus
@@ -303,7 +302,6 @@ expr
     | expr OR expr                                         # OrExpr
     | expr IF expr ELSE expr                               # TernaryExpr
     | LAMBDA param_list? COLON expr                        # LambdaExpr
-    | ID LPAREN arg_list? RPAREN                           # FuncCall
     | LPAREN expr RPAREN                                   # Paren
     | LPAREN expr_list? RPAREN                             # TupleLiteral
     | LBRACK expr FOR ID IN expr (IF expr)? RBRACK         # ListComp

@@ -264,4 +264,45 @@ public class FieldIntegrationTest {
             sc.verify(interp);
         }
     }
+
+    @Test
+    @DisplayName("Unified callable expression trailers: factory()(10), items[0](10), obj.method()(10), and non-callable TypeError")
+    void testUnifiedCallableExpressionTrailers() {
+        var interp = Jython3Interpreter.trusted();
+        interp.eval("""
+            def factory():
+                return lambda x: x + 5
+
+            items = [lambda x: x * 3, str]
+
+            class Dispatcher:
+                def method(self):
+                    return lambda x: x - 2
+
+            log = []
+            def get_callback():
+                return lambda v: log.append("cb:" + v)
+
+            obj = Dispatcher()
+            r1 = factory()(10)
+            r2 = items[0](10)
+            r3 = items[1](99)
+            r4 = obj.method()(10)
+            get_callback()("value")
+
+            not_callable_err = ""
+            try:
+                x = 42
+                x(10)
+            except TypeError as e:
+                not_callable_err = str(e)
+            """);
+        assertEquals(new PyInt(15), interp.getGlobal("r1"));
+        assertEquals(new PyInt(30), interp.getGlobal("r2"));
+        assertEquals(new PyStr("99"), interp.getGlobal("r3"));
+        assertEquals(new PyInt(8), interp.getGlobal("r4"));
+        assertEquals("['cb:value']", interp.getGlobal("log").toString());
+        assertTrue(interp.getGlobal("not_callable_err").toString().contains("'int' object is not callable"),
+                interp.getGlobal("not_callable_err").toString());
+    }
 }

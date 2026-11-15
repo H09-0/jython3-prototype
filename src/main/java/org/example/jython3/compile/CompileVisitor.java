@@ -372,12 +372,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitCall_stmt(Jython3Parser.Call_stmtContext c) {
-        if (c.expr() != null) {
-            visit(c.expr());
-            b.emit(OpCode.LOAD_ATTR, c.ID().getText());
-        } else {
-            b.emit(OpCode.LOAD_FAST, c.ID().getText());
-        }
+        visit(c.expr());
         emitCall(c.arg_list());
         b.emit(OpCode.POP_TOP);
         return null;
@@ -909,8 +904,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         }
     }
 
-    @Override public Void visitFuncCall(Jython3Parser.FuncCallContext c) {
-        b.emit(OpCode.LOAD_FAST, c.ID().getText());
+    @Override public Void visitCallExpr(Jython3Parser.CallExprContext c) {
+        visit(c.expr());
         emitCall(c.arg_list());
         return null;
     }
@@ -1030,13 +1025,6 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     @Override public Void visitAttrAccess(Jython3Parser.AttrAccessContext c) {
         visit(c.expr());
         b.emit(OpCode.LOAD_ATTR, c.ID().getText());
-        return null;
-    }
-
-    @Override public Void visitAttrCall(Jython3Parser.AttrCallContext c) {
-        visit(c.expr());
-        b.emit(OpCode.LOAD_ATTR, c.ID().getText());
-        emitCall(c.arg_list());
         return null;
     }
 
