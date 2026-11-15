@@ -88,6 +88,7 @@ public final class ControlModule {
             if (ms < 1) throw PyErrors.error("ValueError", "timer interval must be >= 1 ms");
             UiToolkit.UiTimer timer = uiToolkit.createTimer(session, ms, args[1]);
             return PyHostHandle.builder("control.Timer")
+                    .bindSession(session)
                     .prop("id", () -> new PyStr(timer.id()))
                     .prop("running", () -> PyBool.of(timer.isRunning()))
                     .method("start", new PyBuiltinFunction("Timer.start", a -> { timer.start(); return PyNull.INSTANCE; }))
@@ -109,6 +110,7 @@ public final class ControlModule {
         session.registerResource(cleanup);
 
         return PyHostHandle.builder("control.Controller")
+                .bindSession(session)
                 .prop("device_id", () -> new PyStr(device.id()))
                 .prop("closed", () -> PyBool.of(closed[0]))
                 .method("send", new PyBuiltinFunction("Controller.send", (args, kwargs) -> {
@@ -157,6 +159,7 @@ public final class ControlModule {
                         throw PyErrors.error("SecurityError", "control access to device '" + device.id() + "' is restricted");
                     }
                     return PyHostHandle.builder("control.State")
+                            .bindSession(session)
                             .prop("device_id", () -> new PyStr(device.id()))
                             .method("get", new PyBuiltinFunction("State.get", ga -> {
                                 if (closed[0]) {

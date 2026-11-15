@@ -34,26 +34,26 @@ public final class UiModule {
             int width = kwargs.containsKey("width") ? intArg(kwargs.get("width")) : (args.length >= 2 ? intArg(args[1]) : 640);
             int height = kwargs.containsKey("height") ? intArg(kwargs.get("height")) : (args.length >= 3 ? intArg(args[2]) : 480);
             UiToolkit.UiWindow win = toolkit.createWindow(session, title, width, height);
-            return wrapWindow(win, widgetRegistry);
+            return wrapWindow(session, win, widgetRegistry);
         }));
 
         attrs.put("Button", new PyBuiltinFunction("ui.Button", args -> {
             String text = args.length >= 1 ? strArg(args[0], "Button text") : "";
-            return wrapButton(toolkit.createButton(session, text), widgetRegistry);
+            return wrapButton(session, toolkit.createButton(session, text), widgetRegistry);
         }));
 
         attrs.put("Label", new PyBuiltinFunction("ui.Label", args -> {
             String text = args.length >= 1 ? strArg(args[0], "Label text") : "";
-            return wrapLabel(toolkit.createLabel(session, text), widgetRegistry);
+            return wrapLabel(session, toolkit.createLabel(session, text), widgetRegistry);
         }));
 
         attrs.put("TextField", new PyBuiltinFunction("ui.TextField", args -> {
             String text = args.length >= 1 ? strArg(args[0], "TextField text") : "";
-            return wrapTextField(toolkit.createTextField(session, text), widgetRegistry);
+            return wrapTextField(session, toolkit.createTextField(session, text), widgetRegistry);
         }));
 
         attrs.put("Panel", new PyBuiltinFunction("ui.Panel", args -> {
-            return wrapPanel(toolkit.createPanel(session), widgetRegistry);
+            return wrapPanel(session, toolkit.createPanel(session), widgetRegistry);
         }));
 
         attrs.put("Timer", new PyBuiltinFunction("ui.Timer", args -> {
@@ -61,15 +61,16 @@ public final class UiModule {
                 throw PyErrors.error("TypeError", "ui.Timer(interval_ms, callback) takes exactly 2 arguments");
             }
             int ms = intArg(args[0]);
-            return wrapTimer(toolkit.createTimer(session, ms, args[1]));
+            return wrapTimer(session, toolkit.createTimer(session, ms, args[1]));
         }));
 
         return new PyModule("ui", attrs);
     }
 
-    private static PyHostHandle wrapWindow(UiToolkit.UiWindow win, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+    private static PyHostHandle wrapWindow(HostSession session, UiToolkit.UiWindow win, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
         var childHandles = new java.util.ArrayList<PyObject>();
         PyHostHandle h = PyHostHandle.builder("ui.Window")
+                .bindSession(session)
                 .prop("id", () -> new PyStr(win.id()))
                 .prop("title", () -> new PyStr(win.title()), v -> win.setTitle(strArg(v, "title")))
                 .prop("width", () -> PyInt.of(win.width()))
@@ -97,8 +98,9 @@ public final class UiModule {
         return h;
     }
 
-    private static PyHostHandle wrapButton(UiToolkit.UiButton btn, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+    private static PyHostHandle wrapButton(HostSession session, UiToolkit.UiButton btn, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
         PyHostHandle h = PyHostHandle.builder("ui.Button")
+                .bindSession(session)
                 .prop("id", () -> new PyStr(btn.id()))
                 .prop("text", () -> new PyStr(btn.text()), v -> btn.setText(strArg(v, "text")))
                 .prop("enabled", () -> PyBool.of(btn.isEnabled()), v -> btn.setEnabled(boolArg(v)))
@@ -116,8 +118,9 @@ public final class UiModule {
         return h;
     }
 
-    private static PyHostHandle wrapLabel(UiToolkit.UiLabel lbl, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+    private static PyHostHandle wrapLabel(HostSession session, UiToolkit.UiLabel lbl, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
         PyHostHandle h = PyHostHandle.builder("ui.Label")
+                .bindSession(session)
                 .prop("id", () -> new PyStr(lbl.id()))
                 .prop("text", () -> new PyStr(lbl.text()), v -> lbl.setText(strArg(v, "text")))
                 .build();
@@ -125,8 +128,9 @@ public final class UiModule {
         return h;
     }
 
-    private static PyHostHandle wrapTextField(UiToolkit.UiTextField tf, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+    private static PyHostHandle wrapTextField(HostSession session, UiToolkit.UiTextField tf, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
         PyHostHandle h = PyHostHandle.builder("ui.TextField")
+                .bindSession(session)
                 .prop("id", () -> new PyStr(tf.id()))
                 .prop("text", () -> new PyStr(tf.text()), v -> tf.setText(strArg(v, "text")))
                 .method("on_change", new PyBuiltinFunction("TextField.on_change", a -> {
@@ -144,9 +148,10 @@ public final class UiModule {
         return h;
     }
 
-    private static PyHostHandle wrapPanel(UiToolkit.UiPanel pnl, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
+    private static PyHostHandle wrapPanel(HostSession session, UiToolkit.UiPanel pnl, Map<PyHostHandle, UiToolkit.UiWidget> reg) {
         var childHandles = new java.util.ArrayList<PyObject>();
         PyHostHandle h = PyHostHandle.builder("ui.Panel")
+                .bindSession(session)
                 .prop("id", () -> new PyStr(pnl.id()))
                 .method("add", new PyBuiltinFunction("Panel.add", a -> {
                     if (a.length != 1 || !(a[0] instanceof PyHostHandle ch) || !reg.containsKey(ch)) {
@@ -162,8 +167,9 @@ public final class UiModule {
         return h;
     }
 
-    private static PyHostHandle wrapTimer(UiToolkit.UiTimer timer) {
+    private static PyHostHandle wrapTimer(HostSession session, UiToolkit.UiTimer timer) {
         return PyHostHandle.builder("ui.Timer")
+                .bindSession(session)
                 .prop("id", () -> new PyStr(timer.id()))
                 .prop("interval_ms", () -> PyInt.of(timer.intervalMs()))
                 .prop("running", () -> PyBool.of(timer.isRunning()))

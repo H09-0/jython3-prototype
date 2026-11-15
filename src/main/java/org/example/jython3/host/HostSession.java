@@ -12,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 
 /**
@@ -34,6 +35,7 @@ public final class HostSession implements AutoCloseable {
     private final Set<AutoCloseable> managedResources = new LinkedHashSet<>();
     private final Deque<CallbackFailure> callbackFailures = new ArrayDeque<>(16);
     private final CallbackInvoker callbackInvoker;
+    private final AtomicLong epoch = new AtomicLong(1);
     private volatile BiConsumer<String, Throwable> callbackErrorHandler;
     private volatile ExecutionContext activeContext;
     private volatile boolean closed = false;
@@ -53,6 +55,15 @@ public final class HostSession implements AutoCloseable {
     public HostAuditLog auditLog() { return auditLog; }
 
     public boolean isClosed() { return closed; }
+
+    public long epoch() { return epoch.get(); }
+
+    public void requireValidEpoch(long handleEpoch, String handleType) {
+        if (closed || epoch.get() != handleEpoch) {
+            throw PyErrors.error("RuntimeError",
+                    "stale handle '" + handleType + "' from a reset or closed host session");
+        }
+    }
 
     public void setCallbackErrorHandler(BiConsumer<String, Throwable> handler) {
         this.callbackErrorHandler = handler;
@@ -223,6 +234,7 @@ public final class HostSession implements AutoCloseable {
 
     /** Closes all registered windows, timers, listeners, and controllers without throwing. */
     public void reset() {
+        epoch.incrementAndGet();
         List<AutoCloseable> toClose;
         synchronized (this) {
             toClose = new ArrayList<>(managedResources);

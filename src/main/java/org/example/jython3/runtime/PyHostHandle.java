@@ -1,5 +1,7 @@
 package org.example.jython3.runtime;
 
+import org.example.jython3.host.HostSession;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -13,20 +15,40 @@ import java.util.function.Supplier;
  * Opaque, reflection-free Python handle for a host resource (Window, Button,
  * Timer, Controller, Event, etc.). Only explicitly whitelisted methods and
  * properties are exposed — never raw Java fields, methods, or {@code getClass()}.
+ * When bound to a {@link HostSession}, operations after session reset or close
+ * fail with {@code RuntimeError}.
  */
 public final class PyHostHandle implements PyObject {
 
     private final String typeName;
+    private final HostSession session;
+    private final long sessionEpoch;
     private final Map<String, PyBuiltinFunction> methods;
     private final Map<String, Supplier<PyObject>> getters;
     private final Map<String, Consumer<PyObject>> setters;
 
     private PyHostHandle(String typeName,
+                         HostSession session,
+                         long sessionEpoch,
                          Map<String, PyBuiltinFunction> methods,
                          Map<String, Supplier<PyObject>> getters,
                          Map<String, Consumer<PyObject>> setters) {
         this.typeName = Objects.requireNonNull(typeName, "typeName");
-        this.methods = Collections.unmodifiableMap(new LinkedHashMap<>(methods));
+        this.session = session;
+        this.sessionEpoch = sessionEpoch;
+        if (session != null) {
+            var wrapped = new LinkedHashMap<String, PyBuiltinFunction>(methods.size());
+            for (var e : methods.entrySet()) {
+                PyBuiltinFunction orig = e.getValue();
+                wrapped.put(e.getKey(), new PyBuiltinFunction(orig.name(), (args, kwargs) -> {
+                    session.requireValidEpoch(sessionEpoch, typeName);
+                    return orig.callWithKw(args, kwargs);
+                }));
+            }
+            this.methods = Collections.unmodifiableMap(wrapped);
+        } else {
+            this.methods = Collections.unmodifiableMap(new LinkedHashMap<>(methods));
+        }
         this.getters = Collections.unmodifiableMap(new LinkedHashMap<>(getters));
         this.setters = Collections.unmodifiableMap(new LinkedHashMap<>(setters));
     }
@@ -35,11 +57,18 @@ public final class PyHostHandle implements PyObject {
 
     public String handleTypeName() { return typeName; }
 
+    private void checkValid() {
+        if (session != null) {
+            session.requireValidEpoch(sessionEpoch, typeName);
+        }
+    }
+
     public boolean hasAttr(String name) {
         return methods.containsKey(name) || getters.containsKey(name);
     }
 
     public PyObject getAttr(String name) {
+        checkValid();
         PyBuiltinFunction m = methods.get(name);
         if (m != null) return m;
         Supplier<PyObject> g = getters.get(name);
@@ -48,6 +77,7 @@ public final class PyHostHandle implements PyObject {
     }
 
     public void setAttr(String name, PyObject value) {
+        checkValid();
         Consumer<PyObject> s = setters.get(name);
         if (s == null) {
             throw PyErrors.error("AttributeError", "'" + typeName + "' attribute '" + name + "' is read-only or unknown");
@@ -68,11 +98,19 @@ public final class PyHostHandle implements PyObject {
 
     public static final class Builder {
         private final String typeName;
+        private HostSession session;
+        private long sessionEpoch = -1L;
         private final Map<String, PyBuiltinFunction> methods = new LinkedHashMap<>();
         private final Map<String, Supplier<PyObject>> getters = new LinkedHashMap<>();
         private final Map<String, Consumer<PyObject>> setters = new LinkedHashMap<>();
 
         private Builder(String typeName) { this.typeName = typeName; }
+
+        public Builder bindSession(HostSession session) {
+            this.session = Objects.requireNonNull(session, "session");
+            this.sessionEpoch = session.epoch();
+            return this;
+        }
 
         public Builder method(String name, PyBuiltinFunction fn) {
             methods.put(name, fn);
@@ -91,7 +129,7 @@ public final class PyHostHandle implements PyObject {
         }
 
         public PyHostHandle build() {
-            return new PyHostHandle(typeName, methods, getters, setters);
+            return new PyHostHandle(typeName, session, sessionEpoch, methods, getters, setters);
         }
     }
 }

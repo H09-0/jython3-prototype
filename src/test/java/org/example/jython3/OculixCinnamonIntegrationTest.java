@@ -87,6 +87,13 @@ class OculixCinnamonIntegrationTest {
                 assert app_state.status == "Level=25"
                 """, "<oculix-plugin>");
 
+            var staleWin = bridge.getGlobal("win");
+            var staleBtn = bridge.getGlobal("apply_btn");
+            var staleCtrl = bridge.getGlobal("ctrl");
+            bridge.runScript("stale_state = ctrl.state()\nsaved_show = win.show", "<save-stale>");
+            var staleState = bridge.getGlobal("stale_state");
+            var savedShow = bridge.getGlobal("saved_show");
+
             assertEquals(1, toolkit.openWindowCount());
             assertEquals(2, hostCounter.get());
             assertEquals("Level=25", hostStatus.get());
@@ -112,12 +119,32 @@ class OculixCinnamonIntegrationTest {
             assertEquals("KeyboardInterrupt", cancelErr.typeName());
             assertEquals("Level=25", hostStatus.get(), "cancelled callback must not complete mutation");
 
-            // 3. Restarting interpreter closes windows/controllers and clears stale Python globals
+            // 3. Restarting interpreter closes windows/controllers and invalidates all stale handles
             bridge.restart();
             assertEquals(0, toolkit.openWindowCount());
             assertEquals(0, bridge.interpreter().hostSession().managedResourceCount());
             assertNull(bridge.getGlobal("win"));
             assertNull(bridge.getGlobal("project"));
+
+            bridge.interpreter().setGlobal("stale_win", staleWin);
+            bridge.interpreter().setGlobal("stale_btn", staleBtn);
+            bridge.interpreter().setGlobal("stale_ctrl", staleCtrl);
+            bridge.interpreter().setGlobal("stale_state", staleState);
+            bridge.interpreter().setGlobal("saved_show", savedShow);
+            for (String staleCall : List.of(
+                    "x = stale_win.title",
+                    "stale_win.title = 'new'",
+                    "stale_win.show()",
+                    "saved_show()",
+                    "stale_btn.click()",
+                    "stale_ctrl.send('ping')",
+                    "stale_state.get('level')"
+            )) {
+                var e = assertThrows(InterpreterException.class,
+                        () -> bridge.runScript(staleCall, "<stale-check>"), staleCall);
+                assertEquals("RuntimeError", e.typeName(), staleCall);
+                assertTrue(e.getMessage().contains("stale handle"), e.getMessage());
+            }
 
             // Fresh script runs cleanly after restart
             bridge.bindModelData("project", Map.of("name", "Fresh-Session"));
