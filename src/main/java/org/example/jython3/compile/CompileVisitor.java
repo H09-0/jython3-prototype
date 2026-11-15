@@ -399,8 +399,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitYield_stmt(Jython3Parser.Yield_stmtContext c) {
-        if (c.expr() != null) {
-            visit(c.expr());
+        if (c.rhs_tuple() != null) {
+            emitRhsTuple(c.rhs_tuple());
         } else {
             b.emit(OpCode.LOAD_CONST, null);
         }
@@ -459,9 +459,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return null;
     }
 
-    @Override public Void visitCall_stmt(Jython3Parser.Call_stmtContext c) {
-        visit(c.expr());
-        emitCall(c.arg_list());
+    @Override public Void visitExpr_stmt(Jython3Parser.Expr_stmtContext c) {
+        emitRhsTuple(c.rhs_tuple());
         b.emit(OpCode.POP_TOP);
         return null;
     }
@@ -918,34 +917,78 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitComparison(Jython3Parser.ComparisonContext c) {
-        visit(c.expr(0));
-        visit(c.expr(1));
-        String opText = c.op.getText();
-        switch (opText) {
-            case "==" -> b.emit(OpCode.COMPARE_EQ);
-            case "!=" -> b.emit(OpCode.COMPARE_NEQ);
-            case "<"  -> b.emit(OpCode.COMPARE_LT);
-            case ">"  -> b.emit(OpCode.COMPARE_GT);
-            case "<=" -> b.emit(OpCode.COMPARE_LTE);
-            case ">=" -> b.emit(OpCode.COMPARE_GTE);
+        return emitComparisonChain(c);
+    }
+
+    /**
+     * Compiles single and chained comparisons ({@code a < b < c}, {@code 0 == 0 == 0},
+     * {@code 1 in [1, 2] == True}, {@code a in b is not None}) with single evaluation of
+     * intermediate expressions and short-circuiting on the first {@code False}.
+     * Explicitly parenthesized comparisons like {@code (a < b) < c} stay separate
+     * {@code ParenContext} nodes.
+     */
+    private Void emitComparisonChain(Jython3Parser.ExprContext root) {
+        var operands = new ArrayList<Jython3Parser.ExprContext>();
+        var ops = new ArrayList<OpCode>();
+        collectComparisonChain(root, operands, ops);
+
+        if (ops.size() == 1) {
+            visit(operands.get(0));
+            visit(operands.get(1));
+            b.emit(ops.get(0));
+            return null;
         }
+
+        visit(operands.get(0));
+        var failJumps = new ArrayList<Integer>();
+        for (int i = 0; i < ops.size() - 1; i++) {
+            visit(operands.get(i + 1));
+            // Stack: [..., prev, next] -> [..., next, prev, next]
+            b.emit(OpCode.DUP_TOP);
+            b.emit(OpCode.ROT_THREE);
+            b.emit(OpCode.ROT_TWO);
+            b.emit(ops.get(i));
+            int failIdx = b.size();
+            b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+            failJumps.add(failIdx);
+        }
+        visit(operands.get(operands.size() - 1));
+        b.emit(ops.get(ops.size() - 1));
+        int endJump = b.size();
+        b.emitRaw(OpCode.JUMP, 0);
+
+        int failTarget = b.size();
+        for (int j : failJumps) b.patch(j, failTarget);
+        b.emit(OpCode.POP_TOP); // discard remaining intermediate operand
+        b.emit(OpCode.LOAD_CONST, false);
+        b.patch(endJump, b.size());
         return null;
     }
 
-    @Override public Void visitInExpr(Jython3Parser.InExprContext c) {
-        visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.COMPARE_IN); return null;
+    private static void collectComparisonChain(Jython3Parser.ExprContext node,
+                                               List<Jython3Parser.ExprContext> operands,
+                                               List<OpCode> ops) {
+        if (node instanceof Jython3Parser.ComparisonContext c) {
+            collectComparisonChain(c.expr(0), operands, ops);
+            operands.add(c.expr(1));
+            ops.add(mapCmpOp(c.cmp_op()));
+            return;
+        }
+        operands.add(node);
     }
 
-    @Override public Void visitNotInExpr(Jython3Parser.NotInExprContext c) {
-        visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.COMPARE_NOT_IN); return null;
-    }
-
-    @Override public Void visitIsExpr(Jython3Parser.IsExprContext c) {
-        visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.COMPARE_IS); return null;
-    }
-
-    @Override public Void visitIsNotExpr(Jython3Parser.IsNotExprContext c) {
-        visit(c.expr(0)); visit(c.expr(1)); b.emit(OpCode.COMPARE_IS_NOT); return null;
+    private static OpCode mapCmpOp(Jython3Parser.Cmp_opContext cop) {
+        if (cop.EQ() != null) return OpCode.COMPARE_EQ;
+        if (cop.NEQ() != null) return OpCode.COMPARE_NEQ;
+        if (cop.LT() != null) return OpCode.COMPARE_LT;
+        if (cop.GT() != null) return OpCode.COMPARE_GT;
+        if (cop.LTE() != null) return OpCode.COMPARE_LTE;
+        if (cop.GTE() != null) return OpCode.COMPARE_GTE;
+        if (cop.NOT() != null && cop.IN() != null) return OpCode.COMPARE_NOT_IN;
+        if (cop.IN() != null) return OpCode.COMPARE_IN;
+        if (cop.IS() != null && cop.NOT() != null) return OpCode.COMPARE_IS_NOT;
+        if (cop.IS() != null) return OpCode.COMPARE_IS;
+        throw new CompileError("Unknown comparison op: " + cop.getText());
     }
 
     @Override public Void visitAndExpr(Jython3Parser.AndExprContext c) {
@@ -1219,12 +1262,18 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      *  after:
      */
     @Override public Void visitWith_stmt(Jython3Parser.With_stmtContext c) {
-        visit(c.expr());
+        compileWithItems(c.with_item(), 0, c.suite());
+        return null;
+    }
+
+    private void compileWithItems(List<Jython3Parser.With_itemContext> items, int idx, Jython3Parser.SuiteContext suite) {
+        var item = items.get(idx);
+        visit(item.expr());
         b.emit(OpCode.SETUP_WITH);         // calls __enter__; stack: [exit_fn, value]
 
         // Bind or discard the __enter__ result
-        if (c.AS() != null) {
-            b.emit(OpCode.STORE_FAST, c.ID().getText());
+        if (item.AS() != null) {
+            b.emit(OpCode.STORE_FAST, item.ID().getText());
         } else {
             b.emit(OpCode.POP_TOP);        // discard __enter__ value
         }
@@ -1235,7 +1284,11 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         int pushIdx = b.size();
         b.emitRaw(OpCode.PUSH_EXCEPT_HANDLER, 0);
 
-        visit(c.suite());
+        if (idx + 1 < items.size()) {
+            compileWithItems(items, idx + 1, suite);
+        } else {
+            visit(suite);
+        }
 
         b.emit(OpCode.POP_EXCEPT_HANDLER);
         withScope.handlerActive = false;
@@ -1254,7 +1307,6 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         int afterWith = b.size();
         b.patch(jumpAfter, afterWith);
         b.patch(suppressJump, afterWith);
-        return null;
     }
 
     // ── lambda ────────────────────────────────────────────────────────────────

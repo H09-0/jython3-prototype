@@ -449,5 +449,22 @@ public class CoreDifferentialTest {
                 + "class K:\n    def __init__(self):\n        self.a = 1\n"
                 + "k = K()\nsetattr(k, 'b', 2)\nprint(vars(k) == {'a': 1, 'b': 2}, hasattr(k, 'b'))\n"
                 + "delattr(k, 'b')\nprint(hasattr(k, 'b'), getattr(k, 'b', 99), 'a' in dir(k))");
+        assertMatchesCPython("grammar_chained_cmp_precedence_and_multi_with",
+                "calls = []\n"
+                + "def p(v):\n    calls.append(v)\n    return v\n"
+                + "print(1 < p(5) < 10, calls)\n"
+                + "calls = []\n"
+                + "print(10 < p(5) < p(99), calls)\n"
+                + "print(0 == 0 == 0, (0 == 0) == 0, 10 > 5 > 2, 1 in [1, 2] == True, not 1 == 2, not 2 == True, not 1 in [2, 3])\n"
+                + "print(1 | 2 == 3, 1 + 2 * 3 == 7, -2 ** 2)\n"
+                + "[1, 2]\n{'a': 1}\n{1, 2}\n"
+                + "log = []\n"
+                + "class CM:\n    def __init__(self, t):\n        self.t = t\n"
+                + "    def __enter__(self):\n        log.append('+' + self.t)\n        return self.t\n"
+                + "    def __exit__(self, *a):\n        log.append('-' + self.t)\n        return False\n"
+                + "with CM('A') as a, CM('B') as b:\n    log.append(a + b)\n"
+                + "print(log)\n"
+                + "fns = [lambda x, k=i: x + k for i in range(3)]\n"
+                + "print([f(10) for f in fns])");
     }
 }

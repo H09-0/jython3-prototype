@@ -48,11 +48,11 @@ simple_stmt
     | break_stmt
     | continue_stmt
     | execfile_stmt
-    | call_stmt
     | yield_stmt
     | global_stmt
     | nonlocal_stmt
     | assert_stmt
+    | expr_stmt
     ;
 
 /** Unified assignment (simple, chained, attribute, subscript, and tuple unpacking) */
@@ -127,9 +127,9 @@ return_stmt
     : RETURN rhs_tuple?
     ;
 
-/** yield [expr] */
+/** yield [rhs_tuple] */
 yield_stmt
-    : YIELD expr?
+    : YIELD rhs_tuple?
     ;
 
 /** del target_list */
@@ -157,9 +157,9 @@ execfile_stmt
     : EXECFILE LPAREN expr RPAREN
     ;
 
-/** Standalone function or callable expression call: expr(args) */
-call_stmt
-    : expr LPAREN arg_list? RPAREN
+/** Standalone expression statement: expr or comma-separated tuple, result discarded */
+expr_stmt
+    : rhs_tuple
     ;
 
 /** global name, name, ... */
@@ -227,9 +227,13 @@ except_clause
     : EXCEPT (expr (AS ID)?)? COLON suite
     ;
 
-/** with expr [as id]: suite */
+/** with item [, item]* : suite */
 with_stmt
-    : WITH expr (AS ID)? COLON suite
+    : WITH with_item (COMMA with_item)* COLON suite
+    ;
+
+with_item
+    : expr (AS ID)?
     ;
 
 /** def name(params): suite */
@@ -287,18 +291,14 @@ expr
     | SUB expr                                             # UnaryMinus
     | ADD expr                                             # UnaryPlus
     | BIT_NOT expr                                         # BitwiseInvert
-    | NOT expr                                             # NotExpr
     | expr op=('*' | '/' | FLOORDIV | '%') expr            # MulDivMod
     | expr op=('+' | '-') expr                             # AddSub
     | expr op=(LSHIFT | RSHIFT) expr                       # ShiftExpr
     | expr BIT_AND expr                                    # BitAndExpr
     | expr BIT_XOR expr                                    # BitXorExpr
     | expr BIT_OR expr                                     # BitOrExpr
-    | expr op=(EQ | NEQ | LTE | GTE | LT | GT) expr        # Comparison
-    | expr NOT IN expr                                     # NotInExpr
-    | expr IN expr                                         # InExpr
-    | expr IS NOT expr                                     # IsNotExpr
-    | expr IS expr                                         # IsExpr
+    | expr cmp_op expr                                     # Comparison
+    | NOT expr                                             # NotExpr
     | expr AND expr                                        # AndExpr
     | expr OR expr                                         # OrExpr
     | expr IF expr ELSE expr                               # TernaryExpr
@@ -344,6 +344,14 @@ dict_entries
 
 dict_entry
     : expr COLON expr
+    ;
+
+cmp_op
+    : EQ | NEQ | LTE | GTE | LT | GT
+    | NOT IN
+    | IN
+    | IS NOT
+    | IS
     ;
 
 // ─── Lexer rules ──────────────────────────────────────────────────────────────
