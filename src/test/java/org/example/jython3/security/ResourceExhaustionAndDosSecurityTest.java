@@ -123,6 +123,16 @@ class ResourceExhaustionAndDosSecurityTest {
                     assertThrows(InterpreterException.class, () -> rt.eval("a, *b = range(0, 2_000_000_000)")).typeName());
             assertEquals("MemoryError",
                     assertThrows(InterpreterException.class, () -> rt.eval("[*range(0, 2_000_000_000)]")).typeName());
+            assertEquals("OverflowError",
+                    assertThrows(InterpreterException.class, () -> rt.eval("""
+                        xs = [1] * 900
+                        for _ in range(200):
+                            xs.append(1)
+                        """)).typeName());
+            assertEquals("OverflowError",
+                    assertThrows(InterpreterException.class, () -> rt.eval("xs = [1] * 600\nxs.extend([1] * 600)")).typeName());
+            assertEquals("OverflowError",
+                    assertThrows(InterpreterException.class, () -> rt.eval("xs = [1] * 1000\nxs.insert(0, 1)")).typeName());
             assertEquals("MemoryError",
                     assertThrows(InterpreterException.class, () -> rt.eval("import itertools\nlist(itertools.count())")).typeName());
             assertEquals("MemoryError",

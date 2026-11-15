@@ -691,8 +691,14 @@ public final class BuiltinFunctions {
             return new PyList(items);
         }));
 
-        // zip(*iterables)
-        define.accept("zip", new PyBuiltinFunction("zip", args -> {
+        // zip(*iterables, strict=False) (PEP 618)
+        define.accept("zip", new PyBuiltinFunction("zip", (args, kwargs) -> {
+            for (String k : kwargs.keySet()) {
+                if (!"strict".equals(k)) {
+                    throw PyErrors.error("TypeError", "zip() got an unexpected keyword argument '" + k + "'");
+                }
+            }
+            boolean strict = kwargs.containsKey("strict") && isTruthy(kwargs.get("strict"));
             if (args.length == 0) return new PyList(new ArrayList<>());
             List<PyIterator> iters = new ArrayList<>(args.length);
             for (PyObject a : args) {
@@ -705,8 +711,21 @@ public final class BuiltinFunctions {
             while (true) {
                 if (ctx != null && (++ticks & 0x3F) == 0) ctx.stepInstruction();
                 var tupleItems = new ArrayList<PyObject>(iters.size());
-                for (PyIterator it : iters) {
+                for (int i = 0; i < iters.size(); i++) {
+                    PyIterator it = iters.get(i);
                     if (!it.hasNext()) {
+                        if (strict) {
+                            if (i > 0) {
+                                throw PyErrors.error("ValueError",
+                                        "zip() argument " + (i + 1) + " is shorter than argument 1");
+                            }
+                            for (int j = 1; j < iters.size(); j++) {
+                                if (iters.get(j).hasNext()) {
+                                    throw PyErrors.error("ValueError",
+                                            "zip() argument " + (j + 1) + " is longer than argument 1");
+                                }
+                            }
+                        }
                         return new PyList(result);
                     }
                     tupleItems.add(it.next());

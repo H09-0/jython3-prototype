@@ -221,14 +221,14 @@ if_stmt
     : IF expr COLON suite (ELIF expr COLON suite)* (ELSE COLON suite)?
     ;
 
-/** while expr : suite */
+/** while expr : suite [else : suite] */
 while_stmt
-    : WHILE expr COLON suite
+    : WHILE expr COLON suite (ELSE COLON suite)?
     ;
 
-/** for target_list in expr : suite */
+/** for target_list in expr : suite [else : suite] */
 for_stmt
-    : FOR target_list IN expr COLON suite
+    : FOR target_list IN expr COLON suite (ELSE COLON suite)?
     ;
 
 /** try: suite except [ExcType [as var]]: suite [finally: suite] */
@@ -341,10 +341,10 @@ expr
     | LPAREN gen_expr RPAREN                               # GenExpr
     | LPAREN expr RPAREN                                   # Paren
     | LPAREN expr_list? RPAREN                             # TupleLiteral
-    | LBRACK expr FOR ID IN expr (IF expr)? RBRACK         # ListComp
+    | LBRACK expr comp_for+ RBRACK                           # ListComp
     | LBRACK expr_list? RBRACK                             # ListLiteral
-    | LBRACE expr COLON expr FOR ID IN expr (IF expr)? RBRACE  # DictComp
-    | LBRACE expr FOR ID IN expr (IF expr)? RBRACE         # SetComp
+    | LBRACE expr COLON expr comp_for+ RBRACE              # DictComp
+    | LBRACE expr comp_for+ RBRACE                         # SetComp
     | LBRACE dict_entries? RBRACE                          # DictLiteral
     | LBRACE expr_list RBRACE                              # SetLiteral
     | FLOAT                                                # Float

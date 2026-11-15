@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.14.4-beta] - 2026-11-15
+### Added & Fixed
+- **Multi-Clause Comprehensions, Loop `else`, List Slice Assignment/Deletion, PEP 618 `zip(strict=True)`, and Extended Methods (`Jython3.g4`, `CompileVisitor`, `Jython3Interpreter`, `BuiltinFunctions`, `BuiltinMethodDispatcher`)**:
+  - Upgraded `ListComp`, `DictComp`, and `SetComp` to full `comp_for+` (`FOR target_list IN expr comp_if*`), supporting nested `for` loops, multiple `if` filters, and tuple/starred unpacking.
+  - Added `while ... else:` and `for ... else:`, list slice assignment/deletion (`xs[1:4] = ...`, `del xs[::2]`), and static `SyntaxError` for `return` outside functions.
+  - Added PEP 618 `zip(*iterables, strict=True)`, `tuple.count`/`index`, `str.rfind`/`index`/`rindex`/`swapcase`/`casefold`, fixed `str.count("")`, and enforced `maxCollectionSize` in `list.append`/`extend`/`insert`.
+- **Expanded Security & Logic Suites (`GrammarAndParserSecurityTest`, `EdgeCasesAndBoundaryLogicTest`)**:
+  - Expanded to **27** security tests (`./gradlew securityTest`), **23** logic tests (`./gradlew logicTest`), and **80** total tests (`./gradlew test`) all passing green.
+
 ## [v0.14.3-beta] - 2026-11-15
 ### Added
 - **PEP 448 Additional Unpacking Generalizations (`Jython3.g4`, `OpCode`, `BytecodeValidator`, `BytecodeDisassembler`, `CompileVisitor`, `Jython3Interpreter`)**:

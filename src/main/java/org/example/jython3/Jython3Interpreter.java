@@ -1762,6 +1762,30 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (i < 0 || i >= list.items().size())
                             throw PyErrors.error("IndexError", "list assignment index out of range");
                         list.items().set(i, val);
+                    } else if (container instanceof PyList list && key instanceof PySlice sl) {
+                        PySlice.Indices idx = sl.computeIndices(list.items().size());
+                        var rep = BuiltinFunctions.collectIterable(val, javaAccessPolicy);
+                        long newTotal = (long) list.items().size() - idx.length() + rep.size();
+                        if (newTotal > executionLimits.maxCollectionSize()) {
+                            throw PyErrors.error("OverflowError",
+                                    "List size exceeds maximum allowed limit: " + executionLimits.maxCollectionSize());
+                        }
+                        if (idx.step() == 1) {
+                            int start = idx.start();
+                            if (idx.length() > 0) {
+                                list.items().subList(start, start + idx.length()).clear();
+                            }
+                            list.items().addAll(start, rep);
+                        } else {
+                            if (rep.size() != idx.length()) {
+                                throw PyErrors.error("ValueError",
+                                        "attempt to assign sequence of size " + rep.size()
+                                                + " to extended slice of size " + idx.length());
+                            }
+                            for (int k = 0; k < idx.length(); k++) {
+                                list.items().set(idx.start() + k * idx.step(), rep.get(k));
+                            }
+                        }
                     } else if (container instanceof PyTuple) {
                         throw PyErrors.error("TypeError", "'tuple' object does not support item assignment");
                     } else if (container instanceof PyDict dict) {
@@ -1847,6 +1871,22 @@ public class Jython3Interpreter implements AutoCloseable {
                         if (i < 0 || i >= list.items().size())
                             throw PyErrors.error("IndexError", "list index out of range");
                         list.items().remove(i);
+                    } else if (container instanceof PyList list && key instanceof PySlice sl) {
+                        PySlice.Indices idx = sl.computeIndices(list.items().size());
+                        if (idx.length() > 0) {
+                            if (idx.step() == 1) {
+                                list.items().subList(idx.start(), idx.start() + idx.length()).clear();
+                            } else {
+                                var indices = new int[idx.length()];
+                                for (int k = 0; k < idx.length(); k++) {
+                                    indices[k] = idx.start() + k * idx.step();
+                                }
+                                java.util.Arrays.sort(indices);
+                                for (int k = indices.length - 1; k >= 0; k--) {
+                                    list.items().remove(indices[k]);
+                                }
+                            }
+                        }
                     } else if (container instanceof PyTuple) {
                         throw PyErrors.error("TypeError", "'tuple' object doesn't support item deletion");
                     } else if (container instanceof PyDict dict) {
@@ -3255,6 +3295,8 @@ public class Jython3Interpreter implements AutoCloseable {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("dict") : BuiltinMethodDispatcher.dictMethod(dict, attr));
                     } else if (obj instanceof PyList list) {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("list") : BuiltinMethodDispatcher.listMethod(list, attr));
+                    } else if (obj instanceof PyTuple tuple) {
+                        stack.push("__class__".equals(attr) ? builtinTypes.get("tuple") : BuiltinMethodDispatcher.tupleMethod(tuple, attr));
                     } else if (obj instanceof PySet set) {
                         stack.push("__class__".equals(attr) ? builtinTypes.get("set") : BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy));
                     } else if (obj instanceof PyFrozenSet fs) {
@@ -3679,6 +3721,7 @@ public class Jython3Interpreter implements AutoCloseable {
         if ("__class__".equals(attr)) return BuiltinFunctions.typeOf(obj, builtinTypes);
         if (obj instanceof PyDict dict) return BuiltinMethodDispatcher.dictMethod(dict, attr);
         if (obj instanceof PyList list) return BuiltinMethodDispatcher.listMethod(list, attr);
+        if (obj instanceof PyTuple tuple) return BuiltinMethodDispatcher.tupleMethod(tuple, attr);
         if (obj instanceof PySet set)   return BuiltinMethodDispatcher.setMethod(set, attr, javaAccessPolicy);
         if (obj instanceof PyFrozenSet fs) return BuiltinMethodDispatcher.frozenSetMethod(fs, attr, javaAccessPolicy);
         if (obj instanceof PyGenerator gen) return BuiltinMethodDispatcher.generatorMethod(gen, attr);

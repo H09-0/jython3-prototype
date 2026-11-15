@@ -466,6 +466,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
     }
 
     @Override public Void visitReturn_stmt(Jython3Parser.Return_stmtContext c) {
+        if (!isFunctionScope) {
+            throw new CompileError("'return' outside function");
+        }
         if (c.rhs_tuple() != null) {
             emitRhsTuple(c.rhs_tuple());
         } else {
@@ -992,19 +995,20 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         int jumpFalse = b.size();
         b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
 
-        // Push loop context so break/continue know where to jump
         var ctx = new LoopContext();
         ctx.continueTarget = loopStart;
         ctx.isForLoop = false;
         loopStack.push(ctx);
         ctx.depth = loopStack.size();
-        visit(c.suite());
+        visit(c.suite(0));
         loopStack.pop();
 
         b.emitRaw(OpCode.JUMP, loopStart);
+        b.patch(jumpFalse, b.size());
+        if (c.ELSE() != null && c.suite().size() > 1) {
+            visit(c.suite(1));
+        }
         int afterLoop = b.size();
-        b.patch(jumpFalse, afterLoop);
-        // Patch all break jumps to after the loop
         for (int bp : ctx.breakPatches) b.patch(bp, afterLoop);
         return null;
     }
@@ -1017,19 +1021,20 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         b.emitRaw(OpCode.FOR_ITER, 0);
         emitStore(LValue.fromTargetList(c.target_list()));
 
-        // Push loop context: continue → jump back to FOR_ITER
         var ctx = new LoopContext();
         ctx.continueTarget = loopTarget;
         ctx.isForLoop = true;
         loopStack.push(ctx);
         ctx.depth = loopStack.size();
-        visit(c.suite());
+        visit(c.suite(0));
         loopStack.pop();
 
         b.emitRaw(OpCode.JUMP, loopTarget);
+        b.patch(forIter, b.size());
+        if (c.ELSE() != null && c.suite().size() > 1) {
+            visit(c.suite(1));
+        }
         int afterLoop = b.size();
-        b.patch(forIter, afterLoop);
-        // Patch all break jumps to after the loop
         for (int bp : ctx.breakPatches) b.patch(bp, afterLoop);
         return null;
     }
@@ -2140,131 +2145,76 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         String accVar = "$comp_list_" + (compCounter++);
         b.emitRaw(OpCode.BUILD_LIST, 0);
         b.emit(OpCode.STORE_FAST, accVar);
-
-        visit(c.expr(1));                    // iterable
-        b.emit(OpCode.GET_ITER);
-        int loopTop = b.size();
-        int forIter = b.size();
-        b.emitRaw(OpCode.FOR_ITER, 0);
-        b.emit(OpCode.STORE_FAST, c.ID().getText());
-
-        // Optional IF filter
-        int filterJump = -1;
-        if (c.expr().size() == 3) {
-            visit(c.expr(2));
-            filterJump = b.size();
-            b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
-        }
-
-        // acc.append(expr)
-        b.emit(OpCode.LOAD_FAST, accVar);
-        b.emit(OpCode.LOAD_ATTR, "append");
-        visit(c.expr(0));
-        b.emitRaw(OpCode.CALL_FUNCTION, 1);
-        b.emit(OpCode.POP_TOP); // discard None returned by append
-
-        if (filterJump >= 0) {
-            b.patch(filterJump, b.size());
-        }
-        b.emitRaw(OpCode.JUMP, loopTop);
-        int afterLoop = b.size();
-        b.patch(forIter, afterLoop);
-
-        // Result: load acc onto stack and clean up synthetic slot
+        emitComprehensionClauses(c.comp_for(), 0, () -> {
+            b.emit(OpCode.LOAD_FAST, accVar);
+            visit(c.expr());
+            b.emit(OpCode.LIST_COMP_APPEND);
+            b.emit(OpCode.POP_TOP);
+        });
         b.emit(OpCode.LOAD_FAST, accVar);
         b.emit(OpCode.DELETE_NAME_SILENT, accVar);
         return null;
     }
 
-    /**
-     * Dict comprehension: {key_expr: val_expr FOR id IN iterable (IF cond)?}
-     *
-     * Clean variable-based compilation:
-     *   acc = {}
-     *   for id in iterable:
-     *       if cond:
-     *           acc[key] = val
-     *   TOS = acc
-     */
     @Override public Void visitDictComp(Jython3Parser.DictCompContext c) {
         String accVar = "$comp_dict_" + (compCounter++);
         b.emitRaw(OpCode.BUILD_DICT, 0);
         b.emit(OpCode.STORE_FAST, accVar);
-
-        visit(c.expr(2));                    // iterable
-        b.emit(OpCode.GET_ITER);
-        int loopTop = b.size();
-        int forIter = b.size();
-        b.emitRaw(OpCode.FOR_ITER, 0);
-        b.emit(OpCode.STORE_FAST, c.ID().getText());
-
-        // Optional IF filter
-        int filterJump = -1;
-        if (c.expr().size() == 4) {
-            visit(c.expr(3));
-            filterJump = b.size();
-            b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
-        }
-
-        // acc[key] = val
-        b.emit(OpCode.LOAD_FAST, accVar);    // container
-        visit(c.expr(0));                    // key
-        visit(c.expr(1));                    // val
-        b.emit(OpCode.STORE_SUBSCR);
-
-        if (filterJump >= 0) {
-            b.patch(filterJump, b.size());
-        }
-        b.emitRaw(OpCode.JUMP, loopTop);
-        int afterLoop = b.size();
-        b.patch(forIter, afterLoop);
-
+        emitComprehensionClauses(c.comp_for(), 0, () -> {
+            b.emit(OpCode.LOAD_FAST, accVar);
+            visit(c.expr(0));
+            visit(c.expr(1));
+            b.emit(OpCode.STORE_SUBSCR);
+        });
         b.emit(OpCode.LOAD_FAST, accVar);
         b.emit(OpCode.DELETE_NAME_SILENT, accVar);
         return null;
     }
 
-    /**
-     * Set comprehension: {expr FOR id IN iterable (IF cond)?}
-     *
-     * Clean variable-based compilation using PySet built from list or add method.
-     */
     @Override public Void visitSetComp(Jython3Parser.SetCompContext c) {
         String accVar = "$comp_set_" + (compCounter++);
         b.emitRaw(OpCode.BUILD_SET, 0);
         b.emit(OpCode.STORE_FAST, accVar);
+        emitComprehensionClauses(c.comp_for(), 0, () -> {
+            b.emit(OpCode.LOAD_FAST, accVar);
+            visit(c.expr());
+            b.emit(OpCode.SET_COMP_ADD);
+            b.emit(OpCode.POP_TOP);
+        });
+        b.emit(OpCode.LOAD_FAST, accVar);
+        b.emit(OpCode.DELETE_NAME_SILENT, accVar);
+        return null;
+    }
 
-        visit(c.expr(1));                    // iterable
+    private void emitComprehensionClauses(List<Jython3Parser.Comp_forContext> clauses, int idx, Runnable emitBody) {
+        if (idx >= clauses.size()) {
+            emitBody.run();
+            return;
+        }
+        var cf = clauses.get(idx);
+        visit(cf.expr());
         b.emit(OpCode.GET_ITER);
         int loopTop = b.size();
         int forIter = b.size();
         b.emitRaw(OpCode.FOR_ITER, 0);
-        b.emit(OpCode.STORE_FAST, c.ID().getText());
+        emitStore(LValue.fromTargetList(cf.target_list()));
 
-        int filterJump = -1;
-        if (c.expr().size() == 3) {
-            visit(c.expr(2));
-            filterJump = b.size();
+        var skipPatches = new ArrayList<Integer>();
+        for (var cif : cf.comp_if()) {
+            visit(cif.expr());
+            int jp = b.size();
             b.emitRaw(OpCode.JUMP_IF_FALSE, 0);
+            skipPatches.add(jp);
         }
 
-        // acc.add(expr)
-        b.emit(OpCode.LOAD_FAST, accVar);
-        b.emit(OpCode.LOAD_ATTR, "add");
-        visit(c.expr(0));
-        b.emitRaw(OpCode.CALL_FUNCTION, 1);
-        b.emit(OpCode.POP_TOP);
+        emitComprehensionClauses(clauses, idx + 1, emitBody);
 
-        if (filterJump >= 0) {
-            b.patch(filterJump, b.size());
+        int continuePc = b.size();
+        for (int sp : skipPatches) {
+            b.patch(sp, continuePc);
         }
         b.emitRaw(OpCode.JUMP, loopTop);
-        int afterLoop = b.size();
-        b.patch(forIter, afterLoop);
-
-        b.emit(OpCode.LOAD_FAST, accVar);
-        b.emit(OpCode.DELETE_NAME_SILENT, accVar);
-        return null;
+        b.patch(forIter, b.size());
     }
 
     /** Set literal: {expr, expr, ...} */

@@ -36,6 +36,11 @@ class BuiltinsAndCollectionMethodsTest {
             print(sorted([3, -1, 2, -4], key=abs, reverse=True))
             print(list(enumerate(["a", "b"], start=5)))
             print(list(zip([1, 2, 3], ["x", "y"])))
+            print(list(zip([1, 2], ["a", "b"], strict=True)))
+            try:
+                list(zip([1, 2, 3], ["a"], strict=True))
+            except ValueError:
+                print("zip_strict_err: ok")
             print(list(map(lambda x: x * x, [1, 2, 3])))
             print(list(filter(lambda x: x % 2 == 0, range(6))))
             print(all([True, 1, "a"]), any([0, "", False, 9]))
@@ -79,8 +84,12 @@ class BuiltinsAndCollectionMethodsTest {
             print("hello world".capitalize(), "hello world".title())
             print("x".center(5, "*"), "x".ljust(4, "."), "x".rjust(4, "."), "-42".zfill(5))
             print("  \\t".isspace(), "ABC".isupper(), "abc".islower(), "123".isdigit(), "abc".isalpha(), "a1".isalnum())
-            print("hello".find("ll"), "banana".count("na"), "hi {name} {0}".format("!", name="Ada"))
+            print("hello".find("ll"), "hello".rfind("l"), "hello".index("e"), "hello".rindex("l"))
+            print("banana".count("na"), "abc".count(""), "AbC".swapcase(), "Straße".casefold() == "straße" or "ABC".casefold() == "abc")
+            print("hi {name} {0}".format("!", name="Ada"))
             print("café".encode("utf-8").decode("utf-8"))
+            tup = (10, 20, 10, 30)
+            print("tup:", tup.count(10), tup.index(20))
 
             # list & dict methods
             xs = [3, 1, 2]

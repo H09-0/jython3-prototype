@@ -48,6 +48,15 @@ class CoreLanguageAndExecutionModelTest {
             st = {x % 3 for x in range(7)}
             print(sorted(d.items()), sorted(st))
 
+            # Multi-clause comprehensions (nested for, multi-if, tuple & starred unpacking)
+            pairs = [(1, 2), (3, 4)]
+            mc_list = [(x, y) for x in [1, 2] for y in [10, 20] if x + y > 11 if y != 10]
+            mc_unpack = [(a, b) for a, b in pairs]
+            mc_star = [(a, rest) for a, *rest in [(1, 2, 3), (4,)]]
+            mc_dict = sorted({k: v * 10 for k, v in d.items() if v > 0}.items())
+            mc_set = sorted({a + b for a in [1, 2] for b in [10, 20]})
+            print("mc:", mc_list, mc_unpack, mc_star, mc_dict, mc_set)
+
             # Unpacking, PEP 3132 starred unpacking, PEP 448 display/call generalizations
             a, (b1, b2) = [10, (20, 30)]
             first, *mid, last = range(6)

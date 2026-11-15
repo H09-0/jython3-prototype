@@ -243,9 +243,43 @@ public final class BuiltinMethodDispatcher {
                 if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "find() argument must be str");
                 return PyInt.of(s.value().indexOf(sub.value()));
             });
+            case "rfind" -> new PyBuiltinFunction("str.rfind", args -> {
+                checkArgCount("str.rfind", args, 1);
+                if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "rfind() argument must be str");
+                return PyInt.of(s.value().lastIndexOf(sub.value()));
+            });
+            case "index" -> new PyBuiltinFunction("str.index", args -> {
+                checkArgCount("str.index", args, 1);
+                if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "index() argument must be str");
+                int idx = s.value().indexOf(sub.value());
+                if (idx < 0) throw PyErrors.error("ValueError", "substring not found");
+                return PyInt.of(idx);
+            });
+            case "rindex" -> new PyBuiltinFunction("str.rindex", args -> {
+                checkArgCount("str.rindex", args, 1);
+                if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "rindex() argument must be str");
+                int idx = s.value().lastIndexOf(sub.value());
+                if (idx < 0) throw PyErrors.error("ValueError", "substring not found");
+                return PyInt.of(idx);
+            });
+            case "swapcase" -> new PyBuiltinFunction("str.swapcase", args -> {
+                checkArgCount("str.swapcase", args, 0);
+                var sb = new StringBuilder(s.value().length());
+                s.value().codePoints().forEach(cp -> {
+                    if (Character.isUpperCase(cp)) sb.appendCodePoint(Character.toLowerCase(cp));
+                    else if (Character.isLowerCase(cp)) sb.appendCodePoint(Character.toUpperCase(cp));
+                    else sb.appendCodePoint(cp);
+                });
+                return new PyStr(sb.toString());
+            });
+            case "casefold" -> new PyBuiltinFunction("str.casefold", args -> {
+                checkArgCount("str.casefold", args, 0);
+                return new PyStr(s.value().toLowerCase(java.util.Locale.ROOT));
+            });
             case "count" -> new PyBuiltinFunction("str.count", args -> {
                 checkArgCount("str.count", args, 1);
                 if (!(args[0] instanceof PyStr sub)) throw PyErrors.error("TypeError", "count() argument must be str");
+                if (sub.value().isEmpty()) return PyInt.of(s.codePointCount() + 1);
                 int count = 0; int idx = 0;
                 while ((idx = s.value().indexOf(sub.value(), idx)) != -1) { count++; idx += sub.value().length(); }
                 return PyInt.of(count);
@@ -654,9 +688,37 @@ public final class BuiltinMethodDispatcher {
         };
     }
 
-    public static PyObject listMethod(PyList list, String method) {
+    public static PyObject tupleMethod(PyTuple tuple, String method) {
         return switch (method) {
-            case "append" -> new PyBuiltinFunction("list.append", args -> { checkArgCount("list.append", args, 1); list.items().add(args[0]); return new PyNull(); });
+            case "count" -> new PyBuiltinFunction("tuple.count", args -> {
+                checkArgCount("tuple.count", args, 1);
+                int c = 0;
+                for (var item : tuple.items()) if (pyEquals(item, args[0])) c++;
+                return PyInt.of(c);
+            });
+            case "index" -> new PyBuiltinFunction("tuple.index", args -> {
+                checkArgCount("tuple.index", args, 1);
+                for (int i = 0; i < tuple.items().size(); i++) {
+                    if (pyEquals(tuple.items().get(i), args[0])) return PyInt.of(i);
+                }
+                throw PyErrors.error("ValueError", "tuple.index(x): x not in tuple");
+            });
+            default -> throw PyErrors.error("AttributeError", "'tuple' object has no attribute '" + method + "'");
+        };
+    }
+
+    public static PyObject listMethod(PyList list, String method) {
+        var ctx = org.example.jython3.security.ExecutionContext.current();
+        int maxColl = ctx != null ? ctx.limits().maxCollectionSize() : 100_000_000;
+        return switch (method) {
+            case "append" -> new PyBuiltinFunction("list.append", args -> {
+                checkArgCount("list.append", args, 1);
+                if (list.items().size() >= maxColl) {
+                    throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + maxColl);
+                }
+                list.items().add(args[0]);
+                return new PyNull();
+            });
             case "pop" -> new PyBuiltinFunction("list.pop", args -> {
                 if (list.items().isEmpty()) throw PyErrors.error("IndexError", "pop from empty list");
                 if (args.length > 0) { int i = toInt(args[0]); if (i < 0) i += list.items().size(); return list.items().remove(i); }
@@ -664,15 +726,20 @@ public final class BuiltinMethodDispatcher {
             });
             case "extend" -> new PyBuiltinFunction("list.extend", args -> {
                 checkArgCount("list.extend", args, 1);
-                if (args[0] instanceof PyList other) {
-                    list.items().addAll(other.items());
-                } else {
-                    list.items().addAll(BuiltinFunctions.collectIterable(args[0], org.example.jython3.security.DenyAllPolicy.INSTANCE));
+                var extra = (args[0] instanceof PyList other)
+                        ? other.items()
+                        : BuiltinFunctions.collectIterable(args[0], org.example.jython3.security.DenyAllPolicy.INSTANCE);
+                if ((long) list.items().size() + extra.size() > maxColl) {
+                    throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + maxColl);
                 }
+                list.items().addAll(extra);
                 return new PyNull();
             });
             case "insert" -> new PyBuiltinFunction("list.insert", args -> {
                 if (args.length < 2) throw PyErrors.error("TypeError", "insert() takes 2 arguments");
+                if (list.items().size() >= maxColl) {
+                    throw PyErrors.error("OverflowError", "List size exceeds maximum allowed limit: " + maxColl);
+                }
                 int i = toInt(args[0]); if (i < 0) i += list.items().size(); if (i < 0) i = 0;
                 if (i > list.items().size()) i = list.items().size();
                 list.items().add(i, args[1]);
