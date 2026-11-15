@@ -7,10 +7,13 @@ import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.stdlib.modules.ControlModule;
+import org.example.jython3.stdlib.modules.DatetimeModule;
 import org.example.jython3.stdlib.modules.IoModule;
+import org.example.jython3.stdlib.modules.ItertoolsModule;
 import org.example.jython3.stdlib.modules.JsonModule;
 import org.example.jython3.stdlib.modules.MathModule;
 import org.example.jython3.stdlib.modules.OsModule;
+import org.example.jython3.stdlib.modules.QueueModule;
 import org.example.jython3.stdlib.modules.RandomModule;
 import org.example.jython3.stdlib.modules.ReModule;
 import org.example.jython3.stdlib.modules.SysModule;
@@ -49,4 +52,7 @@ public final class BuiltinModules {
     public static PyModule threading(HostSession session, ThreadingModule.ThreadSpawner spawner) {
         return ThreadingModule.create(session, spawner);
     }
+    public static PyModule itertools() { return ItertoolsModule.create(); }
+    public static PyModule queue(HostSession session) { return QueueModule.create(session); }
+    public static PyModule datetime() { return DatetimeModule.create(); }
 }

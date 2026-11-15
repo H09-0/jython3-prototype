@@ -1264,6 +1264,16 @@ public final class BuiltinFunctions {
         return new PyList(result);
     }
 
+    public static PyStr pyReprStr(PyObject o) {
+        return new PyStr(pyRepr(o));
+    }
+
+    public static String formatValuePublic(PyObject val, String spec) {
+        var ctx = org.example.jython3.security.ExecutionContext.current();
+        int maxLen = ctx != null ? ctx.limits().maxStringLength() : 1_000_000;
+        return formatValue(val, spec, maxLen);
+    }
+
     private static String pyRepr(PyObject o) {
         if (o instanceof PyStr s) {
             String raw = s.value();

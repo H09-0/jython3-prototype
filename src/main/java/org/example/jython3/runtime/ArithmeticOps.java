@@ -167,6 +167,14 @@ public final class ArithmeticOps {
     }
 
     public static PyObject inplaceBitwiseOr(PyObject l, PyObject r) {
+        if (l instanceof PyDict ld) {
+            if (!(r instanceof PyDict rd)) {
+                throw PyErrors.error("TypeError",
+                        "unsupported operand type(s) for |=: 'dict' and '" + typeName(r) + "'");
+            }
+            for (PyObject k : rd.keys()) ld.put(k, rd.get(k));
+            return ld;
+        }
         if (l instanceof PySet s) {
             if (!PyOps.isSetLike(r)) {
                 throw PyErrors.error("TypeError",
@@ -421,6 +429,12 @@ public final class ArithmeticOps {
     }
 
     public static PyObject bitwiseOr(PyObject rawL, PyObject rawR) {
+        if (rawL instanceof PyDict ld && rawR instanceof PyDict rd) {
+            var out = new PyDict();
+            for (PyObject k : ld.keys()) out.put(k, ld.get(k));
+            for (PyObject k : rd.keys()) out.put(k, rd.get(k));
+            return out;
+        }
         if (PyOps.isSetLike(rawL) && PyOps.isSetLike(rawR)) {
             return setUnion(rawL, rawR);
         }

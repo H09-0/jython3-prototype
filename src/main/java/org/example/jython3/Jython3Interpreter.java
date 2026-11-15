@@ -2192,6 +2192,11 @@ public class Jython3Interpreter implements AutoCloseable {
                                 initArgs[0] = inst;
                                 System.arraycopy(posArgs, 0, initArgs, 1, nPos);
                                 callPyCallableKw(initFn, initArgs, kwNames, kwValues);
+                            } else if (initObj instanceof PyBuiltinFunction initBf) {
+                                var initArgs = new PyObject[nPos + 1];
+                                initArgs[0] = inst;
+                                System.arraycopy(posArgs, 0, initArgs, 1, nPos);
+                                callPyCallableKw(initBf, initArgs, kwNames, kwValues);
                             }
                             stack.push(inst);
                         }
@@ -2269,6 +2274,11 @@ public class Jython3Interpreter implements AutoCloseable {
                                 initArgs[0] = inst;
                                 System.arraycopy(posArgs, 0, initArgs, 1, posArgs.length);
                                 callPyCallableKw(initFn, initArgs, kwNames, kwValues);
+                            } else if (initObj instanceof PyBuiltinFunction initBf) {
+                                var initArgs = new PyObject[posArgs.length + 1];
+                                initArgs[0] = inst;
+                                System.arraycopy(posArgs, 0, initArgs, 1, posArgs.length);
+                                callPyCallableKw(initBf, initArgs, kwNames, kwValues);
                             }
                             stack.push(inst);
                         }
@@ -2498,6 +2508,11 @@ public class Jython3Interpreter implements AutoCloseable {
                                 initArgs[0] = inst;
                                 System.arraycopy(args, 0, initArgs, 1, argc);
                                 callPyCallable(initFn, initArgs);
+                            } else if (initObj instanceof PyBuiltinFunction initBf) {
+                                var initArgs = new PyObject[argc + 1];
+                                initArgs[0] = inst;
+                                System.arraycopy(args, 0, initArgs, 1, argc);
+                                initBf.callWithKw(initArgs, Collections.emptyMap());
                             }
                             stack.push(inst);
                         }
@@ -2924,6 +2939,13 @@ public class Jython3Interpreter implements AutoCloseable {
                                     stack.push(cm.bind(cls));
                                 } else if (member instanceof PyFunction fn) {
                                     stack.push(new PyBoundMethod(inst, fn));
+                                } else if (member instanceof PyBuiltinFunction bf) {
+                                    stack.push(new PyBuiltinFunction(bf.name(), (a, kw) -> {
+                                        PyObject[] bound = new PyObject[a.length + 1];
+                                        bound[0] = inst;
+                                        System.arraycopy(a, 0, bound, 1, a.length);
+                                        return bf.callWithKw(bound, kw);
+                                    }));
                                 } else {
                                     stack.push(member);
                                 }
@@ -2986,6 +3008,16 @@ public class Jython3Interpreter implements AutoCloseable {
                                 PyOps.checkArgCount("fromhex", a, 1);
                                 if (!(a[0] instanceof PyStr hs)) throw PyErrors.error("TypeError", "fromhex() argument must be str");
                                 return new PyByteArray(PyBytes.parseHex(hs.value()));
+                            }));
+                        } else if (bf.isType() && "fromkeys".equals(attr) && "dict".equals(bf.name())) {
+                            stack.push(new PyBuiltinFunction("dict.fromkeys", a -> {
+                                if (a.length < 1 || a.length > 2) throw PyErrors.error("TypeError", "fromkeys expected at most 2 arguments");
+                                PyObject val = a.length == 2 ? a[1] : PyNull.INSTANCE;
+                                var d = new PyDict();
+                                for (PyObject k : BuiltinFunctions.collectIterable(a[0], javaAccessPolicy)) {
+                                    d.put(k, val);
+                                }
+                                return d;
                             }));
                         }
                         else throw PyErrors.error("AttributeError", "'" + typeName(bf) + "' object has no attribute '" + attr + "'");
@@ -3852,6 +3884,9 @@ public class Jython3Interpreter implements AutoCloseable {
             case "ui" -> BuiltinModules.ui(hostSession, uiToolkit);
             case "control" -> BuiltinModules.control(hostSession, controlRegistry, uiToolkit);
             case "threading" -> BuiltinModules.threading(hostSession, this::spawnVirtualThread);
+            case "itertools" -> BuiltinModules.itertools();
+            case "queue" -> BuiltinModules.queue(hostSession);
+            case "datetime" -> BuiltinModules.datetime();
             default     -> null;
         };
         if (mod != null) {

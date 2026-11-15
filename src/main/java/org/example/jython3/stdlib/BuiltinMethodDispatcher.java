@@ -95,13 +95,138 @@ public final class BuiltinMethodDispatcher {
             });
             case "startswith" -> new PyBuiltinFunction("str.startswith", args -> {
                 checkArgCount("str.startswith", args, 1);
-                if (!(args[0] instanceof PyStr prefix)) throw PyErrors.error("TypeError", "startswith() argument must be str");
-                return PyBool.of(s.value().startsWith(prefix.value()));
+                if (args[0] instanceof PyStr prefix) return PyBool.of(s.value().startsWith(prefix.value()));
+                if (args[0] instanceof PyTuple tup) {
+                    for (PyObject p : tup.items()) {
+                        if (!(p instanceof PyStr ps)) throw PyErrors.error("TypeError", "tuple for startswith must only contain str");
+                        if (s.value().startsWith(ps.value())) return PyBool.TRUE;
+                    }
+                    return PyBool.FALSE;
+                }
+                throw PyErrors.error("TypeError", "startswith first arg must be str or a tuple of str");
             });
             case "endswith" -> new PyBuiltinFunction("str.endswith", args -> {
                 checkArgCount("str.endswith", args, 1);
-                if (!(args[0] instanceof PyStr suffix)) throw PyErrors.error("TypeError", "endswith() argument must be str");
-                return PyBool.of(s.value().endsWith(suffix.value()));
+                if (args[0] instanceof PyStr suffix) return PyBool.of(s.value().endsWith(suffix.value()));
+                if (args[0] instanceof PyTuple tup) {
+                    for (PyObject p : tup.items()) {
+                        if (!(p instanceof PyStr ps)) throw PyErrors.error("TypeError", "tuple for endswith must only contain str");
+                        if (s.value().endsWith(ps.value())) return PyBool.TRUE;
+                    }
+                    return PyBool.FALSE;
+                }
+                throw PyErrors.error("TypeError", "endswith first arg must be str or a tuple of str");
+            });
+            case "lstrip" -> new PyBuiltinFunction("str.lstrip", args -> {
+                if (args.length == 0 || args[0] instanceof PyNull) return new PyStr(s.value().stripLeading());
+                String chars = ((PyStr) args[0]).value();
+                int idx = 0;
+                while (idx < s.value().length() && chars.indexOf(s.value().charAt(idx)) >= 0) idx++;
+                return new PyStr(s.value().substring(idx));
+            });
+            case "rstrip" -> new PyBuiltinFunction("str.rstrip", args -> {
+                if (args.length == 0 || args[0] instanceof PyNull) return new PyStr(s.value().stripTrailing());
+                String chars = ((PyStr) args[0]).value();
+                int end = s.value().length();
+                while (end > 0 && chars.indexOf(s.value().charAt(end - 1)) >= 0) end--;
+                return new PyStr(s.value().substring(0, end));
+            });
+            case "removeprefix" -> new PyBuiltinFunction("str.removeprefix", args -> {
+                checkArgCount("str.removeprefix", args, 1);
+                if (!(args[0] instanceof PyStr pre)) throw PyErrors.error("TypeError", "removeprefix() argument must be str");
+                return s.value().startsWith(pre.value()) ? new PyStr(s.value().substring(pre.value().length())) : s;
+            });
+            case "removesuffix" -> new PyBuiltinFunction("str.removesuffix", args -> {
+                checkArgCount("str.removesuffix", args, 1);
+                if (!(args[0] instanceof PyStr suf)) throw PyErrors.error("TypeError", "removesuffix() argument must be str");
+                return s.value().endsWith(suf.value())
+                        ? new PyStr(s.value().substring(0, s.value().length() - suf.value().length())) : s;
+            });
+            case "splitlines" -> new PyBuiltinFunction("str.splitlines", args -> {
+                boolean keepEnds = args.length >= 1 && PyOps.isTruthy(args[0]);
+                var res = new ArrayList<PyObject>();
+                String raw = s.value();
+                int start = 0;
+                for (int i = 0; i < raw.length(); i++) {
+                    char c = raw.charAt(i);
+                    if (c == '\r' || c == '\n') {
+                        int lineEnd = i;
+                        if (c == '\r' && i + 1 < raw.length() && raw.charAt(i + 1) == '\n') i++;
+                        res.add(new PyStr(raw.substring(start, keepEnds ? i + 1 : lineEnd)));
+                        start = i + 1;
+                    }
+                }
+                if (start < raw.length()) res.add(new PyStr(raw.substring(start)));
+                return new PyList(res);
+            });
+            case "partition" -> new PyBuiltinFunction("str.partition", args -> {
+                checkArgCount("str.partition", args, 1);
+                if (!(args[0] instanceof PyStr sep) || sep.value().isEmpty()) {
+                    throw PyErrors.error("ValueError", "empty separator");
+                }
+                int idx = s.value().indexOf(sep.value());
+                if (idx < 0) return new PyTuple(java.util.List.of(s, new PyStr(""), new PyStr("")));
+                return new PyTuple(java.util.List.of(
+                        new PyStr(s.value().substring(0, idx)),
+                        sep,
+                        new PyStr(s.value().substring(idx + sep.value().length()))));
+            });
+            case "rpartition" -> new PyBuiltinFunction("str.rpartition", args -> {
+                checkArgCount("str.rpartition", args, 1);
+                if (!(args[0] instanceof PyStr sep) || sep.value().isEmpty()) {
+                    throw PyErrors.error("ValueError", "empty separator");
+                }
+                int idx = s.value().lastIndexOf(sep.value());
+                if (idx < 0) return new PyTuple(java.util.List.of(new PyStr(""), new PyStr(""), s));
+                return new PyTuple(java.util.List.of(
+                        new PyStr(s.value().substring(0, idx)),
+                        sep,
+                        new PyStr(s.value().substring(idx + sep.value().length()))));
+            });
+            case "capitalize" -> new PyBuiltinFunction("str.capitalize", args -> {
+                if (s.value().isEmpty()) return s;
+                return new PyStr(Character.toUpperCase(s.value().charAt(0)) + s.value().substring(1).toLowerCase());
+            });
+            case "title" -> new PyBuiltinFunction("str.title", args -> {
+                var sb = new StringBuilder(s.value().length());
+                boolean nextUpper = true;
+                for (int i = 0; i < s.value().length(); i++) {
+                    char c = s.value().charAt(i);
+                    if (!Character.isLetter(c)) { sb.append(c); nextUpper = true; }
+                    else { sb.append(nextUpper ? Character.toUpperCase(c) : Character.toLowerCase(c)); nextUpper = false; }
+                }
+                return new PyStr(sb.toString());
+            });
+            case "center", "ljust", "rjust" -> new PyBuiltinFunction("str." + method, args -> {
+                if (args.length < 1 || args.length > 2) throw PyErrors.error("TypeError", method + "() takes 1 or 2 arguments");
+                int width = toInt(args[0]);
+                if (width > 100_000) throw PyErrors.error("MemoryError", "width exceeds limit");
+                char fill = args.length == 2 ? ((PyStr) args[1]).value().charAt(0) : ' ';
+                int cur = s.codePointCount();
+                if (width <= cur) return s;
+                int pad = width - cur;
+                if ("ljust".equals(method)) return new PyStr(s.value() + String.valueOf(fill).repeat(pad));
+                if ("rjust".equals(method)) return new PyStr(String.valueOf(fill).repeat(pad) + s.value());
+                int left = pad / 2;
+                return new PyStr(String.valueOf(fill).repeat(left) + s.value() + String.valueOf(fill).repeat(pad - left));
+            });
+            case "zfill" -> new PyBuiltinFunction("str.zfill", args -> {
+                checkArgCount("str.zfill", args, 1);
+                int width = toInt(args[0]);
+                if (width > 100_000) throw PyErrors.error("MemoryError", "width exceeds limit");
+                String raw = s.value();
+                if (raw.length() >= width) return s;
+                int pad = width - raw.length();
+                if (raw.startsWith("+") || raw.startsWith("-")) {
+                    return new PyStr(raw.charAt(0) + "0".repeat(pad) + raw.substring(1));
+                }
+                return new PyStr("0".repeat(pad) + raw);
+            });
+            case "isspace" -> new PyBuiltinFunction("str.isspace", args -> PyBool.of(!s.value().isEmpty() && s.value().chars().allMatch(Character::isWhitespace)));
+            case "isupper" -> new PyBuiltinFunction("str.isupper", args -> PyBool.of(s.value().chars().anyMatch(Character::isLetter) && s.value().chars().filter(Character::isLetter).allMatch(Character::isUpperCase)));
+            case "islower" -> new PyBuiltinFunction("str.islower", args -> PyBool.of(s.value().chars().anyMatch(Character::isLetter) && s.value().chars().filter(Character::isLetter).allMatch(Character::isLowerCase)));
+            case "format" -> new PyBuiltinFunction("str.format", (args, kwargs) -> {
+                return new PyStr(strDotFormat(s.value(), args, kwargs));
             });
             case "find" -> new PyBuiltinFunction("str.find", args -> {
                 checkArgCount("str.find", args, 1);
@@ -505,8 +630,11 @@ public final class BuiltinMethodDispatcher {
             });
             case "extend" -> new PyBuiltinFunction("list.extend", args -> {
                 checkArgCount("list.extend", args, 1);
-                if (!(args[0] instanceof PyList other)) throw PyErrors.error("TypeError", "extend() argument must be iterable");
-                list.items().addAll(other.items());
+                if (args[0] instanceof PyList other) {
+                    list.items().addAll(other.items());
+                } else {
+                    list.items().addAll(BuiltinFunctions.collectIterable(args[0], org.example.jython3.security.DenyAllPolicy.INSTANCE));
+                }
                 return new PyNull();
             });
             case "insert" -> new PyBuiltinFunction("list.insert", args -> {
@@ -535,8 +663,24 @@ public final class BuiltinMethodDispatcher {
                 int c = 0; for (var item : list.items()) if (pyEquals(item, args[0])) c++;
                 return PyInt.of(c);
             });
-            case "sort" -> new PyBuiltinFunction("list.sort", args -> {
-                list.items().sort(PyOps::compareObjects);
+            case "sort" -> new PyBuiltinFunction("list.sort", (args, kwargs) -> {
+                if (args.length > 0) throw PyErrors.error("TypeError", "sort() takes no positional arguments");
+                boolean reverse = kwargs.containsKey("reverse") && PyOps.isTruthy(kwargs.get("reverse"));
+                PyObject keyFn = kwargs.get("key");
+                if (keyFn != null && !(keyFn instanceof PyNull)) {
+                    var caller = org.example.jython3.runtime.PyCaller.current();
+                    record Keyed(PyObject k, PyObject v) {}
+                    var dec = new ArrayList<Keyed>(list.items().size());
+                    for (PyObject item : list.items()) {
+                        dec.add(new Keyed(caller.call(keyFn, new PyObject[]{item}), item));
+                    }
+                    dec.sort((a, b) -> PyOps.compareObjects(a.k(), b.k()));
+                    list.items().clear();
+                    for (Keyed kv : dec) list.items().add(kv.v());
+                } else {
+                    list.items().sort(PyOps::compareObjects);
+                }
+                if (reverse) Collections.reverse(list.items());
                 return new PyNull();
             });
             case "reverse" -> new PyBuiltinFunction("list.reverse", args -> {
@@ -564,11 +708,37 @@ public final class BuiltinMethodDispatcher {
                 if (val != null) return val;
                 return (args.length > 1) ? args[1] : new PyNull();
             });
-            case "update" -> new PyBuiltinFunction("dict.update", args -> {
-                checkArgCount("dict.update", args, 1);
-                if (!(args[0] instanceof PyDict other)) throw PyErrors.error("TypeError", "update() argument must be a dict");
-                for (var key : other.keys()) {
-                    dict.put(key, other.get(key));
+            case "setdefault" -> new PyBuiltinFunction("dict.setdefault", args -> {
+                if (args.length < 1 || args.length > 2) throw PyErrors.error("TypeError", "setdefault expected 1 or 2 arguments");
+                PyObject existing = dict.get(args[0]);
+                if (existing != null) return existing;
+                PyObject defVal = args.length == 2 ? args[1] : new PyNull();
+                dict.put(args[0], defVal);
+                return defVal;
+            });
+            case "popitem" -> new PyBuiltinFunction("dict.popitem", args -> {
+                checkArgCount("dict.popitem", args, 0);
+                var keys = dict.keys();
+                if (keys.isEmpty()) throw PyErrors.error("KeyError", "popitem(): dictionary is empty");
+                PyObject lastKey = keys.get(keys.size() - 1);
+                PyObject val = dict.remove(lastKey);
+                return new PyTuple(java.util.List.of(lastKey, val));
+            });
+            case "update" -> new PyBuiltinFunction("dict.update", (args, kwargs) -> {
+                if (args.length > 1) throw PyErrors.error("TypeError", "update expected at most 1 argument");
+                if (args.length == 1) {
+                    if (args[0] instanceof PyDict other) {
+                        for (var key : other.keys()) dict.put(key, other.get(key));
+                    } else {
+                        for (PyObject pair : BuiltinFunctions.collectIterable(args[0], org.example.jython3.security.DenyAllPolicy.INSTANCE)) {
+                            var kv = BuiltinFunctions.collectIterable(pair, org.example.jython3.security.DenyAllPolicy.INSTANCE);
+                            if (kv.size() != 2) throw PyErrors.error("ValueError", "dictionary update sequence element has length " + kv.size() + "; 2 is required");
+                            dict.put(kv.get(0), kv.get(1));
+                        }
+                    }
+                }
+                for (var e : kwargs.entrySet()) {
+                    dict.put(new PyStr(e.getKey()), e.getValue());
                 }
                 return new PyNull();
             });
@@ -583,5 +753,64 @@ public final class BuiltinMethodDispatcher {
             case "copy" -> new PyBuiltinFunction("dict.copy", args -> new PyDict(dict.map()));
             default -> throw PyErrors.error("AttributeError", "'dict' object has no attribute '" + method + "'");
         };
+    }
+
+    private static String strDotFormat(String fmt, PyObject[] args, java.util.Map<String, PyObject> kwargs) {
+        var sb = new StringBuilder(fmt.length() + 16);
+        int autoIdx = 0;
+        boolean usedAuto = false;
+        boolean usedManual = false;
+        int i = 0;
+        int n = fmt.length();
+        while (i < n) {
+            char ch = fmt.charAt(i);
+            if (ch == '{') {
+                if (i + 1 < n && fmt.charAt(i + 1) == '{') { sb.append('{'); i += 2; continue; }
+                int close = fmt.indexOf('}', i + 1);
+                if (close < 0) throw PyErrors.error("ValueError", "Single '{' encountered in format string");
+                String field = fmt.substring(i + 1, close);
+                i = close + 1;
+
+                int colon = field.indexOf(':');
+                String keyPart = colon >= 0 ? field.substring(0, colon) : field;
+                String spec = colon >= 0 ? field.substring(colon + 1) : "";
+                char conv = 0;
+                int bang = keyPart.indexOf('!');
+                if (bang >= 0) {
+                    if (bang + 1 < keyPart.length()) conv = keyPart.charAt(bang + 1);
+                    keyPart = keyPart.substring(0, bang);
+                }
+
+                PyObject val;
+                if (keyPart.isEmpty()) {
+                    if (usedManual) throw PyErrors.error("ValueError", "cannot switch from manual field specification to automatic field numbering");
+                    usedAuto = true;
+                    if (autoIdx >= args.length) throw PyErrors.error("IndexError", "Replacement index " + autoIdx + " out of range");
+                    val = args[autoIdx++];
+                } else if (keyPart.chars().allMatch(Character::isDigit)) {
+                    if (usedAuto) throw PyErrors.error("ValueError", "cannot switch from automatic field numbering to manual field specification");
+                    usedManual = true;
+                    int idx = Integer.parseInt(keyPart);
+                    if (idx < 0 || idx >= args.length) throw PyErrors.error("IndexError", "Replacement index " + idx + " out of range");
+                    val = args[idx];
+                } else {
+                    val = kwargs.get(keyPart);
+                    if (val == null) throw PyErrors.error("KeyError", keyPart);
+                }
+                if (conv == 'r') {
+                    val = BuiltinFunctions.pyReprStr(val);
+                } else if (conv == 's') {
+                    val = new PyStr(val.toString());
+                }
+                sb.append(spec.isEmpty() ? val.toString() : BuiltinFunctions.formatValuePublic(val, spec));
+            } else if (ch == '}') {
+                if (i + 1 < n && fmt.charAt(i + 1) == '}') { sb.append('}'); i += 2; continue; }
+                throw PyErrors.error("ValueError", "Single '}' encountered in format string");
+            } else {
+                sb.append(ch);
+                i++;
+            }
+        }
+        return sb.toString();
     }
 }

@@ -59,6 +59,14 @@ public final class PyInstance implements PyObject {
             boundMethodCache.put(name, bm);
             return bm;
         }
+        if (member instanceof PyBuiltinFunction bf) {
+            return new PyBuiltinFunction(bf.name(), (a, kw) -> {
+                PyObject[] bound = new PyObject[a.length + 1];
+                bound[0] = this;
+                System.arraycopy(a, 0, bound, 1, a.length);
+                return bf.callWithKw(bound, kw);
+            });
+        }
         if (member != null) {
             return member;
         }
