@@ -54,6 +54,9 @@ public final class HostCommandChannelAdapter implements ControlDevice {
     public String id() { return id; }
 
     @Override
+    public TrustTier trustTier() { return TrustTier.TRUSTED_HOST; }
+
+    @Override
     public PyObject execute(String command, Map<String, PyObject> args) {
         if ("ping".equals(command) && !handlers.containsKey("ping")) {
             return new PyStr("pong:" + id);

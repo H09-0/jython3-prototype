@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.12.1-beta] - 2026-11-15
+### Security
+- **Session-Scoped `PyHostHandle` Enforcement (`PyHostHandle`, `PolicySanitizer`, `HostSession`, `HostAppBridge`)**:
+  - Prohibited creating unbound `PyHostHandle`s (`Builder.build()` requires `bindSession(HostSession)`), removed `UiEvent.toPyHandle()` no-arg helper, rejected unbound/foreign handles in `PolicySanitizer` (including `PyTuple`, `PySet`, `PyFrozenSet`, `PyCell`, `PyBoundMethod`) and `HostSession.invokeCallback(...)`, and enforced session + epoch checks in `HostAppBridge.bindHandle` (`HandleSmugglingSecurityTest`).
+- **Control Adapter Sanitization & Hardware Trust Gating (`ControlModule`, `HostCommandChannelAdapter`, `ControlDevice`, `CapabilitySet`)**:
+  - Sanitized all command arguments, handler return values, and state snapshots in `ControlModule` and `HostCommandChannelAdapter` against `PolicySanitizer` with `HostAuditLog` denial recording (`ControlAdapterSanitizationTest`).
+  - Added `ControlDevice.TrustTier` (`SIMULATED`, `TRUSTED_HOST`, `HARDWARE`) and `CapabilitySet.Builder.allowHardwareAdapters(boolean)` (deny-by-default) requiring explicit opt-in for physical hardware adapters (`HardwareCapabilityTrustTest`; 508 total tests passing green).
+- **Workspace Symlink-Race Hardening (`ScopedWorkspaceAdapter`)**:
+  - Hardened workspace directory traversal, reads, writes, and existence checks with POSIX `SecureDirectoryStream` and `LinkOption.NOFOLLOW_LINKS` (`O_NOFOLLOW`) to defeat TOCTOU symlink-swap races (`ScopedWorkspaceRaceTest`).
+
 ## [v0.12.0-beta] - 2026-11-15
 ### Added
 - **Versioned Public Embedding API (`org.example.jython3.api`)**:

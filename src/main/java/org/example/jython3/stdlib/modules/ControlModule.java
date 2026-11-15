@@ -80,6 +80,13 @@ public final class ControlModule {
             if (device == null) {
                 throw PyErrors.error("LookupError", "unknown control device '" + deviceId + "'");
             }
+            if (device.trustTier() == ControlDevice.TrustTier.HARDWARE
+                    && !session.capabilities().allowHardwareAdapters()) {
+                session.auditLog().recordDenied(HostCapability.CONTROL, "open_controller", deviceId,
+                        "hardware adapter denied without explicit allowHardwareAdapters(true)");
+                throw PyErrors.error("SecurityError",
+                        "hardware adapter '" + deviceId + "' requires explicit trusted hardware authorization");
+            }
             return createControllerHandle(session, device);
         }));
 
@@ -139,6 +146,13 @@ public final class ControlModule {
                     }
                     cmdArgs.putAll(kwargs);
                     session.requireControlCommand(device.id(), cmdName);
+                    if (device.trustTier() == ControlDevice.TrustTier.HARDWARE
+                            && !session.capabilities().allowHardwareAdapters()) {
+                        session.auditLog().recordDenied(HostCapability.CONTROL, cmdName, device.id(),
+                                "hardware adapter denied without explicit allowHardwareAdapters(true)");
+                        throw PyErrors.error("SecurityError",
+                                "hardware adapter '" + device.id() + "' requires explicit trusted hardware authorization");
+                    }
                     Map<String, PyObject> safeArgs = new LinkedHashMap<>(cmdArgs.size());
                     for (var e : cmdArgs.entrySet()) {
                         safeArgs.put(e.getKey(), sanitizeControlValue(session, "sanitize_arg",

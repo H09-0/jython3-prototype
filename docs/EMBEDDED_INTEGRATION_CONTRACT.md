@@ -56,9 +56,10 @@ The following packages and entry points constitute the supported embedding contr
 
 ## 4. Security Boundaries & Pre-Hardware Checklist
 
+- **Session-bound `PyHostHandle` only**: Every `PyHostHandle` must be bound to a `HostSession` via `.bindSession(session)`. Unbound handles cannot be built, `PolicySanitizer` and `HostSession.invokeCallback` reject cross-session/unbound handles across all containers/closures/generators, and `bindHandle` rejects foreign or stale-epoch handles.
+- **Trusted `ControlDevice` registration & sanitized results**: `ControlRegistry.register` and `HostCommandChannelAdapter` are trusted internal host-only APIs. `ControlModule` sanitizes all command args, handler return values, and state snapshots (`PyJavaObject` / foreign handles are blocked and audited). Physical hardware adapters (`TrustTier.HARDWARE`) require explicit `CapabilitySet.Builder.allowHardwareAdapters(true)`.
 - **No arbitrary Java reflection**: `PyHostHandle` objects are not `PyJavaObject`s; `getClass()`, `MethodHandles`, `ClassLoader`, `Unsafe`, `Runtime`, `ProcessBuilder`, `java.io`, and `java.net` remain blocked under `DenyAllPolicy` / `SandboxedPolicy` even when `UI`/`CONTROL` capabilities are granted.
-- **No cross-interpreter smuggling**: `PolicySanitizer` rejects `PyHostHandle`s belonging to a different `HostSession` with `SecurityError` (directly or nested inside lists, dicts, modules, generators, or closures).
-- **Not a standalone OS sandbox**: In-process policies provide defense-in-depth gating. Untrusted third-party scripts must still run inside OS process/container isolation.
+- **Not a standalone OS sandbox**: In-process policies provide defense-in-depth gating only. Untrusted third-party scripts and physical hardware control MUST still run inside OS process/container isolation.
 - **Before connecting real hardware or `FILESYSTEM` / `PROCESS` / `NETWORK` capabilities**: conduct an independent security review of every custom `ControlDevice` implementation and host adapter.
 
 ---

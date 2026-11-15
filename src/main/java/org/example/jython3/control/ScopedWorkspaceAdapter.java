@@ -83,6 +83,9 @@ public final class ScopedWorkspaceAdapter implements ControlDevice {
     public String id() { return id; }
 
     @Override
+    public TrustTier trustTier() { return TrustTier.TRUSTED_HOST; }
+
+    @Override
     public PyObject execute(String command, Map<String, PyObject> args) {
         session.require(HostCapability.FILESYSTEM, command, "workspace:" + id);
         opsCount.incrementAndGet();

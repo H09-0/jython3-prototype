@@ -38,6 +38,9 @@ public final class JvmTelemetryAdapter implements ControlDevice {
     public String id() { return id; }
 
     @Override
+    public TrustTier trustTier() { return TrustTier.TRUSTED_HOST; }
+
+    @Override
     public PyObject execute(String command, Map<String, PyObject> args) {
         return switch (command) {
             case "ping" -> new PyStr("pong:" + id);

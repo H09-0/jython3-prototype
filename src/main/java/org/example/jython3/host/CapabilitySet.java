@@ -19,6 +19,7 @@ public final class CapabilitySet {
     private final EnumSet<HostCapability> granted;
     private final Set<String> allowedDevices;
     private final Set<String> allowedCommands;
+    private final boolean allowHardwareAdapters;
     private final int maxWindows;
     private final int maxTimers;
     private final int maxListenersPerNode;
@@ -29,6 +30,7 @@ public final class CapabilitySet {
         this.granted = b.granted.isEmpty() ? EnumSet.noneOf(HostCapability.class) : EnumSet.copyOf(b.granted);
         this.allowedDevices = Collections.unmodifiableSet(new HashSet<>(b.allowedDevices));
         this.allowedCommands = Collections.unmodifiableSet(new HashSet<>(b.allowedCommands));
+        this.allowHardwareAdapters = b.allowHardwareAdapters;
         this.maxWindows = b.maxWindows;
         this.maxTimers = b.maxTimers;
         this.maxListenersPerNode = b.maxListenersPerNode;
@@ -64,6 +66,8 @@ public final class CapabilitySet {
         return has(HostCapability.CONTROL) && command != null && allowedCommands.contains(command);
     }
 
+    public boolean allowHardwareAdapters() { return allowHardwareAdapters; }
+
     public int maxWindows() { return maxWindows; }
     public int maxTimers() { return maxTimers; }
     public int maxListenersPerNode() { return maxListenersPerNode; }
@@ -74,11 +78,17 @@ public final class CapabilitySet {
         private final EnumSet<HostCapability> granted = EnumSet.noneOf(HostCapability.class);
         private final Set<String> allowedDevices = new HashSet<>();
         private final Set<String> allowedCommands = new HashSet<>();
+        private boolean allowHardwareAdapters = false;
         private int maxWindows = 8;
         private int maxTimers = 16;
         private int maxListenersPerNode = 32;
         private int maxCallbackDepth = 16;
         private Duration callbackTimeout = Duration.ofMillis(500);
+
+        public Builder allowHardwareAdapters(boolean allow) {
+            this.allowHardwareAdapters = allow;
+            return this;
+        }
 
         public Builder allow(HostCapability... caps) {
             if (caps != null) granted.addAll(Arrays.asList(caps));
