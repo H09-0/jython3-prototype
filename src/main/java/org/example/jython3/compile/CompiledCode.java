@@ -51,7 +51,9 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
             int ai = instr & 0xFFFF;
             if (ai < constPool.length) {
                 if ((op == loadFast || op == storeFast || op == deleteFast) && constPool[ai] instanceof String varName) {
-                    names.add(varName);
+                    // '$'-prefixed names are compiler temporaries (not valid Python identifiers);
+                    // they are frame-private and must never be captured into closures.
+                    if (!isSyntheticName(varName)) names.add(varName);
                 } else if (op == loadConst && constPool[ai] instanceof String s && s.startsWith("@nonlocal:")) {
                     names.add(s.substring(10));
                 }
@@ -70,5 +72,13 @@ public record CompiledCode(int[] bytecode, Object[] constPool, int[] lines,
     /** Source line of the instruction at {@code pc}, or 0 when unknown. */
     public int lineAt(int pc) {
         return pc >= 0 && pc < lines.length ? lines[pc] : 0;
+    }
+
+    /**
+     * Compiler-generated temporaries start with '$', a character the lexer never
+     * accepts in identifiers, so they cannot collide with user variables.
+     */
+    public static boolean isSyntheticName(String name) {
+        return name != null && !name.isEmpty() && name.charAt(0) == '$';
     }
 }

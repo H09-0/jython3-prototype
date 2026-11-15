@@ -387,7 +387,8 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             b.emit(OpCode.LOAD_CONST, null);
         }
         if (hasPendingScopeExit()) {
-            String retVar = "__ret_val_" + (returnCounter++);
+            // Prefix with '$' so synthetic compiler temporaries can never collide with Python identifiers
+            String retVar = "$ret_val_" + (returnCounter++);
             b.emit(OpCode.STORE_FAST, retVar);
             emitScopeExits(0, true);
             b.emit(OpCode.LOAD_FAST, retVar);
@@ -1416,7 +1417,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      *   TOS = acc
      */
     @Override public Void visitListComp(Jython3Parser.ListCompContext c) {
-        String accVar = "__comp_list_" + (compCounter++);
+        String accVar = "$comp_list_" + (compCounter++);
         b.emitRaw(OpCode.BUILD_LIST, 0);
         b.emit(OpCode.STORE_FAST, accVar);
 
@@ -1449,8 +1450,9 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         int afterLoop = b.size();
         b.patch(forIter, afterLoop);
 
-        // Result: load acc onto stack
+        // Result: load acc onto stack and clean up synthetic slot
         b.emit(OpCode.LOAD_FAST, accVar);
+        b.emit(OpCode.DELETE_NAME_SILENT, accVar);
         return null;
     }
 
@@ -1465,7 +1467,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      *   TOS = acc
      */
     @Override public Void visitDictComp(Jython3Parser.DictCompContext c) {
-        String accVar = "__comp_dict_" + (compCounter++);
+        String accVar = "$comp_dict_" + (compCounter++);
         b.emitRaw(OpCode.BUILD_DICT, 0);
         b.emit(OpCode.STORE_FAST, accVar);
 
@@ -1498,6 +1500,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         b.patch(forIter, afterLoop);
 
         b.emit(OpCode.LOAD_FAST, accVar);
+        b.emit(OpCode.DELETE_NAME_SILENT, accVar);
         return null;
     }
 
@@ -1507,7 +1510,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
      * Clean variable-based compilation using PySet built from list or add method.
      */
     @Override public Void visitSetComp(Jython3Parser.SetCompContext c) {
-        String accVar = "__comp_set_" + (compCounter++);
+        String accVar = "$comp_set_" + (compCounter++);
         b.emitRaw(OpCode.BUILD_SET, 0);
         b.emit(OpCode.STORE_FAST, accVar);
 
@@ -1540,6 +1543,7 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         b.patch(forIter, afterLoop);
 
         b.emit(OpCode.LOAD_FAST, accVar);
+        b.emit(OpCode.DELETE_NAME_SILENT, accVar);
         return null;
     }
 
