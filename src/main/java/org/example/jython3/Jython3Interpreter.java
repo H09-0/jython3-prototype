@@ -41,6 +41,7 @@ import org.example.jython3.runtime.FastStack;
 import org.example.jython3.runtime.Frame;
 import org.example.jython3.runtime.ExceptionTypeRegistry;
 import org.example.jython3.runtime.InterpreterException;
+import org.example.jython3.runtime.ModuleLoader;
 import org.example.jython3.runtime.PyBool;
 import org.example.jython3.runtime.PyBoundMethod;
 import org.example.jython3.runtime.PyBuiltinFunction;
@@ -101,10 +102,16 @@ public class Jython3Interpreter {
     // ─── Inline Caches ───────────────────────────────────────────────────
     private record AttrCacheEntry(PyClass cachedClass, long cachedClassVersion, PyObject cachedMember) {}
 
-    // ─── Module Cache & Loading States ───────────────────────────────────
-    private enum ModuleState { INITIALIZING, LOADED }
-    private record ModuleEntry(PyModule module, ModuleState state) {}
-    private final Map<String, ModuleEntry> moduleCache = new ConcurrentHashMap<>();
+    // ─── Module Loader & Cache ───────────────────────────────────────────
+    private final ModuleLoader moduleLoader = new ModuleLoader();
+
+    public void addModulePath(java.nio.file.Path dir) {
+        moduleLoader.addSearchPath(dir);
+    }
+
+    public java.util.List<java.nio.file.Path> moduleSearchPaths() {
+        return moduleLoader.searchPaths();
+    }
     // ─── Bytecode Cache ──────────────────────────────────────────────────
     private static final int MAX_CACHE_SIZE = 2048;
     private final Map<String, CompiledCode> bytecodeCache = new ConcurrentHashMap<>();
@@ -721,6 +728,7 @@ public class Jython3Interpreter {
      */
     public void resetExecutionState() {
         globals.clear();
+        moduleLoader.clear();
         registerBuiltins();
         currentGlobals = globals;
         currentLocals = globals;
@@ -1500,6 +1508,63 @@ public class Jython3Interpreter {
                         pool = code.constPool();
                         pc = 0;
                         continue outer;
+                    } else {
+                        stack.push(callPyCallableKw(callable, posArgs, kwNames, kwValues));
+                    }
+                }
+                case LIST_EXTEND -> {
+                    PyObject iterObj = stack.pop();
+                    if (stack.peek() instanceof PyList targetList) {
+                        targetList.items().addAll(BuiltinFunctions.collectIterable(iterObj, javaAccessPolicy));
+                    }
+                }
+                case DICT_MERGE -> {
+                    PyObject mapObj = stack.pop();
+                    if (!(mapObj instanceof PyDict src)) {
+                        throw PyErrors.error("TypeError", "argument after ** must be a mapping, not " + typeName(mapObj));
+                    }
+                    if (stack.peek() instanceof PyDict target) {
+                        for (PyObject k : src.keys()) {
+                            if (!(k instanceof PyStr)) {
+                                throw PyErrors.error("TypeError", "keywords must be strings");
+                            }
+                            if (target.containsKey(k)) {
+                                throw PyErrors.error("TypeError", "got multiple values for keyword argument '" + k + "'");
+                            }
+                            target.put(k, src.get(k));
+                        }
+                    }
+                }
+                case CALL_FUNCTION_EX -> {
+                    String[] kwNames = null;
+                    PyObject[] kwValues = null;
+                    if (ai == 1) {
+                        PyDict kwDict = (PyDict) stack.pop();
+                        var keys = kwDict.keys();
+                        kwNames = new String[keys.size()];
+                        kwValues = new PyObject[keys.size()];
+                        for (int i = 0; i < keys.size(); i++) {
+                            kwNames[i] = ((PyStr) keys.get(i)).value();
+                            kwValues[i] = kwDict.get(keys.get(i));
+                        }
+                    }
+                    PyList argsList = (PyList) stack.pop();
+                    PyObject[] posArgs = argsList.items().toArray(new PyObject[0]);
+                    PyObject callable = stack.pop();
+                    if (callable instanceof PyClass cls) {
+                        if (cls.isExceptionType()) {
+                            stack.push(exceptionValue(cls, posArgs));
+                        } else {
+                            var inst = new PyInstance(cls);
+                            PyObject initObj = cls.lookupMember("__init__");
+                            if (initObj instanceof PyFunction initFn) {
+                                var initArgs = new PyObject[posArgs.length + 1];
+                                initArgs[0] = inst;
+                                System.arraycopy(posArgs, 0, initArgs, 1, posArgs.length);
+                                callPyCallableKw(initFn, initArgs, kwNames, kwValues);
+                            }
+                            stack.push(inst);
+                        }
                     } else {
                         stack.push(callPyCallableKw(callable, posArgs, kwNames, kwValues));
                     }
@@ -2487,16 +2552,14 @@ public class Jython3Interpreter {
             String pkg = parts[1];
             String item = parts[2];
 
-            if (item.equals("*")) {
-                throw PyErrors.error("ImportError", "'import *' from Java package is not supported");
-            }
-
-            String alias = parts.length > 3 ? parts[3] : item;
-            String fullName = pkg + "." + item;
-
-            // Check built-in modules first before attempting Java class resolution
+            // Built-in modules take precedence before Java class / disk lookup.
             PyModule builtinMod = resolveBuiltinModule(pkg);
             if (builtinMod != null) {
+                if ("*".equals(item)) {
+                    importStarFromModule(builtinMod);
+                    return;
+                }
+                String alias = parts.length > 3 ? parts[3] : item;
                 PyObject attr = builtinMod.attrs().get(item);
                 if (attr != null) {
                     bindImportedName(alias, attr);
@@ -2505,15 +2568,27 @@ public class Jython3Interpreter {
                 throw PyErrors.error("ImportError", "cannot import name '" + item + "' from '" + pkg + "'");
             }
 
+            if ("*".equals(item)) {
+                if (pkg.contains(".") && isJavaRootPackage(pkg.substring(0, pkg.indexOf('.')))
+                        || isJavaRootPackage(pkg)) {
+                    throw PyErrors.error("ImportError", "'import *' from Java package is not supported");
+                }
+                PyModule mod = loadDiskModule(pkg);
+                importStarFromModule(mod);
+                return;
+            }
+
+            String alias = parts.length > 3 ? parts[3] : item;
+            String fullName = pkg + "." + item;
+
             if (pkg.contains(".") || isJavaRootPackage(pkg)) {
-                try {
+                String rootPkg = pkg.contains(".") ? pkg.substring(0, pkg.indexOf('.')) : pkg;
+                if (isJavaRootPackage(rootPkg)) {
                     PyObject resolved = JavaBridge.resolveClassOrPackage(fullName, javaAccessPolicy);
                     if (resolved != null) {
                         bindImportedName(alias, resolved);
                         return;
                     }
-                } catch (InterpreterException ex) {
-                    throw ex;
                 }
             }
 
@@ -2523,13 +2598,27 @@ public class Jython3Interpreter {
                 bindImportedName(alias, attr);
                 return;
             }
+            // Also allow `from pkg import submod` when submod is a child module/package on disk.
+            try {
+                PyModule subMod = loadDiskModule(fullName);
+                bindImportedName(alias, subMod);
+                return;
+            } catch (InterpreterException ie) {
+                if (!"ImportError".equals(ie.typeName())) throw ie;
+            }
+            if (moduleLoader.isInitializing(pkg)) {
+                throw PyErrors.error("ImportError",
+                        "cannot import name '" + item + "' from partially initialized module '"
+                                + pkg + "' (most likely due to a circular import)");
+            }
             throw PyErrors.error("ImportError", "cannot import name '" + item + "' from '" + pkg + "'");
         }
 
         // ── pkg:alias  or plain pkg ──
         String[] parts = spec.split(":", -1);
         String pkg = parts[0];
-        String alias = parts.length > 1 ? parts[1] : parts[0];
+        boolean hasAlias = parts.length > 1;
+        String alias = hasAlias ? parts[1] : pkg;
 
         PyModule builtin = resolveBuiltinModule(pkg);
         if (builtin != null) {
@@ -2537,79 +2626,72 @@ public class Jython3Interpreter {
             return;
         }
 
-        if (pkg.contains(".") || isJavaRootPackage(pkg)) {
-            try {
-                PyObject javaObj = JavaBridge.resolveClassOrPackage(pkg, javaAccessPolicy);
-                if (javaObj != null) {
-                    bindImportedName(alias, javaObj);
-                    return;
-                }
-            } catch (InterpreterException ex) {
-                throw ex;
+        String rootPkg = pkg.contains(".") ? pkg.substring(0, pkg.indexOf('.')) : pkg;
+        if (isJavaRootPackage(rootPkg)) {
+            PyObject javaObj = JavaBridge.resolveClassOrPackage(pkg, javaAccessPolicy);
+            if (javaObj != null) {
+                bindImportedName(alias, javaObj);
+                return;
             }
         }
 
-        if (!pkg.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-            throw PyErrors.error("ImportError", "invalid module name '" + pkg + "'");
-        }
-
         PyModule diskMod = loadDiskModule(pkg);
-        bindImportedName(alias, diskMod);
+        if (!hasAlias && pkg.contains(".")) {
+            // `import a.b.c` binds the top-level package `a` (which already holds `.b.c`)
+            PyModule top = moduleLoader.getCached(rootPkg);
+            bindImportedName(rootPkg, top != null ? top : diskMod);
+        } else {
+            bindImportedName(alias, diskMod);
+        }
     }
 
-    /**
-     * Loads, compiles, and executes a Python source file from the modules/ directory.
-     * <p>Enforces full module lifecycle:
-     * <ul>
-     *   <li>Returns cached module if already LOADED.
-     *   <li>Returns initializing module if a circular import occurs.
-     *   <li>Executes module code in an isolated scope (its own dict) so caller state is untouched.
-     *   <li>Propagates any error up to the caller without swallowing it.
-     *   <li>Evicts partially initialized module from cache on failure.
-     * </ul>
-     */
+    private void importStarFromModule(PyModule mod) {
+        PyObject allObj = mod.attrs().get("__all__");
+        if (allObj instanceof PyList list) {
+            for (PyObject item : list.items()) {
+                if (item instanceof PyStr s) {
+                    PyObject val = mod.attrs().get(s.value());
+                    if (val == null) {
+                        throw PyErrors.error("ImportError", "cannot import name '" + s.value() + "' from '" + mod.name() + "'");
+                    }
+                    bindImportedName(s.value(), val);
+                }
+            }
+            return;
+        }
+        if (allObj instanceof PyTuple tuple) {
+            for (PyObject item : tuple.items()) {
+                if (item instanceof PyStr s) {
+                    PyObject val = mod.attrs().get(s.value());
+                    if (val == null) {
+                        throw PyErrors.error("ImportError", "cannot import name '" + s.value() + "' from '" + mod.name() + "'");
+                    }
+                    bindImportedName(s.value(), val);
+                }
+            }
+            return;
+        }
+        for (var entry : mod.attrs().entrySet()) {
+            if (!entry.getKey().startsWith("_")) {
+                bindImportedName(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
     private PyModule loadDiskModule(String pkg) {
-        ModuleEntry entry = moduleCache.get(pkg);
-        if (entry != null) {
-            return entry.module();
-        }
-
-        java.nio.file.Path p = java.nio.file.Path.of("modules", pkg + ".py").normalize();
-        if (!p.startsWith(java.nio.file.Path.of("modules").normalize())) {
-            throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
-        }
-        if (!hostAccessPolicy.canImportFromDisk(p)) {
-            throw PyErrors.error("SecurityError", "importing module '" + pkg + "' from filesystem is restricted");
-        }
-
-        String content;
-        try {
-            content = java.nio.file.Files.readString(p);
-        } catch (java.io.IOException e) {
-            throw PyErrors.error("ImportError", "no module named '" + pkg + "'");
-        }
-
-        CompiledCode moduleCode = compile(content);
-        Map<String, PyObject> moduleScope = new HashMap<>(builtinSymbols);
-
-        PyModule module = new PyModule(pkg, moduleScope);
-        moduleCache.put(pkg, new ModuleEntry(module, ModuleState.INITIALIZING));
-
-        try {
-            executeIsolated(moduleCode, moduleScope, p.toString());
-            moduleCache.put(pkg, new ModuleEntry(module, ModuleState.LOADED));
-            return module;
-        } catch (InterpreterException ie) {
-            // Remove from cache so subsequent imports don't see a broken module
-            moduleCache.remove(pkg);
-            throw ie;
-        }
+        return moduleLoader.load(pkg, hostAccessPolicy, builtinSymbols,
+                (module, filePath, content, moduleScope) -> {
+                    CompiledCode moduleCode = compile(content);
+                    executeIsolated(moduleCode, moduleScope, filePath.toString());
+                });
     }
 
     private PyModule resolveBuiltinModule(String name) {
-        return switch (name) {
+        PyModule cached = moduleLoader.getCached(name);
+        if (cached != null) return cached;
+        PyModule mod = switch (name) {
             case "math" -> BuiltinModules.math();
-            case "sys"  -> BuiltinModules.sys();
+            case "sys"  -> BuiltinModules.sys(moduleLoader.sysPath(), moduleLoader.sysModules());
             case "os"   -> BuiltinModules.os(hostAccessPolicy);
             case "io"   -> BuiltinModules.io(hostAccessPolicy);
             case "json" -> BuiltinModules.json();
@@ -2618,6 +2700,10 @@ public class Jython3Interpreter {
             case "random" -> BuiltinModules.random();
             default     -> null;
         };
+        if (mod != null) {
+            moduleLoader.registerBuiltin(mod);
+        }
+        return mod;
     }
 
     private static boolean isNan(PyObject o) {

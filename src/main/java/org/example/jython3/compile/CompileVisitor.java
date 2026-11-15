@@ -1094,8 +1094,12 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
         return new CallArgs(nPos, kwNames);
     }
 
-    /** Emit a CALL_FUNCTION or CALL_FUNCTION_KW instruction for the given call. */
+    /** Emit a CALL_FUNCTION, CALL_FUNCTION_KW, or CALL_FUNCTION_EX instruction for the given call. */
     private void emitCall(Jython3Parser.Arg_listContext argList) {
+        if (argList != null && hasCallSplat(argList)) {
+            emitSplatCall(argList);
+            return;
+        }
         var ca = emitArgList(argList);
         if (ca.kwNames().isEmpty()) {
             b.emitRaw(OpCode.CALL_FUNCTION, ca.nPos());
@@ -1105,6 +1109,52 @@ public class CompileVisitor extends Jython3BaseVisitor<Void> {
             var info = new KwCallInfo(ca.nPos(), ca.kwNames().toArray(String[]::new));
             b.emit(OpCode.CALL_FUNCTION_KW, info);  // uses emit(op, Object) → addConst → pool index
         }
+    }
+
+    private static boolean hasCallSplat(Jython3Parser.Arg_listContext argList) {
+        for (var item : argList.arg_item()) {
+            if (item instanceof Jython3Parser.SplatArgContext || item instanceof Jython3Parser.SplatKwArgContext) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void emitSplatCall(Jython3Parser.Arg_listContext argList) {
+        boolean hasKw = false;
+        boolean seenKw = false;
+        b.emitRaw(OpCode.BUILD_LIST, 0);
+        for (var item : argList.arg_item()) {
+            if (item instanceof Jython3Parser.PositionalArgContext pa) {
+                if (seenKw) throw new CompileError("positional argument follows keyword argument");
+                visit(pa.expr());
+                b.emit(OpCode.LIST_COMP_APPEND);
+            } else if (item instanceof Jython3Parser.SplatArgContext sa) {
+                if (seenKw) throw new CompileError("iterable argument unpacking follows keyword argument unpacking");
+                visit(sa.expr());
+                b.emit(OpCode.LIST_EXTEND);
+            } else {
+                hasKw = true;
+                seenKw = true;
+            }
+        }
+        if (!hasKw) {
+            b.emitRaw(OpCode.CALL_FUNCTION_EX, 0);
+            return;
+        }
+        b.emitRaw(OpCode.BUILD_DICT, 0);
+        for (var item : argList.arg_item()) {
+            if (item instanceof Jython3Parser.KeywordArgContext ka) {
+                b.emit(OpCode.DUP_TOP);
+                b.emit(OpCode.LOAD_CONST, ka.ID().getText());
+                visit(ka.expr());
+                b.emit(OpCode.STORE_SUBSCR);
+            } else if (item instanceof Jython3Parser.SplatKwArgContext sk) {
+                visit(sk.expr());
+                b.emit(OpCode.DICT_MERGE);
+            }
+        }
+        b.emitRaw(OpCode.CALL_FUNCTION_EX, 1);
     }
 
     @Override public Void visitCallExpr(Jython3Parser.CallExprContext c) {

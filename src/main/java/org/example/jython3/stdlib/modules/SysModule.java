@@ -1,6 +1,7 @@
 package org.example.jython3.stdlib.modules;
 
 import org.example.jython3.runtime.BigInt;
+import org.example.jython3.runtime.PyDict;
 import org.example.jython3.runtime.PyInt;
 import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
@@ -20,8 +21,14 @@ public final class SysModule {
     private SysModule() {}
 
     public static PyModule create() {
+        return create(new PyList(new ArrayList<>()), new PyDict());
+    }
+
+    public static PyModule create(PyList path, PyDict modules) {
         Map<String, PyObject> attrs = new HashMap<>();
         attrs.put("argv",     new PyList(new ArrayList<>()));
+        attrs.put("path",     path);
+        attrs.put("modules",  modules);
         attrs.put("version",  new PyStr("3.0.0 (Jython3-prototype)"));
         attrs.put("platform", new PyStr("java"));
         attrs.put("maxsize",  new BigInt(BigInteger.valueOf(Long.MAX_VALUE)));

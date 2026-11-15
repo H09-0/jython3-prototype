@@ -1,5 +1,7 @@
 package org.example.jython3.stdlib;
 
+import org.example.jython3.runtime.PyDict;
+import org.example.jython3.runtime.PyList;
 import org.example.jython3.runtime.PyModule;
 import org.example.jython3.security.HostAccessPolicy;
 import org.example.jython3.stdlib.modules.IoModule;
@@ -20,6 +22,7 @@ public final class BuiltinModules {
 
     public static PyModule math()   { return MathModule.create(); }
     public static PyModule sys()    { return SysModule.create(); }
+    public static PyModule sys(PyList path, PyDict modules) { return SysModule.create(path, modules); }
     public static PyModule os()     { return os(HostAccessPolicy.PERMISSIVE); }
     public static PyModule os(HostAccessPolicy hostPolicy) { return OsModule.create(hostPolicy); }
     public static PyModule io()     { return io(HostAccessPolicy.PERMISSIVE); }
